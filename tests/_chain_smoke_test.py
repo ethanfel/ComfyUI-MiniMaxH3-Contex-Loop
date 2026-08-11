@@ -737,7 +737,7 @@ def main():
             external_duration = float(subprocess.check_output([
                 "ffprobe", "-v", "error", "-show_entries", "format=duration",
                 "-of", "default=nw=1:nk=1", str(external_path),
-            ], text=True).strip())
+            ], text=True, encoding="utf-8", errors="replace").strip())
             assert abs(external_duration - 14 / 24) < 0.05
             assert "existing-video prelude" in external_result["ui"]["text"][0]
             external_original_which = chain.shutil.which
@@ -863,7 +863,7 @@ def main():
                 "ffprobe", "-v", "error", "-show_entries", "format_tags",
                 "-of", "json",
                 str(chain._absolute_output_path(segment1["segment"])),
-            ], text=True))["format"]["tags"]
+            ], text=True, encoding="utf-8", errors="replace"))["format"]["tags"]
             assert embedded_tags["comment"] == "first"
             assert embedded_tags["h3_prompt"] == "first"
             assert json.loads(embedded_tags["workflow"])["nodes"][0][
@@ -921,7 +921,7 @@ def main():
             streams = subprocess.check_output([
                 "ffprobe", "-v", "error", "-show_entries", "stream=codec_type",
                 "-of", "csv=p=0", str(review_path),
-            ], text=True).splitlines()
+            ], text=True, encoding="utf-8", errors="replace").splitlines()
             assert "video" in streams and "audio" in streams
 
             fallback_review_audio = audio_for_frames(5)
@@ -1231,7 +1231,7 @@ def main():
                         "ffprobe", "-v", "error", "-show_entries",
                         "stream=codec_type", "-of", "csv=p=0",
                         str(partial_path),
-                    ], text=True).splitlines()
+                    ], text=True, encoding="utf-8", errors="replace").splitlines()
                     assert "video" in streams and "audio" in streams
                 finally:
                     chain.PromptServer = original_server
@@ -1331,14 +1331,14 @@ def main():
             source_tags = json.loads(subprocess.check_output([
                 "ffprobe", "-v", "error", "-show_entries", "format_tags",
                 "-of", "json", str(source_path),
-            ], text=True))["format"]["tags"]
+            ], text=True, encoding="utf-8", errors="replace"))["format"]["tags"]
             assert json.loads(source_tags["workflow"])["nodes"][0][
                 "type"] == "MiniMaxH3ChainPlan"
             assert json.loads(source_tags["h3_manifest"])["clip_count"] == 2
             duration = float(subprocess.check_output([
                 "ffprobe", "-v", "error", "-show_entries", "format=duration",
                 "-of", "default=nw=1:nk=1", str(source_path),
-            ], text=True).strip())
+            ], text=True, encoding="utf-8", errors="replace").strip())
             assert abs(duration - 9 / 24) < 0.05
             short_silent_manifest = dict(manifest)
             short_silent_manifest["compatibility"] = dict(

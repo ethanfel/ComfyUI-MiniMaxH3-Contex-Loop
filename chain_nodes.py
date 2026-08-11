@@ -3198,9 +3198,15 @@ def _validate_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
 
 def _run_ffmpeg(command: list[str], timeout_seconds: float | None = None) -> None:
     try:
+        # ffmpeg writes UTF-8. text=True alone decodes with the locale's
+        # preferred encoding, which on a non-UTF-8 Windows console (cp932,
+        # cp1251, ...) raises UnicodeDecodeError inside subprocess's reader
+        # threads. Those threads die, result.stderr comes back truncated or
+        # empty, and a genuine ffmpeg failure below reports no reason at all.
+        # Decode as UTF-8 and never let diagnostics be the thing that fails.
         result = subprocess.run(
             command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
-            timeout=timeout_seconds)
+            encoding="utf-8", errors="replace", timeout=timeout_seconds)
     except subprocess.TimeoutExpired as exc:
         raise RuntimeError(
             "ffmpeg timed out after %.1f seconds" % float(timeout_seconds)) from exc
