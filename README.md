@@ -155,6 +155,12 @@ Plan → Loop Start → Current Shot → stock H3 conditioning
 Loop End manifest → Assemble
 ```
 
+The Assemble `filename` field accepts ComfyUI-style date tokens such as
+`%date:yyyy-MM-dd%`, along with `%year%`, `%month%`, `%day%`, `%hour%`,
+`%minute%`, and `%second%`. Assemble preserves existing exports: when the
+requested MP4 already exists, the next file receives `_001`, `_002`, and so on
+instead of replacing it.
+
 For a non-looping experiment, open the
 [three-angle guitar Ref2VA workflow](<example_workflows/EXPERIMENTAL MiniMax H3 Three-Angle Guitar Ref2VA.json>).
 It loads `3ClbaJYWVO4_000030.mp4`, turns the source performance into a

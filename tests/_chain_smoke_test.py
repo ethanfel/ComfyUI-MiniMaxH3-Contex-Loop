@@ -17,6 +17,7 @@ import sys
 import tempfile
 import threading
 import time
+from datetime import datetime
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -84,6 +85,19 @@ class FakeDynamicPrompt:
 
 def main():
     package, chain = load_package()
+
+    fixed_now = datetime(2026, 8, 11, 14, 5, 9)
+    assert chain._expand_filename_date(
+        "render_%date:yyyy-MM-dd%_%hour%-%minute%-%second%", fixed_now
+    ) == "render_2026-08-11_14-05-09"
+    with tempfile.TemporaryDirectory() as version_dir:
+        original = pathlib.Path(version_dir) / "render.mp4"
+        original.touch()
+        (pathlib.Path(version_dir) / "render_001.mp4").touch()
+        assert chain._available_versioned_path(str(original)).endswith(
+            "render_002.mp4"
+        )
+    print("assemble filenames: date expansion and collision versioning passed")
 
     async def review_route_check():
         token = "review-route-smoke"

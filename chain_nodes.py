@@ -26,6 +26,7 @@ import subprocess
 import time
 import uuid
 import wave
+from datetime import datetime
 from fractions import Fraction
 from typing import Any
 
@@ -108,6 +109,46 @@ def _safe_name(value: str, fallback: str = "chain") -> str:
     text = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip())
     text = text.strip("._-")
     return (text or fallback)[:96]
+
+
+def _expand_filename_date(value: str, now: datetime | None = None) -> str:
+    """Expand ComfyUI-style date tokens before filename sanitization."""
+    current = now or datetime.now()
+    replacements = {
+        "yyyy": "%Y", "yy": "%y", "MM": "%m", "dd": "%d",
+        "HH": "%H", "hh": "%I", "mm": "%M", "ss": "%S",
+    }
+
+    def replace_date(match: re.Match[str]) -> str:
+        pattern = match.group(1)
+        strftime_pattern = re.sub(
+            r"yyyy|yy|MM|dd|HH|hh|mm|ss",
+            lambda token: replacements[token.group(0)],
+            pattern,
+        )
+        return current.strftime(strftime_pattern)
+
+    text = re.sub(r"%date:([^%]+)%", replace_date, str(value or ""))
+    simple_tokens = {
+        "%year%": "%Y", "%month%": "%m", "%day%": "%d",
+        "%hour%": "%H", "%minute%": "%M", "%second%": "%S",
+    }
+    for token, pattern in simple_tokens.items():
+        text = text.replace(token, current.strftime(pattern))
+    return text
+
+
+def _available_versioned_path(path: str) -> str:
+    """Return path unchanged when free, otherwise add a numeric version."""
+    if not os.path.exists(path):
+        return path
+    root, extension = os.path.splitext(path)
+    version = 1
+    while True:
+        candidate = "%s_%03d%s" % (root, version, extension)
+        if not os.path.exists(candidate):
+            return candidate
+        version += 1
 
 
 def _prompt_text(value: Any, label: str) -> str:
@@ -3690,7 +3731,9 @@ class MiniMaxH3ChainAssemble:
                     "default": "final",
                     "tooltip": "Final MP4 basename inside this chain's output "
                                "folder. The .mp4 extension is added "
-                               "automatically."}),
+                               "automatically. Supports date tokens such as "
+                               "%date:yyyy-MM-dd%. Existing files are preserved "
+                               "by adding _001, _002, and so on."}),
                 "audio_bitrate": ("INT", {
                     "default": 256, "min": 64, "max": 512,
                     "tooltip": "AAC bitrate in kilobits per second for the "
@@ -3721,7 +3764,7 @@ class MiniMaxH3ChainAssemble:
         return float("NaN")
 
     def assemble(self, manifest, audio_source, filename, audio_bitrate,
-                 source_audio=None):
+                 source_audio=None, overwrite_existing=False):
         segments = _validate_manifest(manifest)
         prelude = _validate_prelude(manifest)
         selected = audio_source
@@ -3769,8 +3812,10 @@ class MiniMaxH3ChainAssemble:
         run_dir = os.path.join(_output_root(), "h3_chains", run_name)
         final_dir = os.path.join(run_dir, "final")
         os.makedirs(final_dir, exist_ok=True)
-        final_name = _safe_name(filename, "final")
+        final_name = _safe_name(_expand_filename_date(filename), "final")
         final_path = os.path.join(final_dir, final_name + ".mp4")
+        if not overwrite_existing:
+            final_path = _available_versioned_path(final_path)
         concat_path = os.path.join(final_dir, ".concat.txt")
         video_tmp = os.path.join(final_dir, ".video.tmp.mp4")
         final_tmp = os.path.join(final_dir, ".final.tmp.mp4")
@@ -3877,7 +3922,8 @@ def _assemble_review_partial(
     warning = ""
     try:
         result = assembler.assemble(
-            manifest, selected, filename, 192, source_audio)
+            manifest, selected, filename, 192, source_audio,
+            overwrite_existing=True)
     except Exception as audio_error:
         if selected == "none":
             raise
@@ -3885,7 +3931,8 @@ def _assemble_review_partial(
             "H3 Chain partial audio assembly failed; saving silent video: %s",
             audio_error)
         result = assembler.assemble(
-            manifest, "none", filename, 192, source_audio)
+            manifest, "none", filename, 192, source_audio,
+            overwrite_existing=True)
         warning = "audio unavailable, so the partial video is silent (%s)" % audio_error
     return str(result["result"][0]), warning
 
