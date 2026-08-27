@@ -34,18 +34,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.5.27";
+} from "./h3_chain_plan_core.mjs?v=0.5.28";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.5.27";
+} from "./h3_prompt_history_core.mjs?v=0.5.28";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.5.27";
+} from "./h3_reference_preview_core.mjs?v=0.5.28";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -54,12 +54,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.5.27";
+} from "./h3_policy_core.mjs?v=0.5.28";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.5.27";
+} from "./h3_socket_presentation_core.mjs?v=0.5.28";
 import {
     locateStudioTimelineSecond,
     h3StudioGridMarkers,
@@ -72,8 +72,8 @@ import {
     studioSourceSecond,
     studioTimelineLayout,
     studioWaveformSceneSamples,
-} from "./h3_chain_plan_studio_core.mjs?v=0.5.27";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.27";
+} from "./h3_chain_plan_studio_core.mjs?v=0.5.28";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.28";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -233,7 +233,6 @@ function injectStyles() {
         .h3studio-history-meta { max-width:300px; color:var(--hs-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .h3studio-error { color:#ffb3b3; white-space:pre-wrap; }
         .h3studio-shared { min-height:260px; font:15px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace !important; }
-        .h3studio-defaults { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; max-width:390px; }
         .h3studio-json { min-height:360px; font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace !important; }
         .h3studio-json-actions { margin-top:7px; }
         .h3studio-player { display:flex; flex-direction:column; gap:7px; height:100%; min-height:330px; }
@@ -274,7 +273,7 @@ function injectStyles() {
         .h3studio-ref-preview audio { width:100%; height:36px; }
         @media(max-width:760px) { .h3studio-form,.h3studio-advanced-grid,.h3studio-plan-settings,
             .h3studio-audio-overrides { grid-template-columns:1fr 1fr; }
-            .h3studio-defaults { grid-template-columns:1fr; } }
+        }
     `;
     document.head.appendChild(style);
 }
@@ -1524,7 +1523,7 @@ function mount(node) {
             else length.value = "";
         }
         mode.addEventListener("change", () => {
-            setShotLengthMode(shot, mode.value, state.plan.defaults?.duration_seconds ?? settings().defaultDurationSeconds);
+            setShotLengthMode(shot, mode.value, settings().defaultDurationSeconds);
             refreshLength(); writePlan(); renderShell();
         });
         length.addEventListener("change", () => {
@@ -1535,7 +1534,7 @@ function mount(node) {
         refreshLength();
         const lengthControl = element("span", "h3studio-length"); lengthControl.append(mode, length);
         const steps = element("input"); steps.type = "number"; steps.min = "1"; steps.max = "10000";
-        steps.placeholder = String(state.plan.defaults?.steps ?? settings().defaultSteps); steps.value = shot.steps ?? "";
+        steps.placeholder = String(settings().defaultSteps); steps.value = shot.steps ?? "";
         steps.addEventListener("change", () => { if (steps.value) shot.steps = Number(steps.value); else delete shot.steps; writePlan(); });
         const promptSeedMode = element("select");
         for (const [modeValue, label] of [
@@ -2139,17 +2138,7 @@ function mount(node) {
         textarea.value = sharedPrompt(state.plan).text;
         textarea.placeholder = "Identity, wardrobe, style, reference definitions, audio rules, and global continuity…";
         textarea.addEventListener("input", () => { setSharedPrompt(state.plan, textarea.value); writePlan(); });
-        state.plan.defaults = state.plan.defaults && typeof state.plan.defaults === "object" && !Array.isArray(state.plan.defaults)
-            ? state.plan.defaults : {};
-        const duration = element("input"); duration.type = "number"; duration.step = ".01";
-        duration.placeholder = String(settings().defaultDurationSeconds); duration.value = state.plan.defaults.duration_seconds ?? "";
-        duration.addEventListener("change", () => { if (duration.value) state.plan.defaults.duration_seconds = Number(duration.value); else delete state.plan.defaults.duration_seconds; writePlan(); renderShell(); });
-        const steps = element("input"); steps.type = "number"; steps.min = "1"; steps.max = "10000";
-        steps.placeholder = String(settings().defaultSteps); steps.value = state.plan.defaults.steps ?? "";
-        steps.addEventListener("change", () => { if (steps.value) state.plan.defaults.steps = Number(steps.value); else delete state.plan.defaults.steps; writePlan(); });
-        const defaults = element("div", "h3studio-defaults");
-        defaults.append(field("Default seconds (blank = Plan widget)", duration), field("Default steps (blank = Plan widget)", steps));
-        panel.append(textarea, defaults);
+        panel.append(textarea);
         return panel;
     }
 

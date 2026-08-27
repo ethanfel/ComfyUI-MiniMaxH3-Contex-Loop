@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Plan editing now exposes only two timing levels: the Plan-wide default
+  seconds/steps widgets and optional per-scene overrides. The redundant
+  JSON-level default controls were removed from both Scene Plan and Plan
+  Studio, and scene placeholders now inherit directly from the Plan widgets.
+
 - Checkpoint Manager branch rows keep their compact shared-revision colors and
   badges without drawing long SVG lineage rails across the branch list.
 

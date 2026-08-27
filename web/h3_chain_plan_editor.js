@@ -31,8 +31,8 @@ import {
     shotLengthMode,
     sharedPrompt,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.5.27";
-import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.5.27";
+} from "./h3_chain_plan_core.mjs?v=0.5.28";
+import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.5.28";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -41,12 +41,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.5.27";
+} from "./h3_policy_core.mjs?v=0.5.28";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.5.27";
+} from "./h3_socket_presentation_core.mjs?v=0.5.28";
 
 // This scene editor is an original implementation. Its quick @ reference and
 // # dialogue interactions are inspired by nkxx188/ComfyUI-MiniMaxH3-Easy,
@@ -140,7 +140,6 @@ function injectStyles() {
         }
         .h3c-label { display: block; margin-bottom: 4px; color: var(--h3c-muted); font-weight: 650; }
         .h3c-help { margin-top: 4px; color: var(--h3c-muted); }
-        .h3c-defaults { display: grid; grid-template-columns: minmax(0, 1fr) 150px 130px; gap: 8px; }
         .h3c-prefix { min-height: 88px; }
         .h3c-toolbar { position: sticky; top: -10px; z-index: 4; padding: 7px 0; background: var(--h3c-bg); }
         .h3c-toolbar .h3c-spacer { flex: 1; }
@@ -209,7 +208,7 @@ function injectStyles() {
         .h3c-footer { justify-content: space-between; padding-top: 4px; color: var(--h3c-muted); }
         .h3c-footer a { color: var(--h3c-accent); }
         @media (max-width: 650px) {
-            .h3c-defaults, .h3c-length-row, .h3c-advanced-fields,
+            .h3c-length-row, .h3c-advanced-fields,
             .h3c-seed-control, .h3c-boundary-fields, .h3c-audio-fields {
                 grid-template-columns: 1fr; }
             .h3c-seed-status { grid-column:1; }
@@ -769,13 +768,12 @@ function mountEditor(node) {
                 value.title = "Exact raw generation frames. Valid values satisfy frames % 17 = 5 and range from 5 to 3592.";
             } else {
                 value.value = "";
-                lengthHelp.textContent = "Uses JSON defaults, then node defaults.";
-                value.title = "Disabled because this scene inherits the JSON default duration, then the Plan node default.";
+                lengthHelp.textContent = "Uses the Plan node default.";
+                value.title = "Disabled because this scene inherits the Plan node default duration.";
             }
         }
         mode.addEventListener("change", () => {
-            const fallback = state.plan.defaults?.duration_seconds
-                ?? widgetValue(node, "default_duration_seconds", 15);
+            const fallback = widgetValue(node, "default_duration_seconds", 15);
             setShotLengthMode(shot, mode.value, fallback);
             refreshLengthControl();
             syncPlan();
@@ -935,8 +933,8 @@ function mountEditor(node) {
 
         const advanced = element("div", "h3c-advanced-fields");
         const steps = numberInput(shot.steps ?? "", {min: "1", max: "10000", step: "1"});
-        steps.placeholder = String(state.plan.defaults?.steps ?? widgetValue(node, "default_steps", 20));
-        steps.title = "Optional sampler-step override for only this scene. Leave blank to inherit the JSON default, then the Plan node default.";
+        steps.placeholder = String(widgetValue(node, "default_steps", 20));
+        steps.title = "Optional sampler-step override for only this scene. Leave blank to inherit the Plan node default.";
         steps.addEventListener("input", () => {
             if (steps.value) shot.steps = Number(steps.value);
             else delete shot.steps;
@@ -1492,35 +1490,6 @@ function mountEditor(node) {
             promptTools(prefix, null),
         );
 
-        state.plan.defaults = state.plan.defaults
-            && typeof state.plan.defaults === "object"
-            && !Array.isArray(state.plan.defaults)
-            ? state.plan.defaults : {};
-        const defaultDuration = numberInput(state.plan.defaults.duration_seconds ?? "", {
-            min: "0.01", max: String(3592 / 24), step: "0.01",
-        });
-        defaultDuration.placeholder = String(widgetValue(node, "default_duration_seconds", 15));
-        defaultDuration.title = "Optional JSON-level default duration for scenes that use Plan default. Leave blank to use the Plan node's default_duration_seconds widget.";
-        defaultDuration.addEventListener("input", () => {
-            if (defaultDuration.value) state.plan.defaults.duration_seconds = Number(defaultDuration.value);
-            else delete state.plan.defaults.duration_seconds;
-            syncPlan();
-        });
-        const defaultSteps = numberInput(state.plan.defaults.steps ?? "", {min: "1", max: "10000", step: "1"});
-        defaultSteps.placeholder = String(widgetValue(node, "default_steps", 20));
-        defaultSteps.title = "Optional JSON-level sampler-step default. Leave blank to use the Plan node's default_steps widget.";
-        defaultSteps.addEventListener("input", () => {
-            if (defaultSteps.value) state.plan.defaults.steps = Number(defaultSteps.value);
-            else delete state.plan.defaults.steps;
-            syncPlan();
-        });
-        const defaults = element("section", "h3c-section h3c-defaults");
-        defaults.append(
-            element("div", "h3c-help", "Scene values override these plan defaults. Blank fields use the Plan node widgets above."),
-            field("Default seconds", defaultDuration),
-            field("Default steps", defaultSteps),
-        );
-
         const toolbar = element("div", "h3c-toolbar");
         const add = button("+ Add scene", "Append a new scene", () => {
             if (state.plan.shots.length >= MAX_SHOTS) return;
@@ -1612,7 +1581,6 @@ function mountEditor(node) {
             header,
             ...(externalPlanConnected ? [externalNotice] : []),
             prefixSection,
-            defaults,
             toolbar,
             errors,
             cards,
