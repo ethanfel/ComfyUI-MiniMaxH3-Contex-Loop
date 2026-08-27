@@ -5,7 +5,7 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.47";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.48";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -195,6 +195,8 @@ function injectStyles() {
         .h3pa-crop-controls label{display:flex;flex-direction:column;gap:3px;color:#aeb7c8}.h3pa-crop-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
         .h3pa-crop-controls input,.h3pa-crop-controls select{width:100%;min-width:0;padding:6px 7px;border:1px solid #566174;border-radius:6px;background:#151820;color:inherit}
         .h3pa-mp-presets{display:flex;gap:4px;flex-wrap:wrap}.h3pa-mp-presets .h3pa-button{flex:1 1 40px;padding:4px 5px}
+        .h3pa-snap-options{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.h3pa-snap-options .h3pa-button{flex:1 1 38px;padding:4px 5px}
+        .h3pa-snap-options .h3pa-button.active{background:#284d7e;border-color:#70a9ff}.h3pa-snap-label{color:#aeb7c8;font-size:11px}
         .h3pa-size-summary{padding:8px;border:1px solid #46536a;border-radius:7px;background:#0d1119;color:#b8c7de;line-height:1.4}
         .h3pa-crop-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}.h3pa-crop-note{color:#8f9bb0;font-size:11px}
         @media(max-width:850px){.h3pa-crop-layout{grid-template-columns:1fr}.h3pa-crop-controls{max-height:320px}}
@@ -590,6 +592,7 @@ function mount(node) {
         let drawScale = 1; let drawX = 0; let drawY = 0;
         let drag = null;
         let lockedRatio = 1;
+        let outputMultiple = 8;
         const cropInputs = {};
         function numberField(name, label, value, minimum = 0) {
             const wrapper = el("label", "", label);
@@ -620,6 +623,16 @@ function mount(node) {
                 applyMegapixelTarget();
             }, `Set the final image near ${value} megapixels while preserving the current output ratio`));
         }
+        const snapOptions = el("div", "h3pa-snap-options");
+        snapOptions.title = "Snap both final dimensions to a model-friendly multiple. Aspect ratio has priority, so the actual megapixel count may move slightly.";
+        snapOptions.append(el("span", "h3pa-snap-label", "Output multiple"));
+        const snapButtons = new Map();
+        for (const [label, value] of [["Off", 1], ["8", 8], ["16", 16], ["32", 32], ["64", 64]]) {
+            const item = button(label, () => applyOutputMultiple(value),
+                value === 1 ? "Allow any integer output dimensions" : `Keep both output dimensions divisible by ${value}`);
+            item.classList.toggle("active", value === outputMultiple);
+            snapButtons.set(value, item); snapOptions.append(item);
+        }
         const ratioLabel = el("label", "h3pa-toggle");
         const ratioLock = el("input"); ratioLock.type = "checkbox"; ratioLock.checked = true;
         const ratioCopy = el("span", "h3pa-toggle-copy");
@@ -642,7 +655,7 @@ function mount(node) {
         controls.append(
             el("div", "h3pa-crop-note", "Coordinates are oriented source-image pixels. Drag anywhere to draw a crop; drag inside it to move; drag any corner to resize. Arrow keys nudge by 1 px (Shift: 10 px)."),
             cropGrid, targetGrid, ratioLabel, megapixelLabel, megapixelPresets,
-            resampleLabel, tagLabel, sizeStatus, cropStatus,
+            snapOptions, resampleLabel, tagLabel, sizeStatus, cropStatus,
         );
         const actions = el("div", "h3pa-crop-actions");
         const reset = button("Use full image", () => {
@@ -651,10 +664,13 @@ function mount(node) {
             crop.x = 0; crop.y = 0; crop.width = sourceWidth; crop.height = sourceHeight;
             if (ratioLock.checked) {
                 lockedRatio = sourceWidth / sourceHeight;
-                setTargetSize(dimensionsForMegapixels(targetMegapixels, lockedRatio));
+                setTargetSize(dimensionsForMegapixels(
+                    targetMegapixels, lockedRatio, outputMultiple));
             }
             syncInputs(); draw();
         }, "Remove the crop while keeping the current megapixel target; with ratio lock enabled, the target follows the full image ratio");
+        const resetAll = button("Reset all", () => resetImageEditor(),
+            "Restore the full image, source aspect ratio, model-friendly multiple of 8, source-sized output, Lanczos, and the default variant tag");
         const startCrop = button("Start centered crop", () => {
             const ratio = outputRatio();
             let width = Math.max(1, Math.round(sourceWidth * 0.8));
@@ -717,7 +733,7 @@ function mount(node) {
             ));
         }
         modelButton.disabled = !modelConnected();
-        actions.append(startCrop, reset, save, modelButton); controls.append(actions);
+        actions.append(startCrop, reset, resetAll, save, modelButton); controls.append(actions);
 
         function operationPayload(mode) {
             applyNumericInputs();
@@ -745,6 +761,35 @@ function mount(node) {
         function setTargetSize(size) {
             cropInputs.targetWidth.value = String(Math.max(1, Math.round(size.width)));
             cropInputs.targetHeight.value = String(Math.max(1, Math.round(size.height)));
+        }
+        function updateSnapButtons() {
+            for (const [value, item] of snapButtons) {
+                item.classList.toggle("active", value === outputMultiple);
+            }
+        }
+        function applyOutputMultiple(value) {
+            const targetMegapixels = imageMegapixels(
+                cropInputs.targetWidth.value, cropInputs.targetHeight.value);
+            outputMultiple = value;
+            updateSnapButtons();
+            setTargetSize(dimensionsForMegapixels(
+                targetMegapixels, outputRatio(), outputMultiple));
+            cropStatus.textContent = "";
+            syncInputs("position"); draw();
+        }
+        function resetImageEditor() {
+            outputMultiple = 8; updateSnapButtons();
+            ratioLock.checked = true;
+            lockedRatio = sourceWidth / sourceHeight;
+            crop.x = 0; crop.y = 0;
+            crop.width = sourceWidth; crop.height = sourceHeight;
+            setTargetSize(dimensionsForMegapixels(
+                imageMegapixels(sourceWidth, sourceHeight),
+                lockedRatio, outputMultiple));
+            resample.value = "lanczos";
+            variantTag.value = `${asset.tag}_variant`;
+            cropStatus.textContent = "";
+            syncInputs(); draw();
         }
         function outputRatio() {
             if (ratioLock.checked) return lockedRatio;
@@ -790,11 +835,14 @@ function mount(node) {
                 target.width, target.height));
             megapixelInput.value = targetMp;
             const inputName = isFullCrop() ? "full image" : "selected crop";
+            const snapText = outputMultiple > 1
+                ? ` Output dimensions are multiples of ${outputMultiple}.`
+                : " Output dimension snapping is off.";
             if (modelConnected()) {
-                sizeStatus.textContent = `Connected model input (${inputName}): ${crop.width}×${crop.height} (${inputMp} MP). Final saved asset: ${target.width}×${target.height} (${targetMp} MP). The model runs at its native scale before the final fit.`;
+                sizeStatus.textContent = `Connected model input (${inputName}): ${crop.width}×${crop.height} (${inputMp} MP). Final saved asset: ${target.width}×${target.height} (${targetMp} MP).${snapText} The model runs at its native scale before the final fit.`;
                 modelButton.title = `Run only this Carousel. The connected model receives ${crop.width}×${crop.height}; its result is fitted to ${target.width}×${target.height}.`;
             } else {
-                sizeStatus.textContent = `${inputName[0].toUpperCase()}${inputName.slice(1)}: ${crop.width}×${crop.height} (${inputMp} MP) → final saved asset ${target.width}×${target.height} (${targetMp} MP). Connect UPSCALE_MODEL to enable model upscale.`;
+                sizeStatus.textContent = `${inputName[0].toUpperCase()}${inputName.slice(1)}: ${crop.width}×${crop.height} (${inputMp} MP) → final saved asset ${target.width}×${target.height} (${targetMp} MP).${snapText} Connect UPSCALE_MODEL to enable model upscale.`;
                 modelButton.title = "Connect a core UPSCALE_MODEL to enable asset-only model upscale.";
             }
         }
@@ -822,11 +870,11 @@ function mount(node) {
                 if (Number.isFinite(value)) crop[key] = value;
             }
             let target = currentTargetSize();
-            if (ratioLock.checked && ["targetWidth", "targetHeight"].includes(changed)) {
+            if (["targetWidth", "targetHeight"].includes(changed)) {
                 target = coupledOutputDimensions(
                     target.width, target.height,
                     changed === "targetHeight" ? "height" : "width",
-                    lockedRatio, true,
+                    lockedRatio, ratioLock.checked, outputMultiple,
                 );
             }
             if (ratioLock.checked && ["width", "height"].includes(changed)) {
@@ -847,7 +895,8 @@ function mount(node) {
                 cropStatus.textContent = "Target megapixels must be positive.";
                 return;
             }
-            setTargetSize(dimensionsForMegapixels(value, outputRatio()));
+            setTargetSize(dimensionsForMegapixels(
+                value, outputRatio(), outputMultiple));
             cropStatus.textContent = "";
             syncInputs("position"); draw();
         }
@@ -1010,12 +1059,7 @@ function mount(node) {
         });
         image.addEventListener("load", () => {
             sourceWidth = image.naturalWidth; sourceHeight = image.naturalHeight;
-            lockedRatio = sourceWidth / sourceHeight;
-            crop.x = 0; crop.y = 0; crop.width = sourceWidth; crop.height = sourceHeight;
-            cropInputs.targetWidth.value = String(sourceWidth);
-            cropInputs.targetHeight.value = String(sourceHeight);
-            cropStatus.textContent = "";
-            syncInputs(); draw();
+            resetImageEditor();
         });
         image.addEventListener("error", () => { cropStatus.textContent = "Could not load the full stored source image."; });
         image.src = mediaUrl(project(), asset, "original");

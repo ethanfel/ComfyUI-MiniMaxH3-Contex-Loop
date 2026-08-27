@@ -8,6 +8,9 @@ Newest first. This file keeps release history out of the onboarding README.
   without requiring a crop. Output aspect locking couples width and height in
   both directions, **Use full image** preserves the megapixel target, and a
   connected upscale model reports its exact input and final saved dimensions.
+  Output snapping now offers Off/8/16/32/64 (default 8), preserves the locked
+  aspect ratio instead of producing arbitrary odd sizes, and **Reset all**
+  restores the full editor state.
 
 - Reference discovery in Plan Studio and both scene prompt editors now crosses
   ComfyUI subgraph input/output rails. Tagged references, Semantic Anchor
