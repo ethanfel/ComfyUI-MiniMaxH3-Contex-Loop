@@ -145,8 +145,11 @@ function injectStyles() {
         .h3pa-badge{position:absolute;top:5px;left:5px;padding:2px 5px!important;border-radius:4px;background:#111c;color:#fff;font-size:10px}
         .h3pa-drag-handle{position:absolute;top:4px;right:4px;width:24px;padding:2px 4px!important;border-radius:4px;
           background:#111c;color:#dce8ff;text-align:center;font-size:14px;line-height:16px}
-        .h3pa-editor-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:4px}
-        .h3pa-button.danger{border-color:#9a5151;color:#ffb4b4}.h3pa-button.danger:hover{border-color:#ff7777}
+        .h3pa-editor-actions{display:grid;grid-template-columns:auto 30px 30px minmax(0,1fr);gap:5px;
+          align-items:center;margin-top:auto;padding-top:8px;border-top:1px solid color-mix(in srgb,var(--border-color,#566174) 55%,transparent)}
+        .h3pa-editor-actions .h3pa-button{height:28px;padding:3px 7px}.h3pa-action-label{color:#8f9bb0;font-size:11px}
+        .h3pa-editor-actions .h3pa-button:disabled{opacity:.35;cursor:default}
+        .h3pa-button.danger{justify-self:end;border-color:#9a5151;color:#ffb4b4}.h3pa-button.danger:hover{border-color:#ff7777}
         .h3pa-modal{position:fixed;z-index:100000;left:50%;top:50%;transform:translate(-50%,-50%);
           width:min(760px,calc(100vw - 32px));height:min(520px,calc(100vh - 48px));
           display:flex;flex-direction:column;gap:8px;padding:14px;
@@ -592,21 +595,27 @@ function mount(node) {
                 wrapper.append(input); editor.append(wrapper);
             }
         }
+        editor.append(el("small", "h3pa-status", `input/${asset.input_path}`));
         const actions = el("div", "h3pa-editor-actions");
         const assetIndex = (state.catalog.assets ?? []).findIndex(
             (item) => item.id === asset.id,
         );
-        const earlier = button("← Earlier", () => moveAsset(asset, -1),
+        const earlier = button("←", () => moveAsset(asset, -1),
             "Move this asset one position earlier in the project Carousel");
+        earlier.setAttribute("aria-label", "Move asset earlier");
         earlier.disabled = assetIndex <= 0;
-        const later = button("Later →", () => moveAsset(asset, 1),
+        const later = button("→", () => moveAsset(asset, 1),
             "Move this asset one position later in the project Carousel");
+        later.setAttribute("aria-label", "Move asset later");
         later.disabled = assetIndex < 0 || assetIndex >= state.catalog.assets.length - 1;
-        const remove = button("Delete asset", () => deleteAsset(asset),
+        const remove = button("Delete", () => deleteAsset(asset),
             "Permanently remove this project-owned copy and its H3 backup");
+        remove.setAttribute("aria-label", "Delete asset");
         remove.classList.add("danger");
-        actions.append(earlier, later, remove); editor.append(actions);
-        editor.append(el("small", "h3pa-status", `input/${asset.input_path}`));
+        actions.append(
+            el("span", "h3pa-action-label", "Order"), earlier, later, remove,
+        );
+        editor.append(actions);
     }
     function renderCarousel() {
         carousel.replaceChildren();
