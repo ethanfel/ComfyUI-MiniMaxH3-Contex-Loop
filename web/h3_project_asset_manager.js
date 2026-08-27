@@ -88,7 +88,7 @@ function injectStyles() {
           background:var(--comfy-input-bg,#20242d);color:inherit;cursor:pointer}.h3pa-button:hover{border-color:#79a9ff}
         .h3pa-status{min-height:18px;color:#9eabc0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         .h3pa-tabs{display:flex;gap:5px;overflow-x:auto}.h3pa-tab.active{background:#284d7e;border-color:#70a9ff}
-        .h3pa-stage{min-height:230px;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;overflow:hidden}
+        .h3pa-stage{flex:1 1 auto;min-height:230px;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;overflow:hidden}
         .h3pa-preview{position:relative;display:grid;place-items:center;min-width:0;min-height:220px;
           overflow:hidden;border:1px solid var(--border-color,#566174);border-radius:9px;background:#090b10}
         .h3pa-preview img,.h3pa-preview video{display:block;max-width:100%;max-height:100%;object-fit:contain}
@@ -99,6 +99,8 @@ function injectStyles() {
         .h3pa-carousel{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:4px 1px 7px;min-height:126px}
         .h3pa-card{position:relative;flex:0 0 150px;height:112px;padding:0;border:1px solid #495466;border-radius:8px;
           overflow:hidden;background:#11141a;color:inherit;text-align:left;cursor:pointer}.h3pa-card.selected{border:2px solid #76aaff}
+        .h3pa-card.unresolved{border-style:dashed;background:#171922}.h3pa-card.unresolved.stale{opacity:.58}
+        .h3pa-card.unresolved .fallback{color:#d7a95c}.h3pa-unassigned{color:#e6b76a;font-weight:650}
         .h3pa-card img{width:100%;height:78px;object-fit:cover;background:#090b10}.h3pa-card .fallback{height:78px;display:grid;
           place-items:center;font-size:24px;color:#81a8dc}.h3pa-card span{display:block;padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         .h3pa-badge{position:absolute;top:5px;left:5px;padding:2px 5px!important;border-radius:4px;background:#111c;color:#fff;font-size:10px}
@@ -162,7 +164,10 @@ function mount(node) {
     fileInput.type = "file"; fileInput.accept = "image/*,video/*,audio/*";
     fileInput.hidden = true;
     top.append(
-        button("Upload", () => fileInput.click(), "Copy media into this project"),
+        button("Upload", () => {
+            state.bindingSlot = null;
+            fileInput.click();
+        }, "Copy media into this project"),
         button("Browse source", () => browseSource(), "Import from selected source"),
         button("Refresh", () => refresh()), fileInput,
     );
@@ -175,12 +180,15 @@ function mount(node) {
     const carousel = el("div", "h3pa-carousel");
     root.append(top, status, tabs, stage, carousel);
     const dom = node.addDOMWidget("project_asset_carousel", "div", root, {
-        serialize: false, hideOnZoom: false,
+        serialize: false, hideOnZoom: false, getMinHeight: () => 560,
     });
-    dom.computeSize = (width) => [width, 600];
+    dom.serialize = false;
     node.setSize?.([Math.max(node.size?.[0] ?? 680, 760), Math.max(node.size?.[1] ?? 650, 700)]);
 
-    const state = {catalog: {assets: []}, selected: "", filter: "all", media: null};
+    const state = {
+        catalog: {assets: [], reference_slots: []}, selected: "",
+        filter: "all", media: null, bindingSlot: null,
+    };
     const project = () => String(projectInput.value || "h3_project").trim();
     function setStatus(text, error = false) {
         status.textContent = text;
@@ -192,7 +200,7 @@ function mount(node) {
         preview.replaceChildren();
     }
     function persistCatalog(catalog) {
-        state.catalog = catalog ?? {assets: []};
+        state.catalog = catalog ?? {assets: [], reference_slots: []};
         const canonicalProject = String(state.catalog.project || project());
         projectInput.value = canonicalProject;
         if (catalogWidget) {
@@ -204,9 +212,18 @@ function mount(node) {
         syncDownstreamPlan(node, canonicalProject);
         node.graph?.setDirtyCanvas?.(true, true);
     }
+    function allItems() {
+        return [
+            ...(state.catalog.assets ?? []),
+            ...(state.catalog.reference_slots ?? []).map((slot) => ({
+                ...slot, _unresolved: true,
+            })),
+        ];
+    }
     function filteredAssets() {
-        return (state.catalog.assets ?? []).filter((asset) => {
+        return allItems().filter((asset) => {
             if (state.filter === "all") return true;
+            if (state.filter === "unassigned") return asset._unresolved;
             if (state.filter === "semantic") return asset.role === "semantic_anchor";
             if (state.filter === "image") return asset.kind === "image";
             if (state.filter === "video") return asset.kind === "video";
@@ -218,10 +235,13 @@ function mount(node) {
         tabs.replaceChildren();
         for (const [key, label] of [["all", "All"], ["image", "Images"],
             ["semantic", "Semantic"], ["video", "Video"],
-            ["audio", "Audio"], ["source_track", "Source track"]]) {
-            const count = (state.catalog.assets ?? []).filter((asset) => key === "all"
-                || (key === "semantic" ? asset.role === "semantic_anchor"
-                    : key === "source_track" ? asset.role === key : asset.kind === key)).length;
+            ["audio", "Audio"], ["unassigned", "Unassigned"],
+            ["source_track", "Source track"]]) {
+            const count = allItems().filter((asset) => key === "all"
+                || (key === "unassigned" ? asset._unresolved
+                    : key === "semantic" ? asset.role === "semantic_anchor"
+                        : key === "source_track" ? asset.role === key
+                            : asset.kind === key)).length;
             const item = button(`${label} ${count}`, () => {
                 state.filter = key; render();
             });
@@ -234,6 +254,15 @@ function mount(node) {
         stopMedia();
         if (!asset) {
             preview.append(el("div", "h3pa-empty", "Upload or import a project asset."));
+            return;
+        }
+        if (asset._unresolved) {
+            preview.append(el(
+                "div", "h3pa-empty",
+                asset.available === false
+                    ? `@${asset.tag} is no longer present on the connected reference line.`
+                    : `@${asset.tag} is unassigned. Choose its ${asset.kind} from ComfyUI input or upload it.`,
+            ));
             return;
         }
         if (asset.kind === "image") {
@@ -268,6 +297,32 @@ function mount(node) {
     function renderEditor(asset) {
         editor.replaceChildren();
         if (!asset) return;
+        if (asset._unresolved) {
+            editor.append(el("strong", "h3pa-unassigned", `@${asset.tag} · Unassigned`));
+            editor.append(el(
+                "div", "h3pa-status",
+                `${asset.kind} · ${String(asset.role || "").replaceAll("_", " ")}`,
+            ));
+            const pairedTag = String(asset.options?.audio_tag ?? "");
+            if (pairedTag) editor.append(el("div", "h3pa-status", `Paired alias @${pairedTag}`));
+            if (asset.content_hash) editor.append(el(
+                "small", "h3pa-status", `Source fingerprint ${asset.content_hash.slice(0, 16)}`,
+            ));
+            if (asset.available === false) editor.append(el(
+                "div", "h3pa-status",
+                "This tag disappeared from the connected carrier. The placeholder is retained and inactive.",
+            ));
+            editor.append(
+                button("Choose from ComfyUI Input", () => browseSource(asset, "input"),
+                    "Bind an existing ComfyUI input file without importing data from the Tagged Reference carrier"),
+                button("Upload media", () => {
+                    state.bindingSlot = asset;
+                    fileInput.click();
+                }),
+                button("Choose another source", () => browseSource(asset)),
+            );
+            return;
+        }
         editor.append(el("strong", "", asset.original_name || asset.tag));
         editor.append(el("div", "h3pa-status", assetDetail(asset)));
         const tagLabel = el("label", "", "Prompt tag");
@@ -346,19 +401,29 @@ function mount(node) {
         for (const asset of assets) {
             const card = el("button", "h3pa-card"); card.type = "button";
             card.classList.toggle("selected", asset.id === state.selected);
-            if (["image", "video"].includes(asset.kind)) {
+            card.classList.toggle("unresolved", Boolean(asset._unresolved));
+            card.classList.toggle("stale", asset._unresolved && asset.available === false);
+            if (!asset._unresolved && ["image", "video"].includes(asset.kind)) {
                 const image = el("img"); image.loading = "lazy";
                 image.src = mediaUrl(project(), asset, "poster"); card.append(image);
-            } else card.append(el("div", "fallback", "♫"));
-            card.append(el("span", "h3pa-badge", asset.role.replaceAll("_", " ")));
-            card.append(el("span", "", `${asset.enabled === false ? "○ " : ""}@${asset.tag}`));
+            } else card.append(el(
+                "div", "fallback", asset._unresolved ? "?" : "♫",
+            ));
+            card.append(el(
+                "span", "h3pa-badge",
+                `${asset.role.replaceAll("_", " ")}${asset._unresolved ? " · unassigned" : ""}`,
+            ));
+            card.append(el(
+                "span", "",
+                `${asset.available === false || asset.enabled === false ? "○ " : ""}@${asset.tag}`,
+            ));
             card.addEventListener("click", () => { state.selected = asset.id; render(); });
             carousel.append(card);
         }
     }
     function render() {
         renderTabs(); renderCarousel();
-        const selected = (state.catalog.assets ?? []).find((asset) => asset.id === state.selected);
+        const selected = allItems().find((asset) => asset.id === state.selected);
         renderPreview(selected); renderEditor(selected);
     }
     async function refresh() {
@@ -368,7 +433,7 @@ function mount(node) {
                 `/minimax_h3_context_loop/project-assets?project=${encodeURIComponent(project())}`,
             );
             persistCatalog(catalog); render();
-            setStatus(`${catalog.assets.length} project assets · revision ${(catalog.revision || "empty").slice(0, 12)}`);
+            setStatus(`${catalog.assets.length} project assets · ${(catalog.reference_slots ?? []).length} unassigned · revision ${(catalog.revision || "empty").slice(0, 12)}`);
         } catch (error) { setStatus(error.message, true); }
     }
     async function importAsset(body) {
@@ -378,15 +443,16 @@ function mount(node) {
                 body: JSON.stringify({project: project(), ...body}),
             });
         persistCatalog(result.catalog); state.selected = result.asset.id; render();
-        setStatus(`Imported @${result.asset.tag} as ${result.asset.role}.`);
+        setStatus(`${result.bound_slot_id ? "Bound" : "Imported"} @${result.asset.tag} as ${result.asset.role}.`);
     }
-    async function browseSource() {
-        const source = sourceSelect.value;
+    async function browseSource(slot = null, forcedSource = "") {
+        let source = forcedSource || sourceSelect.value;
+        if (source === "project" && slot) source = "input";
         if (source === "project") { await refresh(); return; }
         if (source === "path") {
             const path = window.prompt("Absolute server media path");
             if (!path) return;
-            try { await importAsset({source: "path", path}); }
+            try { await importAsset({source: "path", path, slot_id: slot?.id ?? ""}); }
             catch (error) { setStatus(error.message, true); }
             return;
         }
@@ -410,10 +476,15 @@ function mount(node) {
                     const rowItem = el("div", "h3pa-source-item");
                     rowItem.append(el("span", "", source === "chains"
                         ? `${item.run_name} · @${item.tag}` : item.path),
-                    el("span", "", item.kind ?? ""), button("Import", async () => {
+                    el("span", "", item.kind ?? ""), button(slot ? "Bind" : "Import", async () => {
                         try {
-                            if (source === "chains") await importAsset({source, run_name: item.run_name, asset_id: item.id});
-                            else await importAsset({source, path: item.path});
+                            if (source === "chains") await importAsset({
+                                source, run_name: item.run_name, asset_id: item.id,
+                                slot_id: slot?.id ?? "",
+                            });
+                            else await importAsset({
+                                source, path: item.path, slot_id: slot?.id ?? "",
+                            });
                             modal.remove();
                         } catch (error) { setStatus(error.message, true); }
                     }));
@@ -427,14 +498,19 @@ function mount(node) {
     }
     fileInput.addEventListener("change", async () => {
         const file = fileInput.files?.[0]; if (!file) return;
-        const data = new FormData(); data.append("project", project()); data.append("file", file, file.name);
+        const slot = state.bindingSlot;
+        const data = new FormData();
+        data.append("project", project());
+        if (slot?.id) data.append("slot_id", slot.id);
+        data.append("file", file, file.name);
         try {
-            setStatus(`Uploading ${file.name}…`);
+            setStatus(`${slot ? `Binding @${slot.tag} from` : "Uploading"} ${file.name}…`);
             const result = await jsonRequest(
                 "/minimax_h3_context_loop/project-assets/upload", {method: "POST", body: data});
             persistCatalog(result.catalog); state.selected = result.asset.id; render();
-            setStatus(`Uploaded @${result.asset.tag}.`);
+            setStatus(`${slot ? "Bound" : "Uploaded"} @${result.asset.tag}.`);
         } catch (error) { setStatus(error.message, true); }
+        state.bindingSlot = null;
         fileInput.value = "";
     });
     let projectTimer = 0;
@@ -443,6 +519,12 @@ function mount(node) {
     });
     const removed = node.onRemoved;
     node.onRemoved = function () { stopMedia(); return removed?.apply(this, arguments); };
+    const executed = node.onExecuted;
+    node.onExecuted = function () {
+        const result = executed?.apply(this, arguments);
+        void refresh();
+        return result;
+    };
     node._h3ProjectAssetRefresh = refresh;
     void refresh();
 }

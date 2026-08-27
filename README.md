@@ -84,7 +84,12 @@ Plan without another wire. Uploads and imports are copied to
 `ComfyUI/input/h3_projects/<project>/` for use by ordinary loaders and mirrored
 to `output/h3_chains/<project>/project_assets/` for recovery. Only compact
 catalog metadata is saved in the workflow; only tags used by the current scene
-are decoded during sampling.
+are decoded during sampling. For an existing workflow, connect its final
+`tagged_references` line to the carousel once: tags, media kinds, semantic or
+native roles, and reference options appear as **Unassigned** cards without
+copying media from the carrier. Bind each card explicitly from ComfyUI input,
+an upload, a backup, or a server path. Unassigned cards never consume H3
+reference slots and never enter the generation fingerprint.
 
 ## Choose a workflow
 

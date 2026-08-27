@@ -50,6 +50,8 @@ def main():
         "MiniMaxH3ProjectAssetManager"] is chain.MiniMaxH3ProjectAssetManager
     assert "asset_0" not in chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES().get(
         "optional", {})
+    assert "tagged_references" in (
+        chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"])
     with tempfile.TemporaryDirectory() as temporary:
         ACTIVE["root"] = temporary
         root = pathlib.Path(temporary)
@@ -81,7 +83,7 @@ def main():
         assert record["project"] == "episode"
         assert len(references["entries"]) == 1
         assert len(references["semantic_anchors"]["entries"]) == 1
-        assert "1 native, 1 semantic, source track on" in status
+        assert "1 native, 1 semantic, 0 unassigned, source track on" in status
         current, lineage = chain._generation_fingerprint_value(token)
         assert current == chain._combined_reference_registry(
             references)["fingerprint"]
@@ -106,7 +108,19 @@ def main():
         assert studio_timeline["fingerprints"]["timeline"] == (
             timeline["fingerprints"]["timeline"])
 
-    print("H3 Project Asset Manager: registry, lazy picture, and Plan pass")
+        template_record, template_refs, _token, _timeline, template_status = (
+            chain.MiniMaxH3ProjectAssetManager().build(
+                "template_only", "", "512", "timestamped_video",
+                tagged_references=references))
+        template_catalog = template_record["catalog"]
+        assert template_refs["entries"] == []
+        assert template_catalog["assets"] == []
+        assert {slot["tag"] for slot in template_catalog["reference_slots"]} == {
+            "hero", "door"}
+        assert all(slot["available"] for slot in template_catalog["reference_slots"])
+        assert "0 native, 0 semantic, 2 unassigned" in template_status
+
+    print("H3 Project Asset Manager: registry, metadata template, lazy picture, and Plan pass")
 
 
 if __name__ == "__main__":

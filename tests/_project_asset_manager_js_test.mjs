@@ -15,6 +15,14 @@ assert.match(source, /project-assets\/update/);
 assert.match(source, /video\.controls = true/);
 assert.match(source, /video\.preload = "metadata"/);
 assert.match(source, /serialize: false/);
+assert.match(source, /getMinHeight: \(\) => 560/);
+assert.match(source, /flex:1 1 auto/);
+assert.doesNotMatch(source, /dom\.computeSize/);
 assert.match(source, /state\.media\?\.pause/);
+assert.match(source, /Unassigned/);
+assert.match(source, /reference_slots/);
+assert.match(source, /Choose from ComfyUI Input/);
+assert.match(source, /slot_id/);
+assert.match(source, /node\.onExecuted/);
 
-console.log("H3 Project Asset Carousel: sources, lazy media, editing, and cleanup pass");
+console.log("H3 Project Asset Carousel: metadata slots, binding, sources, lazy media, editing, and cleanup pass");

@@ -12709,6 +12709,66 @@ def _project_assets_generation_fingerprint(
         generation_fingerprint, project["references"])
 
 
+def _project_asset_reference_templates(references: Any) -> list[dict[str, Any]]:
+    """Extract only reference schema; deliberately ignore all media values."""
+    templates = []
+    for entry in _tagged_reference_entries(references):
+        source_kind = str(entry.get("kind") or "")
+        if source_kind == "picture":
+            kind, role = "image", "picture"
+        elif source_kind == "video":
+            kind = "video"
+            role = ("motion" if entry.get("semantic_role") == "motion"
+                    else "video")
+        elif source_kind == "audio":
+            kind, role = "audio", "audio_reference"
+        else:
+            continue
+        options = {}
+        if kind == "video":
+            options.update({
+                "timeline_mode": str(
+                    entry.get("timeline_mode") or "restart_each_scene"),
+                "audio_tag": str(entry.get("audio_tag") or ""),
+                "use_embedded_audio": entry.get("audio") is not None,
+            })
+            if role == "motion":
+                options.update({
+                    "target_subject": str(
+                        entry.get("motion_target") or "<Subject 1>"),
+                    "motion_description": str(
+                        entry.get("motion_description") or
+                        "the supplied pose sequence, action, and motion timing"),
+                    "reference_short_edge": str(
+                        entry.get("motion_short_edge") or "384"),
+                })
+        elif kind == "audio":
+            options.update({
+                "timeline_mode": str(
+                    entry.get("timeline_mode") or "standalone"),
+                "align_audio_reference": bool(
+                    entry.get("align_audio_reference", False)),
+            })
+        templates.append({
+            "kind": kind,
+            "role": role,
+            "tag": str(entry.get("tag") or ""),
+            "content_hash": str(entry.get("content_hash") or ""),
+            "options": options,
+        })
+    bundle = _reference_semantic_anchor_bundle(references)
+    if bundle is not None:
+        for entry in _semantic_anchor_draft_entries(bundle):
+            templates.append({
+                "kind": "image",
+                "role": "semantic_anchor",
+                "tag": str(entry.get("tag") or ""),
+                "content_hash": str(entry.get("content_hash") or ""),
+                "options": {},
+            })
+    return templates
+
+
 class MiniMaxH3ProjectAssetManager:
     """Project-owned, path-backed references with one compact workflow node."""
 
@@ -12735,6 +12795,15 @@ class MiniMaxH3ProjectAssetManager:
                     "default": "timestamped_video",
                     "tooltip": "Presentation mode for #tag[timestamp] "
                                "project semantic anchors."}),
+            },
+            "optional": {
+                "tagged_references": (TAGGED_REFERENCE_TYPE, {
+                    "tooltip": "Optional migration/template input. The "
+                               "carousel reads tag, media kind, role, and "
+                               "reference options into Unassigned cards but "
+                               "does not copy, encode, or serialize the media. "
+                               "Bind each card explicitly from ComfyUI input, "
+                               "upload, backup, or server path."}),
             },
         }
 
@@ -12771,9 +12840,14 @@ class MiniMaxH3ProjectAssetManager:
             return str(catalog_json or "")
 
     def build(self, project_name, catalog_json="", semantic_anchor_size="512",
-              semantic_anchor_mode="timestamped_video"):
+              semantic_anchor_mode="timestamped_video",
+              tagged_references=None):
         del catalog_json  # Disk catalog is authoritative; widget is UI state.
         store = ProjectAssetStore(_input_root(), _output_root())
+        if tagged_references is not None:
+            store.sync_reference_slots(
+                project_name,
+                _project_asset_reference_templates(tagged_references))
         catalog = store.public_catalog(project_name)
         references = _make_tagged_references([])
         semantic_entries = []
@@ -12891,10 +12965,14 @@ class MiniMaxH3ProjectAssetManager:
             "source_timeline_asset_id": (
                 str(source_entries[0]["id"]) if source_entries else ""),
         }
-        status = "%s: %d native, %d semantic, source track %s; %s" % (
+        unresolved = len(catalog.get("reference_slots", []))
+        status = (
+            "%s: %d native, %d semantic, %d unassigned, source track %s; %s"
+            % (
             catalog["project"], native_count, len(semantic_entries),
+            unresolved,
             "on" if source_timeline is not None else "off",
-            str(catalog.get("revision") or "")[:12])
+            str(catalog.get("revision") or "")[:12]))
         return record, references, fingerprint, source_timeline, status
 
 
@@ -20847,8 +20925,13 @@ async def _project_asset_upload(request):
                 if received > 100 * 1024 * 1024 * 1024:
                     raise ValueError("Project asset upload exceeds 100 GiB.")
                 handle.write(chunk)
+        slot_id = fields.get("slot_id", "")
+        importer = (store.bind_reference_slot
+                    if slot_id else store.import_file)
+        positional = ((project, slot_id, temporary)
+                      if slot_id else (project, temporary))
         result = await asyncio.to_thread(
-            store.import_file, project, temporary,
+            importer, *positional,
             role=fields.get("role", ""), tag=fields.get("tag", ""),
             original_name=filename, source_kind="upload")
         return web.json_response(result)
@@ -20875,8 +20958,14 @@ async def _project_asset_import(request):
             path = str(body.get("path") or "")
         else:
             raise ValueError("Asset import source must be input, chains, or path.")
+        slot_id = str(body.get("slot_id") or "")
+        importer = (store.bind_reference_slot
+                    if slot_id else store.import_file)
+        project = body.get("project", "h3_project")
+        positional = ((project, slot_id, path)
+                      if slot_id else (project, path))
         result = await asyncio.to_thread(
-            store.import_file, body.get("project", "h3_project"), path,
+            importer, *positional,
             role=body.get("role", ""), tag=body.get("tag", ""),
             original_name=body.get("original_name", ""),
             source_kind=source,

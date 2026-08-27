@@ -50,6 +50,7 @@ AUDIO_EXTENSIONS = frozenset((
 ))
 ALL_MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 MAX_CATALOG_ASSETS = 512
+MAX_REFERENCE_SLOTS = 512
 MAX_INPUT_RESULTS = 2000
 _TAG_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 
@@ -253,6 +254,19 @@ def _entry_contract(entry: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def _slot_contract(slot: dict[str, Any]) -> dict[str, Any]:
+    options = slot.get("options") if isinstance(slot.get("options"), dict) else {}
+    return {
+        "id": str(slot.get("id") or ""),
+        "kind": str(slot.get("kind") or ""),
+        "role": str(slot.get("role") or ""),
+        "tag": str(slot.get("tag") or ""),
+        "content_hash": str(slot.get("content_hash") or ""),
+        "available": bool(slot.get("available", True)),
+        "options": options,
+    }
+
+
 class ProjectAssetStore:
     """Own project media below input/h3_projects and mirror it to a run."""
 
@@ -286,6 +300,7 @@ class ProjectAssetStore:
             "updated_at": _utc_now(),
             "revision": "",
             "assets": [],
+            "reference_slots": [],
         }
 
     def load(self, project: Any, *, create: bool = False) -> dict[str, Any]:
@@ -304,23 +319,35 @@ class ProjectAssetStore:
                 or not isinstance(catalog.get("assets"), list)):
             raise ValueError("Project asset catalog has an unsupported format.")
         catalog["project"] = name
+        slots = catalog.get("reference_slots")
+        catalog["reference_slots"] = (
+            slots if isinstance(slots, list) else [])
         return catalog
 
     def _save_catalog(self, catalog: dict[str, Any]) -> dict[str, Any]:
         directory, name = self._project_dir(catalog.get("project"))
         assets = [dict(item) for item in catalog.get("assets", [])
                   if isinstance(item, dict)]
+        slots = [dict(item) for item in catalog.get("reference_slots", [])
+                 if isinstance(item, dict)]
         if len(assets) > MAX_CATALOG_ASSETS:
             raise ValueError("Project asset catalog supports at most %d assets." % MAX_CATALOG_ASSETS)
+        if len(slots) > MAX_REFERENCE_SLOTS:
+            raise ValueError(
+                "Project asset catalog supports at most %d unresolved "
+                "reference slots." % MAX_REFERENCE_SLOTS)
         document = {
             "format": PROJECT_ASSET_FORMAT,
             "version": PROJECT_ASSET_VERSION,
             "project": name,
             "updated_at": _utc_now(),
             "assets": assets,
+            "reference_slots": slots,
         }
-        document["revision"] = _canonical_fingerprint([
-            _entry_contract(item) for item in assets])
+        document["revision"] = _canonical_fingerprint({
+            "assets": [_entry_contract(item) for item in assets],
+            "reference_slots": [_slot_contract(item) for item in slots],
+        })
         for group in ("images", "videos", "audio", "previews", ".uploads"):
             os.makedirs(os.path.join(directory, group), exist_ok=True)
         _atomic_json(os.path.join(directory, "catalog.json"), document)
@@ -334,6 +361,8 @@ class ProjectAssetStore:
         return {
             **catalog,
             "assets": [dict(item) for item in catalog["assets"]],
+            "reference_slots": [
+                dict(item) for item in catalog.get("reference_slots", [])],
         }
 
     def _asset_path(self, project: Any, entry: dict[str, Any]) -> str:
@@ -362,6 +391,102 @@ class ProjectAssetStore:
             raise ValueError("Unsupported upload extension %r." % suffix)
         return os.path.join(directory, ".uploads", "%s_%s" % (
             uuid.uuid4().hex, basename))
+
+    def sync_reference_slots(
+            self, project: Any, templates: Any) -> dict[str, Any]:
+        """Mirror reference metadata without copying or serializing media."""
+        if not isinstance(templates, list):
+            raise ValueError("Reference templates must be a list.")
+        catalog = self.load(project, create=True)
+        resolved_tags = {
+            str(item.get("tag") or "") for item in catalog["assets"]}
+        current = {
+            str(item.get("tag") or ""): dict(item)
+            for item in catalog.get("reference_slots", [])
+            if isinstance(item, dict) and str(item.get("tag") or "")
+        }
+        incoming_tags = set()
+        slots = []
+        now = _utc_now()
+        for raw in templates:
+            if not isinstance(raw, dict):
+                raise ValueError("Every reference template must be an object.")
+            kind = str(raw.get("kind") or "").strip().lower()
+            if kind not in ("image", "video", "audio"):
+                raise ValueError(
+                    "Reference template kind must be image, video, or audio.")
+            tag = _safe_tag(raw.get("tag"), "%s_reference" % kind)
+            if tag in incoming_tags:
+                raise ValueError("Reference template @%s is duplicated." % tag)
+            incoming_tags.add(tag)
+            if tag in resolved_tags:
+                # A project asset with this tag is already the authoritative
+                # binding. Synchronization never overwrites it.
+                continue
+            role = _role_for_kind(kind, raw.get("role"))
+            options = raw.get("options")
+            options = dict(options) if isinstance(options, dict) else {}
+            previous = current.get(tag)
+            created_at = str(
+                (previous or {}).get("created_at") or now)
+            slot = {
+                "id": str((previous or {}).get("id") or
+                          ("slot_" + uuid.uuid4().hex)),
+                "kind": kind,
+                "role": role,
+                "tag": tag,
+                "content_hash": str(raw.get("content_hash") or ""),
+                "available": True,
+                "source": "tagged_references",
+                "created_at": created_at,
+                "updated_at": now,
+                "options": options,
+            }
+            slots.append(slot)
+        for tag, previous in current.items():
+            if tag in incoming_tags or tag in resolved_tags:
+                continue
+            stale = dict(previous)
+            stale["available"] = False
+            stale["updated_at"] = now
+            slots.append(stale)
+        old_contract = [
+            _slot_contract(item)
+            for item in catalog.get("reference_slots", [])]
+        new_contract = [_slot_contract(item) for item in slots]
+        if old_contract == new_contract:
+            return self.public_catalog(project)
+        catalog["reference_slots"] = slots
+        return self._save_catalog(catalog)
+
+    def bind_reference_slot(
+            self, project: Any, slot_id: Any, source_path: Any, *,
+            role: Any = "", tag: Any = "", original_name: Any = "",
+            source_kind: str = "path",
+            options: dict[str, Any] | None = None) -> dict[str, Any]:
+        """Bind explicitly selected media to one unresolved reference slot."""
+        catalog = self.load(project)
+        wanted = str(slot_id or "")
+        slot = next((item for item in catalog.get("reference_slots", [])
+                     if str(item.get("id") or "") == wanted), None)
+        if slot is None:
+            raise FileNotFoundError(
+                "Unresolved reference slot %s was not found." % wanted)
+        merged_options = dict(slot.get("options") or {})
+        if isinstance(options, dict):
+            merged_options.update(options)
+        result = self.import_file(
+            project, source_path,
+            role=role or slot.get("role"), tag=tag or slot.get("tag"),
+            original_name=original_name, source_kind=source_kind,
+            options=merged_options)
+        bound_catalog = result["catalog"]
+        bound_catalog["reference_slots"] = [
+            item for item in bound_catalog.get("reference_slots", [])
+            if str(item.get("id") or "") != wanted]
+        result["catalog"] = self._save_catalog(bound_catalog)
+        result["bound_slot_id"] = wanted
+        return result
 
     def import_file(self, project: Any, source_path: Any, *, role: Any = "",
                     tag: Any = "", original_name: Any = "",

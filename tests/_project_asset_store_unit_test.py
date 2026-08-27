@@ -52,7 +52,34 @@ def main():
         assert changed["asset"]["tag"] == "hero_semantic"
         assert changed["catalog"]["revision"] != first["catalog"]["revision"]
 
-    print("H3 Project Asset Store: import, backup, listing, and edit pass")
+        templated = store.sync_reference_slots("episode_migration", [{
+            "kind": "image",
+            "role": "picture",
+            "tag": "legacy_hero",
+            "content_hash": "abc123",
+            "options": {},
+        }])
+        assert templated["assets"] == []
+        assert len(templated["reference_slots"]) == 1
+        slot = templated["reference_slots"][0]
+        assert slot["tag"] == "legacy_hero"
+        assert slot["available"] is True
+        assert list((input_root / "h3_projects" / "episode_migration" /
+                     "images").glob("*.png")) == []
+        stale = store.sync_reference_slots("episode_migration", [])
+        assert stale["reference_slots"][0]["available"] is False
+        refreshed = store.sync_reference_slots("episode_migration", [{
+            "kind": "image", "role": "picture", "tag": "legacy_hero",
+            "content_hash": "abc123", "options": {},
+        }])
+        bound = store.bind_reference_slot(
+            "episode_migration", refreshed["reference_slots"][0]["id"],
+            picture, source_kind="input")
+        assert bound["asset"]["tag"] == "legacy_hero"
+        assert bound["catalog"]["reference_slots"] == []
+        assert len(bound["catalog"]["assets"]) == 1
+
+    print("H3 Project Asset Store: import, backup, metadata sync, binding, listing, and edit pass")
 
 
 if __name__ == "__main__":
