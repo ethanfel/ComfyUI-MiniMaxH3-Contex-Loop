@@ -7,9 +7,21 @@ const source = await readFile(
 
 assert.match(source, /MiniMaxH3ProjectAssetManager/);
 assert.match(source, /ComfyUI input/);
+assert.match(source, /Create a project asset from the selected source/);
 assert.match(source, /Server path/);
 assert.match(source, /H3 backups/);
 assert.match(source, /project-assets\/upload/);
+assert.match(source, /Drop image, video, or audio files here/);
+assert.match(source, /Drop to create project assets/);
+assert.match(source, /function hasDraggedFiles\(event\)/);
+assert.match(source, /dataTransfer\?\.types/);
+assert.match(source, /includes\("Files"\)/);
+assert.match(source, /event\.dataTransfer\.dropEffect = "copy"/);
+assert.match(source, /carousel\.addEventListener\("dragenter"/);
+assert.match(source, /carousel\.addEventListener\("dragleave"/);
+assert.match(source, /uploadFiles\(files, \{dropped: true\}\)/);
+assert.match(source, /dropController\.abort\(\)/);
+assert.match(source, /Created .* project assets from dropped files/);
 assert.match(source, /project-assets\/import/);
 assert.match(source, /project-assets\/update/);
 assert.match(source, /project-assets\/duplicate/);
