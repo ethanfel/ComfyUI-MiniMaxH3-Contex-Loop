@@ -109,7 +109,8 @@ function injectStyles() {
         .h3pa-stage{flex:1 1 auto;min-height:230px;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;overflow:hidden}
         .h3pa-preview{position:relative;display:grid;place-items:center;min-width:0;min-height:220px;
           overflow:hidden;border:1px solid var(--border-color,#566174);border-radius:9px;background:#090b10}
-        .h3pa-preview img,.h3pa-preview video{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain}
+        .h3pa-preview>img,.h3pa-preview>video{position:absolute;inset:0;display:block;width:100%;height:100%;
+          min-width:0;min-height:0;object-fit:contain}
         .h3pa-preview audio{width:min(94%,650px)}.h3pa-empty{color:#738097;text-align:center;padding:24px}
         .h3pa-editor{display:flex;flex-direction:column;gap:8px;padding:10px;overflow:auto;border:1px solid
           var(--border-color,#566174);border-radius:9px;background:var(--comfy-input-bg,#151820)}
@@ -246,6 +247,7 @@ function mount(node) {
     };
     const project = () => String(runNameInput.value || "").trim();
     let refreshSequence = 0;
+    const graphSyncTimers = new Set();
     function setStatus(text, error = false) {
         status.textContent = text;
         status.style.color = error ? "#ff8d8d" : "";
@@ -496,6 +498,34 @@ function mount(node) {
             setStatus(`${catalog.assets.length} project assets · ${(catalog.reference_slots ?? []).length} unassigned · revision ${(catalog.revision || "empty").slice(0, 12)}`);
         } catch (error) { setStatus(error.message, true); }
     }
+    function adoptConnectedRunName() {
+        const current = project();
+        if (current && current !== "h3_project") return false;
+        const connected = downstreamPlanRunName(node);
+        if (!connected) return false;
+        refreshSequence += 1;
+        runNameInput.value = connected;
+        if (runNameWidget) {
+            runNameWidget.value = connected;
+            runNameWidget.callback?.(connected);
+        }
+        void refresh();
+        return true;
+    }
+    function scheduleGraphRunNameSync() {
+        for (const timer of graphSyncTimers) clearTimeout(timer);
+        graphSyncTimers.clear();
+        for (const delay of [0, 50, 200, 750]) {
+            const timer = setTimeout(() => {
+                graphSyncTimers.delete(timer);
+                if (adoptConnectedRunName()) {
+                    for (const pending of graphSyncTimers) clearTimeout(pending);
+                    graphSyncTimers.clear();
+                }
+            }, delay);
+            graphSyncTimers.add(timer);
+        }
+    }
     async function importAsset(body) {
         const result = await jsonRequest(
             "/minimax_h3_context_loop/project-assets/import", {
@@ -588,16 +618,30 @@ function mount(node) {
         node.properties.h3_project_asset_preview_mode = state.previewMode;
         render();
     });
+    const connectionsChanged = node.onConnectionsChange;
+    node.onConnectionsChange = function () {
+        const result = connectionsChanged?.apply(this, arguments);
+        scheduleGraphRunNameSync();
+        return result;
+    };
     const removed = node.onRemoved;
-    node.onRemoved = function () { stopMedia(); return removed?.apply(this, arguments); };
+    node.onRemoved = function () {
+        for (const timer of graphSyncTimers) clearTimeout(timer);
+        graphSyncTimers.clear();
+        stopMedia();
+        return removed?.apply(this, arguments);
+    };
     const executed = node.onExecuted;
     node.onExecuted = function () {
         const result = executed?.apply(this, arguments);
         void refresh();
         return result;
     };
-    node._h3ProjectAssetRefresh = refresh;
-    void refresh();
+    node._h3ProjectAssetRefresh = () => {
+        if (!adoptConnectedRunName()) void refresh();
+        scheduleGraphRunNameSync();
+    };
+    node._h3ProjectAssetRefresh();
 }
 
 app.registerExtension({
@@ -614,6 +658,18 @@ app.registerExtension({
             const result = configured?.apply(this, arguments);
             setTimeout(() => this._h3ProjectAssetRefresh?.(), 0); return result;
         };
+        const graphConfigured = nodeClass.prototype.onGraphConfigured;
+        nodeClass.prototype.onGraphConfigured = function () {
+            const result = graphConfigured?.apply(this, arguments);
+            setTimeout(() => this._h3ProjectAssetRefresh?.(), 0); return result;
+        };
     },
     async nodeCreated(node) { if (nodeType(node) === NODE_NAME) mount(node); },
+    async afterConfigureGraph() {
+        for (const node of app.graph?._nodes ?? []) {
+            if (nodeType(node) === NODE_NAME) {
+                setTimeout(() => node._h3ProjectAssetRefresh?.(), 0);
+            }
+        }
+    },
 });
