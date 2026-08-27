@@ -10,7 +10,8 @@ Newest first. This file keeps release history out of the onboarding README.
   connected upscale model reports its exact input and final saved dimensions.
   Output snapping now offers Off/8/16/32/64 (default 8), preserves the locked
   aspect ratio instead of producing arbitrary odd sizes, and **Reset all**
-  restores the full editor state.
+  restores the full editor state. Megapixel and multiple presets use compact
+  fixed grids so their final choices no longer stretch across wrapped rows.
 
 - Reference discovery in Plan Studio and both scene prompt editors now crosses
   ComfyUI subgraph input/output rails. Tagged references, Semantic Anchor

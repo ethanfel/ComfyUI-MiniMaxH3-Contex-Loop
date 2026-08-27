@@ -99,6 +99,8 @@ assert.match(source, /pointerdown/);
 assert.match(source, /ArrowLeft/);
 assert.match(source, /Target megapixels/);
 assert.match(source, /Output multiple/);
+assert.match(source, /h3pa-mp-presets\{display:grid;grid-template-columns:repeat\(6/);
+assert.match(source, /h3pa-snap-options\{display:grid;grid-template-columns:repeat\(5/);
 assert.match(source, /\["Off", 1\]/);
 assert.match(source, /\["64", 64\]/);
 assert.match(source, /Reset all/);
