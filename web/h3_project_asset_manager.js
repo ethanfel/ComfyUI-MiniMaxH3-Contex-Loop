@@ -5,7 +5,7 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.48";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.49";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -194,9 +194,9 @@ function injectStyles() {
         .h3pa-crop-controls{display:flex;flex-direction:column;gap:9px;min-height:0;overflow:auto;padding:10px;border:1px solid #48556a;border-radius:8px;background:#11151d}
         .h3pa-crop-controls label{display:flex;flex-direction:column;gap:3px;color:#aeb7c8}.h3pa-crop-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
         .h3pa-crop-controls input,.h3pa-crop-controls select{width:100%;min-width:0;padding:6px 7px;border:1px solid #566174;border-radius:6px;background:#151820;color:inherit}
-        .h3pa-mp-presets{display:flex;gap:4px;flex-wrap:wrap}.h3pa-mp-presets .h3pa-button{flex:1 1 40px;padding:4px 5px}
-        .h3pa-snap-options{display:flex;gap:4px;align-items:center;flex-wrap:wrap}.h3pa-snap-options .h3pa-button{flex:1 1 38px;padding:4px 5px}
-        .h3pa-snap-options .h3pa-button.active{background:#284d7e;border-color:#70a9ff}.h3pa-snap-label{color:#aeb7c8;font-size:11px}
+        .h3pa-mp-presets{display:grid;grid-template-columns:repeat(6,minmax(0,1fr));gap:4px}.h3pa-mp-presets .h3pa-button{min-width:0;padding:4px 2px;font-size:10px;white-space:nowrap}
+        .h3pa-snap-options{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:4px;align-items:center}.h3pa-snap-options .h3pa-button{min-width:0;padding:4px 3px;white-space:nowrap}
+        .h3pa-snap-options .h3pa-button.active{background:#284d7e;border-color:#70a9ff}.h3pa-snap-label{grid-column:1/-1;color:#aeb7c8;font-size:11px}
         .h3pa-size-summary{padding:8px;border:1px solid #46536a;border-radius:7px;background:#0d1119;color:#b8c7de;line-height:1.4}
         .h3pa-crop-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}.h3pa-crop-note{color:#8f9bb0;font-size:11px}
         @media(max-width:850px){.h3pa-crop-layout{grid-template-columns:1fr}.h3pa-crop-controls{max-height:320px}}
