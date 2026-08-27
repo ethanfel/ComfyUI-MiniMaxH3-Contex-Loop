@@ -123,7 +123,9 @@ function injectStyles() {
         .h3pa-card img{width:100%;height:78px;object-fit:cover;background:#090b10}.h3pa-card .fallback{height:78px;display:grid;
           place-items:center;font-size:24px;color:#81a8dc}.h3pa-card span{display:block;padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         .h3pa-badge{position:absolute;top:5px;left:5px;padding:2px 5px!important;border-radius:4px;background:#111c;color:#fff;font-size:10px}
-        .h3pa-modal{position:fixed;z-index:100000;inset:8vh 10vw;display:flex;flex-direction:column;gap:8px;padding:14px;
+        .h3pa-modal{position:fixed;z-index:100000;left:50%;top:50%;transform:translate(-50%,-50%);
+          width:min(760px,calc(100vw - 32px));height:min(520px,calc(100vh - 48px));
+          display:flex;flex-direction:column;gap:8px;padding:14px;
           border:1px solid #65738a;border-radius:10px;background:#141820;color:#eee;box-shadow:0 20px 70px #000b}
         .h3pa-source-list{overflow:auto;display:flex;flex-direction:column;gap:5px}.h3pa-source-item{display:grid;
           grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:7px;border:1px solid #3d4655;border-radius:6px}
@@ -205,14 +207,16 @@ function mount(node) {
     }
     const previewSelect = el("select");
     for (const [value, label] of [
-        ["light", "Light previews"], ["full", "Full image previews"],
+        ["light", "Light UI previews — generation uses originals"],
+        ["full", "Full UI image previews — generation uses originals"],
     ]) {
         const option = el("option", "", label); option.value = value;
         previewSelect.append(option);
     }
     previewSelect.value = String(
         node.properties?.h3_project_asset_preview_mode ?? "light");
-    previewSelect.title = "Light uses cached thumbnails and bounded JPEG previews. Full loads the selected original image; carousel cards remain lightweight.";
+    previewSelect.title = "Display only: this setting never changes generation media. H3 always uses the original stored asset. Light uses cached thumbnails and bounded JPEG previews; Full loads the selected original into the Carousel UI.";
+    previewSelect.setAttribute("aria-label", "Carousel display preview quality; generation always uses original assets");
     top.append(el("span", "", "Run name"), runNameInput, sourceSelect, previewSelect);
     const fileInput = el("input");
     fileInput.type = "file"; fileInput.accept = "image/*,video/*,audio/*";
