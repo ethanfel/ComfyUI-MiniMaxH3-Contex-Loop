@@ -150,6 +150,34 @@ async def check():
     with tempfile.TemporaryDirectory() as temporary:
         folder_paths.output_directory = temporary
         run = pathlib.Path(temporary) / "h3_chains" / "revision_test"
+        executable_source = {
+            "shots": [{"id": "scene_1", "prompt": "first", "length": 39}],
+        }
+        executable = chain._normalize_plan(
+            json.dumps(executable_source), "revision_test", 64, 64, 22,
+            "video", "head", "disabled", "generated_audio", 22,
+            2.0, 8, 7, 18, "model-stack", 0, "guide", None)
+        executable_with_chapter = chain._normalize_plan(
+            json.dumps({**executable_source, "chapters": [{
+                "id": "chapter_1", "title": "Chapter 1",
+                "start_scene_id": "scene_1", "text": "editorial only",
+            }]}), "revision_test", 64, 64, 22, "video", "head",
+            "disabled", "generated_audio", 22, 2.0, 8, 7, 18,
+            "model-stack", 0, "guide", None)
+        assert executable_with_chapter["plan_hash"] == executable["plan_hash"]
+        assert "chapters" not in executable_with_chapter
+        editorial = chain._save_run_editorial_document({
+            "run_name": "revision_test",
+            "scene_order": [
+                {"scene": 1, "scene_id": "scene_1"},
+                {"scene": 2, "scene_id": "scene_2"},
+            ],
+            "chapters": [{
+                "id": "chapter_1", "title": "Chapter 1",
+                "start_scene_id": "scene_1", "text": "lyrics and notes",
+            }],
+        })
+        assert editorial["chapters"][0]["start_scene"] == 1
         old_one = "1" * 32
         new_one = "2" * 32
         old_two = "3" * 32
@@ -165,6 +193,7 @@ async def check():
         # Exercise the listing worker synchronously in this fake server; the
         # route's asyncio.to_thread wakeup depends on ComfyUI's real event loop.
         payload = chain._saved_checkpoint_listing("revision_test")
+        assert payload["editorial"]["chapters"][0]["text"] == "lyrics and notes"
         assert [item["revision"] for item in payload["checkpoints"]] == [
             new_one, new_two]
         assert len(payload["revisions"]) == 4

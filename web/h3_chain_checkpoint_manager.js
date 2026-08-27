@@ -29,6 +29,7 @@ const START_NAME = "MiniMaxH3ChainLoopStart";
 const RUN_PROPERTY = "h3_checkpoint_manager_run";
 const SCENE_PROPERTY = "h3_checkpoint_manager_scene";
 const REVISION_PROPERTY = "h3_checkpoint_manager_revision";
+const CHAPTER_PROPERTY = "h3_checkpoint_manager_chapter";
 const SHARED_COLORS = ["#6ea8ff", "#58c99d", "#bd8cff", "#e8a84f", "#f07f8c", "#55bfd0"];
 
 function nodeType(node) {
@@ -153,7 +154,7 @@ function injectStyles() {
         gap:8px; overflow:hidden; padding:10px; border:1px solid var(--h3cm-border); border-radius:9px;
         background:var(--h3cm-bg); color:var(--h3cm-text); font:12px/1.4 system-ui,sans-serif; }
       .h3cm-root *, .h3cm-root *::before, .h3cm-root *::after { box-sizing:border-box; }
-      .h3cm-head,.h3cm-run-row,.h3cm-scenes,.h3cm-branch-head,.h3cm-branch-path,.h3cm-delete-actions {
+      .h3cm-head,.h3cm-run-row,.h3cm-chapter-tabs,.h3cm-scenes,.h3cm-branch-head,.h3cm-branch-path,.h3cm-delete-actions {
         display:flex; align-items:center; gap:6px; }
       .h3cm-head { justify-content:space-between; }
       .h3cm-title { font-size:15px; font-weight:760; color:var(--h3cm-accent); }
@@ -165,6 +166,10 @@ function injectStyles() {
       .h3cm-root button:disabled { cursor:not-allowed; opacity:.45; }
       .h3cm-run-select { flex:1; min-width:0; padding:5px 7px; }
       .h3cm-scenes { flex:0 0 auto; overflow:auto; padding-bottom:2px; }
+      .h3cm-chapter-tabs { flex:0 0 auto; overflow:auto; padding:2px 0; }
+      .h3cm-chapter-tab { white-space:nowrap; border-radius:999px !important; }
+      .h3cm-chapter-selected { color:#ffe0a2 !important; border-color:#d6a650 !important;
+        background:color-mix(in srgb,var(--h3cm-panel) 78%,#6d4b16) !important; }
       .h3cm-scene { white-space:nowrap; }
       .h3cm-scene-selected,.h3cm-revision-selected { border-color:var(--h3cm-accent) !important;
         color:var(--h3cm-accent) !important; }
@@ -197,6 +202,8 @@ function injectStyles() {
       .h3cm-branch-active { color:var(--h3cm-accent); font-weight:700; }
       .h3cm-branch-path { position:relative; z-index:3; align-items:stretch; overflow:auto; padding-bottom:2px; }
       .h3cm-arrow { align-self:center; color:var(--h3cm-muted); }
+      .h3cm-prior { align-self:center; padding:3px 6px; border:1px dashed var(--h3cm-border);
+        border-radius:999px; color:var(--h3cm-muted); white-space:nowrap; }
       .h3cm-revision { position:relative; min-width:112px; text-align:left; white-space:nowrap; }
       .h3cm-revision small { display:block; color:var(--h3cm-muted); font-size:10px; }
       .h3cm-revision-empty { border-style:dashed !important; color:var(--h3cm-muted) !important;
@@ -253,6 +260,7 @@ function mount(node) {
         runs:[], runName:String(node.properties[RUN_PROPERTY] ?? ""), payload:null,
         scene:Number(node.properties[SCENE_PROPERTY]) || null,
         revision:String(node.properties[REVISION_PROPERTY] ?? ""),
+        chapterTab:String(node.properties[CHAPTER_PROPERTY] ?? "all"),
         selected:null, deletion:null, busy:false, requestToken:0,
         initialRefresh:true, attribution:null, attributionButton:null,
     };
@@ -266,6 +274,7 @@ function mount(node) {
     const refresh = button("Refresh", "Rescan saved runs and checkpoint revisions", () => void refreshRuns());
     const open = button("Open folder", "Open the selected run folder on the ComfyUI host", () => void openFolder());
     runRow.append(runSelect, refresh, open);
+    const chapterTabs = element("div", "h3cm-chapter-tabs");
     const scenes = element("div", "h3cm-scenes");
     const main = element("div", "h3cm-main");
     const branchesPanel = element("section", "h3cm-panel");
@@ -300,7 +309,7 @@ function mount(node) {
     remove.disabled = true;
     deletionActions.append(load, activate, status, remove);
     deletion.append(deletionTitle, deletionBody, deletionActions);
-    root.append(head, runRow, scenes, main, deletion);
+    root.append(head, runRow, chapterTabs, scenes, main, deletion);
 
     function activePlanRun() {
         const plan = upstreamPlanNode(node);
@@ -311,12 +320,15 @@ function mount(node) {
         const previousRun = node.properties[RUN_PROPERTY];
         const previousScene = node.properties[SCENE_PROPERTY];
         const previousRevision = node.properties[REVISION_PROPERTY];
+        const previousChapter = node.properties[CHAPTER_PROPERTY];
         node.properties[RUN_PROPERTY] = state.runName;
         node.properties[SCENE_PROPERTY] = state.scene;
         node.properties[REVISION_PROPERTY] = state.revision;
+        node.properties[CHAPTER_PROPERTY] = state.chapterTab;
         let changed = previousRun !== state.runName ||
             previousScene !== state.scene ||
-            previousRevision !== state.revision;
+            previousRevision !== state.revision ||
+            previousChapter !== state.chapterTab;
         if (selectionWidget) {
             const value = checkpointSelectionJson(
                 state.payload, state.runName, state.selected,
@@ -390,9 +402,91 @@ function mount(node) {
         render();
     }
 
+    function chapterRanges() {
+        const chapters = Array.isArray(state.payload?.editorial?.chapters)
+            ? state.payload.editorial.chapters : [];
+        const ordered = chapters.slice().sort(
+            (left, right) => Number(left.start_scene) - Number(right.start_scene),
+        );
+        const maximum = Math.max(
+            0,
+            ...(state.payload?.scenes ?? []).map((scene) => Number(scene.scene) || 0),
+            ...(state.payload?.editorial?.scene_order ?? []).map(
+                (scene) => Number(scene.scene) || 0,
+            ),
+        );
+        const ranges = ordered.map((chapter, index) => ({
+            id:String(chapter.id),
+            title:String(chapter.title || `Chapter ${index + 1}`),
+            text:String(chapter.text || ""),
+            start:Number(chapter.start_scene),
+            end:index + 1 < ordered.length
+                ? Number(ordered[index + 1].start_scene) - 1 : maximum,
+        })).filter((chapter) => Number.isFinite(chapter.start) && chapter.start > 0);
+        if (ranges.length && ranges[0].start > 1) {
+            ranges.unshift({id:"unassigned", title:"Unassigned", text:"", start:1, end:ranges[0].start - 1});
+        }
+        return ranges;
+    }
+
+    function activeChapterRange() {
+        if (state.chapterTab === "all") return null;
+        return chapterRanges().find((chapter) => chapter.id === state.chapterTab) ?? null;
+    }
+
+    function sceneVisible(scene) {
+        const range = activeChapterRange();
+        const number = Number(scene);
+        return !range || (number >= range.start && number <= range.end);
+    }
+
+    function selectChapterTab(chapterId) {
+        state.chapterTab = chapterId;
+        const visibleScenes = (state.payload?.scenes ?? []).filter(
+            (scene) => sceneVisible(scene.scene),
+        );
+        if (!sceneVisible(state.selected?.scene) && visibleScenes.length) {
+            const scene = visibleScenes.at(-1);
+            state.selected = selectedCheckpointRevision(state.payload, scene.scene);
+            state.scene = Number(state.selected?.scene ?? scene.scene);
+            state.revision = String(state.selected?.revision ?? "");
+            state.deletion = null;
+        }
+        persistSelection();
+        render();
+        if (state.selected) void refreshDeletionPreview();
+    }
+
+    function renderChapterTabs() {
+        chapterTabs.replaceChildren();
+        const ranges = chapterRanges();
+        chapterTabs.hidden = !ranges.length;
+        if (!ranges.length) {
+            state.chapterTab = "all";
+            return;
+        }
+        const valid = new Set(["all", ...ranges.map((chapter) => chapter.id)]);
+        if (!valid.has(state.chapterTab)) state.chapterTab = "all";
+        const tabs = [{id:"all", title:"All scenes", text:""}, ...ranges];
+        for (const chapter of tabs) {
+            const item = button(
+                chapter.title,
+                chapter.text || (chapter.id === "all"
+                    ? "Show every saved scene" : `Show scenes ${chapter.start}–${chapter.end}`),
+                () => selectChapterTab(chapter.id),
+                "h3cm-chapter-tab",
+            );
+            if (chapter.id === state.chapterTab) {
+                item.classList.add("h3cm-chapter-selected");
+            }
+            chapterTabs.append(item);
+        }
+    }
+
     function renderScenes() {
         scenes.replaceChildren();
         for (const scene of state.payload?.scenes ?? []) {
+            if (!sceneVisible(scene.scene)) continue;
             const label = `${scene.scene} · ${scene.scene_id} · ${scene.revision_count} take${scene.revision_count === 1 ? "" : "s"}`;
             const item = button(label, `${formatCheckpointBytes(scene.bytes)} saved for this scene`, () => {
                 selectRevision(selectedCheckpointRevision(state.payload, scene.scene));
@@ -404,13 +498,18 @@ function mount(node) {
 
     function renderBranches() {
         branches.replaceChildren();
-        const rows = checkpointBranchRows(state.payload);
+        const allRows = checkpointBranchRows(state.payload);
+        const rows = allRows.map((branch) => ({
+            ...branch,
+            allRevisions:branch.revisions,
+            revisions:branch.revisions.filter((revision) => sceneVisible(revision.scene)),
+        })).filter((branch) => branch.revisions.length);
         if (!rows.length) {
             branches.append(element("div", "h3cm-muted", "No versioned checkpoints were found."));
             return;
         }
         const occurrences = new Map();
-        for (const branch of rows) {
+        for (const branch of allRows) {
             for (const revision of branch.revisions) {
                 const key = checkpointRevisionKey(revision.scene, revision.revision);
                 occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
@@ -436,11 +535,19 @@ function mount(node) {
                 });
             }
             const name = element("span", branch.active ? "h3cm-branch-active" : "", branch.label);
-            const count = element("span", "h3cm-muted", `${branch.revisions.length} scene${branch.revisions.length === 1 ? "" : "s"}`);
+            const count = element("span", "h3cm-muted", `${branch.revisions.length} visible scene${branch.revisions.length === 1 ? "" : "s"}`);
             header.append(name, count);
             const path = element("div", "h3cm-branch-path");
+            const prior = branch.allRevisions.filter(
+                (revision) => Number(revision.scene) < Number(branch.revisions[0]?.scene),
+            ).length;
+            if (prior) {
+                path.append(element(
+                    "span", "h3cm-prior", `← ${prior} prior scene${prior === 1 ? "" : "s"}`,
+                ));
+            }
             branch.revisions.forEach((revision, index) => {
-                if (index) path.append(element("span", "h3cm-arrow", "→"));
+                if (index || prior) path.append(element("span", "h3cm-arrow", "→"));
                 const key = checkpointRevisionKey(revision.scene, revision.revision);
                 const sharedCount = occurrences.get(key) ?? 1;
                 const card = button(
@@ -466,7 +573,7 @@ function mount(node) {
                 path.append(card);
             });
             const slot = branch.attribution_slot;
-            if (slot?.candidates?.length && tip) {
+            if (slot?.candidates?.length && tip && sceneVisible(slot.scene)) {
                 path.append(element("span", "h3cm-arrow", "→"));
                 const count = slot.candidates.length;
                 const empty = button(
@@ -705,6 +812,7 @@ function mount(node) {
         summary.textContent = total
             ? `${total.scene_count} scenes · ${total.revision_count} revisions · ${total.branch_count} branches · ${formatCheckpointBytes(total.bytes)}`
             : "Select a saved run";
+        renderChapterTabs();
         renderScenes();
         renderBranches();
         renderDetail();
@@ -983,6 +1091,15 @@ function mount(node) {
             const savedPlan = parsePlanJson(String(
                 runBody.plan_inputs?.plan_json ?? "",
             ));
+            const chapters = state.payload?.editorial?.chapters ?? [];
+            if (chapters.length) {
+                savedPlan.chapters = chapters.map((chapter) => ({
+                    id:chapter.id,
+                    title:chapter.title,
+                    start_scene_id:chapter.start_scene_id,
+                    text:chapter.text ?? "",
+                }));
+            }
             if (savedPlan.shots.length < Number(record.scene)) {
                 throw new Error(
                     `The saved Plan has only ${savedPlan.shots.length} scenes.`,
@@ -1005,7 +1122,7 @@ function mount(node) {
                     }),
                 });
             const activePlan = restoreSavedPlanInputs(
-                runBody.plan_inputs,
+                {...runBody.plan_inputs, plan_json:planToJson(savedPlan)},
                 restored.policy_inputs ?? runBody.policy_inputs,
             );
             const plan = applyLoadedRevisions(activePlan, restored.restored ?? []);

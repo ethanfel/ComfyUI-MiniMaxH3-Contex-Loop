@@ -12,13 +12,16 @@ import {
     calculatePlanTiming,
     duplicateShot,
     formatClock,
+    makeChapter,
     makeShot,
     moveShot,
     parsePlanJson,
     planToJson,
+    orderedChapters,
     promptTextToLines,
     promptValueToText,
     randomSceneSeed,
+    removePlanShot,
     safeShotId,
     sceneContextLength,
     sceneContinuationMode,
@@ -83,6 +86,7 @@ function publishCompanionPrompt(...args) {
 const NODE_NAME = "MiniMaxH3ChainPlanStudio";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
 const ACTIVE_PROPERTY = "h3_plan_studio_active_scene";
+const ACTIVE_CHAPTER_PROPERTY = "h3_plan_studio_active_chapter";
 const VIEW_PROPERTY = "h3_plan_studio_view";
 const TIMELINE_ZOOM_PROPERTY = "h3_plan_studio_timeline_zoom";
 const ADVANCED_BOUNDARY_OPEN_PROPERTY = "h3_plan_studio_advanced_boundary_open";
@@ -162,7 +166,17 @@ function injectStyles() {
         .h3studio-timeline-content { min-width:100%; }
         .h3studio-ruler { position:relative; height:18px; width:100%; border-bottom:1px solid var(--hs-border);
             color:var(--hs-muted); font-size:10px; overflow:hidden; cursor:pointer; }
-        .h3studio-timeline { display:flex; gap:3px; width:100%; min-width:0; min-height:0; overflow:hidden; }
+        .h3studio-timeline { position:relative; display:flex; gap:3px; width:100%; min-width:0; min-height:0; overflow:hidden; }
+        .h3studio-generated-timeline { overflow:visible; }
+        .h3studio-chapter-marker { position:absolute; z-index:8; top:-2px; bottom:0; width:0;
+            padding:0 !important; border:0 !important; border-left:2px solid #e8bd68 !important;
+            border-radius:0 !important; background:transparent !important; overflow:visible; }
+        .h3studio-chapter-marker span { position:absolute; top:3px; left:4px; max-width:112px;
+            overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:2px 6px;
+            border:1px solid #a98242; border-radius:999px; color:#ffe0a2;
+            background:color-mix(in srgb,var(--hs-bg) 92%,#6d4b16); font-size:9px; font-weight:750; }
+        .h3studio-chapter-marker.h3studio-selected span { color:#fff; border-color:#ffe0a2;
+            box-shadow:0 0 0 1px #ffe0a2 inset; }
         .h3studio-card { --scene:#84aaff; position:relative; isolation:isolate;
             flex:0 0 var(--h3-scene-width,138px); min-width:0;
             height:70px; overflow:hidden; padding:0 !important; text-align:left; border:1px solid var(--scene) !important;
@@ -436,6 +450,7 @@ function mount(node) {
         lastValue:"", lastRunName:"",
         lastSettingsSignature:"",
         active:Math.max(0, Number(node.properties[ACTIVE_PROPERTY]) || 0),
+        activeChapterId:String(node.properties[ACTIVE_CHAPTER_PROPERTY] ?? ""),
         view:["scene","shared","settings","player","json"].includes(node.properties[VIEW_PROPERTY])
             ? node.properties[VIEW_PROPERTY] : "scene",
         timelineZoom:normalizedTimelineZoom(
@@ -453,7 +468,7 @@ function mount(node) {
         timelineZoomInput:null, timelineZoomLabel:null,
         timelineResizeObserver:null, timelineWidths:[],
         panelHost:null,
-        planNotifyTimer:null,
+        planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
         playhead:null, player:null, playerAudio:null, sourceAudioPlayer:null,
         sourcePlayer:null, sourceLayer:null,
         playerSlider:null, playerIndex:-1,
@@ -502,6 +517,7 @@ function mount(node) {
 
     function persistView() {
         node.properties[ACTIVE_PROPERTY] = state.active;
+        node.properties[ACTIVE_CHAPTER_PROPERTY] = state.activeChapterId;
         node.properties[VIEW_PROPERTY] = state.view;
         node.properties[TIMELINE_ZOOM_PROPERTY] = state.timelineZoom;
         dirty();
@@ -623,6 +639,56 @@ function mount(node) {
         if (state.planNode) publishCompanionScene(node, state.planNode, state.active);
     }
 
+    function editorialPayload() {
+        const shots = state.plan?.shots ?? [];
+        const sceneOrder = shots.map((shot, index) => ({
+            scene:index + 1,
+            scene_id:safeShotId(
+                shot?.id, `clip_${String(index + 1).padStart(4, "0")}`,
+            ),
+        }));
+        const sceneById = new Map(sceneOrder.map((row) => [row.scene_id, row.scene]));
+        return {
+            run_name:runName(),
+            chapters:orderedChapters(state.plan).map((chapter) => ({
+                id:chapter.id,
+                title:chapter.title,
+                start_scene_id:chapter.start_scene_id,
+                start_scene:sceneById.get(chapter.start_scene_id),
+                text:chapter.text ?? "",
+            })),
+            scene_order:sceneOrder,
+        };
+    }
+
+    function scheduleEditorialSave() {
+        if (!state.plan) return;
+        const payload = editorialPayload();
+        const signature = JSON.stringify(payload);
+        if (signature === state.lastEditorialSignature) return;
+        state.lastEditorialSignature = signature;
+        if (state.editorialTimer != null) clearTimeout(state.editorialTimer);
+        if (!payload.run_name) return;
+        state.editorialTimer = setTimeout(async () => {
+            state.editorialTimer = null;
+            try {
+                const response = await api.fetchApi(
+                    "/minimax_h3_context_loop/editorial",
+                    {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)},
+                );
+                if (!response.ok) {
+                    const detail = await response.json().catch(() => ({}));
+                    throw new Error(detail.error || `HTTP ${response.status}`);
+                }
+            } catch (error) {
+                if (state.lastEditorialSignature === signature) {
+                    state.lastEditorialSignature = "";
+                }
+                console.warn("H3 Plan Studio could not save chapter presentation data:", error);
+            }
+        }, 250);
+    }
+
     function writePlan(message = null) {
         if (!state.plan || !state.planWidget) return;
         // A linked dedicated editor owns scene prompts. Re-read those fields at
@@ -644,13 +710,14 @@ function mount(node) {
             targetWidget.callback?.(targetWidget.value);
         }, 75);
         state.planOwner?.graph?.setDirtyCanvas?.(true, true);
-        if (state.planNode) {
+        if (state.planNode && !state.activeChapterId) {
             publishCompanionPrompt(
                 node, state.planNode, state.active,
                 promptValueToText(state.plan.shots[state.active]?.prompt));
         }
         if (message) message.textContent = state.planNode
             ? "Saved to connected Plan" : "Saved in standalone Plan Studio";
+        scheduleEditorialSave();
         renderStatus();
         dirty();
     }
@@ -881,7 +948,9 @@ function mount(node) {
 
     function revealActiveTimelineScene() {
         const viewport = state.timelineViewport;
-        const card = state.timelineHost?.children?.[state.active];
+        const card = state.timelineHost?.querySelector(
+            `[data-scene-index="${state.active}"]`,
+        );
         if (!viewport || !card) return;
         const start = card.offsetLeft;
         const end = start + card.offsetWidth;
@@ -923,7 +992,8 @@ function mount(node) {
             if (!host) continue;
             [...host.querySelectorAll(
                 ".h3studio-card,.h3studio-audio-card",
-            )].forEach((card, index) => {
+            )].forEach((card) => {
+                const index = Number(card.dataset.sceneIndex);
                 card.style.setProperty(
                     "--h3-scene-width",
                     `${layout.widths[index] ?? 0}px`,
@@ -946,7 +1016,21 @@ function mount(node) {
                 );
             }
             if (revealActive) revealActiveTimelineScene();
+            layoutChapterMarkers();
         });
+    }
+
+    function layoutChapterMarkers() {
+        if (!state.timelineHost) return;
+        for (const marker of state.timelineHost.querySelectorAll(
+            ".h3studio-chapter-marker",
+        )) {
+            const index = Number(marker.dataset.startSceneIndex);
+            const card = state.timelineHost.querySelector(
+                `[data-scene-index="${index}"]`,
+            );
+            if (card) marker.style.left = `${card.offsetLeft}px`;
+        }
     }
 
     function setTimelineZoom(value, anchorRatio = .5) {
@@ -1193,6 +1277,7 @@ function mount(node) {
             const row = result.shots[index];
             const checkpoint = matchingStudioCheckpoint(state.checkpoints, index, row);
             const card = button("", `Scene ${index + 1}: ${row.id}`, () => void selectScene(index));
+            card.dataset.sceneIndex = String(index);
             card.className = `h3studio-card${index === state.active ? " h3studio-selected" : ""}${checkpoint?.ready ? " h3studio-rendered" : ""}`;
             card.style.setProperty("--scene", automaticSceneColor(index));
             if (state.timelineWidths[index] > 0) {
@@ -1206,6 +1291,21 @@ function mount(node) {
                 element("span", "h3studio-card-meta", `${formatClock(row.deliveredSeconds)} · ${row.rawFrames || "—"}f raw${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
             card.append(copy, element("span", "h3studio-render-dot"));
             host.append(card);
+        }
+        for (const chapter of orderedChapters(state.plan)) {
+            const index = state.plan.shots.findIndex((shot, offset) => (
+                safeShotId(shot?.id, `clip_${String(offset + 1).padStart(4, "0")}`)
+                    === chapter.start_scene_id
+            ));
+            if (index < 0) continue;
+            const marker = button("", `${chapter.title}, before scene ${index + 1}`, () => {
+                void selectChapter(chapter.id);
+            });
+            marker.className = `h3studio-chapter-marker${state.activeChapterId === chapter.id ? " h3studio-selected" : ""}`;
+            marker.dataset.startSceneIndex = String(index);
+            marker.dataset.chapterId = chapter.id;
+            marker.append(element("span", "", chapter.title));
+            host.append(marker);
         }
         renderSourceTimeline();
         renderSourceAudioTimeline();
@@ -1238,6 +1338,7 @@ function mount(node) {
                 ? `Scene ${index + 1} source motion @${reference.tag}`
                 : `Scene ${index + 1} has no active path-backed motion reference`,
             () => void selectScene(index));
+            card.dataset.sceneIndex = String(index);
             card.className = `h3studio-card h3studio-source-card${index === state.active ? " h3studio-selected" : ""}`;
             card.style.setProperty("--scene", automaticSceneColor(index));
             if (state.timelineWidths[index] > 0) {
@@ -1294,6 +1395,7 @@ function mount(node) {
                 "div",
                 `h3studio-audio-card${index === state.active ? " h3studio-selected" : ""}${muted ? " h3studio-audio-muted" : ""}`,
             );
+            card.dataset.sceneIndex = String(index);
             card.title = `Scene ${index + 1} Source Timeline audio${muted ? " (muted)" : ""}`;
             card.style.setProperty("--scene", automaticSceneColor(index));
             if (state.timelineWidths[index] > 0) {
@@ -1335,13 +1437,25 @@ function mount(node) {
         ]) {
             if (!host) continue;
             [...host.querySelectorAll(".h3studio-card,.h3studio-audio-card")].forEach(
-                (card, index) => card.classList.toggle("h3studio-selected", index === state.active),
+                (card) => card.classList.toggle(
+                    "h3studio-selected", Number(card.dataset.sceneIndex) === state.active,
+                ),
+            );
+        }
+        for (const marker of state.timelineHost?.querySelectorAll(
+            ".h3studio-chapter-marker",
+        ) ?? []) {
+            marker.classList.toggle(
+                "h3studio-selected",
+                Boolean(state.activeChapterId)
+                    && marker.dataset.chapterId === state.activeChapterId,
             );
         }
     }
 
     async function selectScene(index, synchronize = true) {
         await flushHistoryDraft();
+        state.activeChapterId = "";
         state.active = Math.max(0, Math.min(state.plan.shots.length - 1, Number(index)));
         if (state.view === "player") {
             state.timelinePosition = studioSceneStartSeconds(timing().shots, state.active);
@@ -1353,6 +1467,20 @@ function mount(node) {
             seekTimeline(state.timelinePosition, false);
         } else renderPanel();
         if (synchronize) publishActiveScene();
+    }
+
+    async function selectChapter(chapterId) {
+        await flushHistoryDraft();
+        const chapter = orderedChapters(state.plan).find(
+            (candidate) => candidate.id === chapterId,
+        );
+        if (!chapter) return;
+        state.activeChapterId = chapter.id;
+        state.view = "scene";
+        persistView();
+        renderToolbarState();
+        renderTimeline();
+        renderPanel();
     }
 
     function field(label, control) {
@@ -1516,7 +1644,13 @@ function mount(node) {
         const id = element("input");
         id.value = shot.id ?? "";
         id.addEventListener("change", () => {
+            const previousId = safeShotId(shot.id, row.id);
             shot.id = safeShotId(id.value, row.id); id.value = shot.id;
+            for (const chapter of state.plan.chapters ?? []) {
+                if (chapter.start_scene_id === previousId) {
+                    chapter.start_scene_id = shot.id;
+                }
+            }
             writePlan(); renderShell();
         });
         const mode = element("select");
@@ -2136,6 +2270,86 @@ function mount(node) {
             head, form, audioOverrides, advanced, prompt, tools, tray, history,
         );
         void loadHistory(row.id, prompt.value);
+        return panel;
+    }
+
+    function renderChapterPanel() {
+        const chapter = orderedChapters(state.plan).find(
+            (candidate) => candidate.id === state.activeChapterId,
+        );
+        if (!chapter) {
+            state.activeChapterId = "";
+            return renderScenePanel();
+        }
+        const chapterIndex = state.plan.shots.findIndex((shot, offset) => (
+            safeShotId(shot?.id, `clip_${String(offset + 1).padStart(4, "0")}`)
+                === chapter.start_scene_id
+        ));
+        const panel = element("div");
+        const head = element("div", "h3studio-scene-head");
+        head.append(
+            element("strong", "", chapter.title),
+            element(
+                "span", "h3studio-scene-label",
+                `starts before scene ${chapterIndex + 1} · zero-duration editorial note`,
+            ),
+        );
+        const title = element("input");
+        title.value = chapter.title;
+        title.maxLength = 160;
+        title.addEventListener("input", () => {
+            chapter.title = title.value.slice(0, 160) || "Untitled chapter";
+            writePlan(); renderTimeline();
+        });
+        const boundary = element("select");
+        state.plan.shots.forEach((shot, index) => {
+            const sceneId = safeShotId(
+                shot?.id, `clip_${String(index + 1).padStart(4, "0")}`,
+            );
+            const option = element("option", "", `Before scene ${index + 1} · ${sceneId}`);
+            option.value = sceneId;
+            boundary.append(option);
+        });
+        boundary.value = chapter.start_scene_id;
+        boundary.addEventListener("change", () => {
+            const occupied = (state.plan.chapters ?? []).some(
+                (candidate) => candidate !== chapter
+                    && candidate.start_scene_id === boundary.value,
+            );
+            if (occupied) {
+                boundary.value = chapter.start_scene_id;
+                return;
+            }
+            chapter.start_scene_id = boundary.value;
+            writePlan(); renderTimeline();
+        });
+        const form = element("div", "h3studio-defaults");
+        form.append(field("Chapter title", title), field("Timeline marker", boundary));
+        const textarea = element("textarea", "h3studio-prompt");
+        textarea.value = chapter.text ?? "";
+        textarea.placeholder = "Editorial context, lyrics, LLM notes, story intent…";
+        textarea.spellcheck = true;
+        textarea.addEventListener("input", () => {
+            chapter.text = textarea.value;
+            writePlan();
+        });
+        const actions = element("div", "h3studio-prompt-tools");
+        actions.append(
+            element(
+                "span", "h3studio-hint",
+                "Notes organize the editor and Checkpoint Manager only. They do not affect playback, generation, resume checks, or branch identity.",
+            ),
+            button("Delete chapter", "Remove this editorial marker and its notes", () => {
+                if (!confirm(`Delete ${chapter.title}?`)) return;
+                state.plan.chapters = (state.plan.chapters ?? []).filter(
+                    (candidate) => candidate.id !== chapter.id,
+                );
+                if (!state.plan.chapters.length) delete state.plan.chapters;
+                state.activeChapterId = "";
+                writePlan(); renderShell();
+            }),
+        );
+        panel.append(head, form, textarea, actions);
         return panel;
     }
 
@@ -2917,7 +3131,9 @@ function mount(node) {
         if (!state.panelHost || !state.plan) return;
         state.history.host = null; state.history.textarea = null; state.history.status = null;
         disposePlayer();
-        const content = state.view === "shared" ? renderSharedPanel()
+        const content = state.view === "scene" && state.activeChapterId
+            ? renderChapterPanel()
+            : state.view === "shared" ? renderSharedPanel()
             : state.view === "settings" ? renderPlanSettingsPanel()
             : state.view === "player" ? renderPlayerPanel()
               : state.view === "json" ? renderJsonPanel() : renderScenePanel();
@@ -2945,36 +3161,65 @@ function mount(node) {
             if (state.plan.shots.length >= MAX_SHOTS) return;
             await flushHistoryDraft();
             state.plan.shots.push(makeShot(state.plan.shots));
+            state.activeChapterId = "";
             state.active = state.plan.shots.length - 1;
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
         });
         add.disabled = state.plan.shots.length >= MAX_SHOTS;
+        const addChapter = button("+ Chapter", "Add a zero-duration chapter marker before the selected scene", async () => {
+            await flushHistoryDraft();
+            try {
+                const chapter = makeChapter(state.plan, state.active);
+                state.activeChapterId = chapter.id;
+                state.view = "scene";
+                persistView(); writePlan(); renderShell();
+            } catch (error) {
+                console.warn(error);
+            }
+        });
         const duplicate = button("Duplicate", "Duplicate the selected scene", async () => {
             if (state.plan.shots.length >= MAX_SHOTS) return;
             await flushHistoryDraft();
             duplicateShot(state.plan.shots, state.active); state.active += 1;
+            state.activeChapterId = "";
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
         });
-        const remove = button("Delete", "Delete the selected scene", async () => {
+        const remove = button(state.activeChapterId ? "Delete chapter" : "Delete", "Delete the selected scene or chapter", async () => {
+            if (state.activeChapterId) {
+                const chapter = orderedChapters(state.plan).find(
+                    (candidate) => candidate.id === state.activeChapterId,
+                );
+                if (!chapter || !confirm(`Delete ${chapter.title}?`)) return;
+                state.plan.chapters = state.plan.chapters.filter(
+                    (candidate) => candidate.id !== chapter.id,
+                );
+                if (!state.plan.chapters.length) delete state.plan.chapters;
+                state.activeChapterId = "";
+                persistView(); writePlan(); renderShell();
+                return;
+            }
             if (state.plan.shots.length <= 1 || !confirm(`Delete scene ${state.active + 1}?`)) return;
             await flushHistoryDraft();
-            state.plan.shots.splice(state.active, 1);
+            removePlanShot(state.plan, state.active);
             state.active = Math.min(state.active, state.plan.shots.length - 1);
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
         });
-        remove.disabled = state.plan.shots.length <= 1;
+        remove.disabled = !state.activeChapterId && state.plan.shots.length <= 1;
         const left = button("←", "Move selected scene earlier", async () => {
             if (!state.active) return; await flushHistoryDraft();
             moveShot(state.plan.shots, state.active, state.active - 1); state.active -= 1;
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
-        }); left.disabled = !state.active;
+        }); left.disabled = Boolean(state.activeChapterId) || !state.active;
         const right = button("→", "Move selected scene later", async () => {
             if (state.active >= state.plan.shots.length - 1) return; await flushHistoryDraft();
             moveShot(state.plan.shots, state.active, state.active + 1); state.active += 1;
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
-        }); right.disabled = state.active >= state.plan.shots.length - 1;
-        toolbar.append(add, duplicate, remove, left, right, element("span", "h3studio-spacer"));
-        const sceneViewLabel = state.promptEditors.length ? "Scene settings" : "Scene prompt";
+        }); right.disabled = Boolean(state.activeChapterId)
+            || state.active >= state.plan.shots.length - 1;
+        toolbar.append(add, addChapter, duplicate, remove, left, right, element("span", "h3studio-spacer"));
+        const sceneViewLabel = state.activeChapterId
+            ? "Chapter notes"
+            : state.promptEditors.length ? "Scene settings" : "Scene prompt";
         for (const [value,label] of [["scene",sceneViewLabel],["shared","Shared prompt"],
             ["settings","Plan settings"],["player","Player"],["json","JSON"]]) {
             const item = button(label, `Open ${label.toLowerCase()} view`, () => {
@@ -3033,7 +3278,7 @@ function mount(node) {
         const timelineViewport = element("div", "h3studio-timeline-viewport");
         const timelineContent = element("div", "h3studio-timeline-content");
         const ruler = element("div", "h3studio-ruler");
-        const timelineHost = element("div", "h3studio-timeline");
+        const timelineHost = element("div", "h3studio-timeline h3studio-generated-timeline");
         const sourceTimelineHost = element("div", "h3studio-timeline");
         const sourceAudioTimelineHost = element(
             "div", "h3studio-timeline h3studio-audio-timeline",
@@ -3119,6 +3364,9 @@ function mount(node) {
             state.lastSettingsSignature = currentSettings;
             state.promptEditors = promptEditors;
             state.lastPromptEditorsSignature = currentPromptEditors;
+            if (state.activeChapterId && !orderedChapters(state.plan).some(
+                (chapter) => chapter.id === state.activeChapterId,
+            )) state.activeChapterId = "";
             if (runChanged) {
                 state.checkpoints = new Map(); state.checkpointSignature = "";
                 state.checkpointError = ""; state.timelinePosition = null;
@@ -3128,6 +3376,7 @@ function mount(node) {
                 state.sourceWaveformPromise = null;
             }
             state.active = Math.min(state.active, state.plan.shots.length - 1);
+            if (Object.hasOwn(state.plan, "chapters")) scheduleEditorialSave();
             renderShell();
             void refreshCheckpoints();
             if (runChanged && currentRun) void restoreSourcePresentation();
@@ -3178,6 +3427,7 @@ function mount(node) {
         if (state.pollTimer != null) clearInterval(state.pollTimer);
         if (state.checkpointTimer != null) clearInterval(state.checkpointTimer);
         if (state.planNotifyTimer != null) clearTimeout(state.planNotifyTimer);
+        if (state.editorialTimer != null) clearTimeout(state.editorialTimer);
         state.timelineResizeObserver?.disconnect();
         api.removeEventListener("executed", onPromptExecuted);
         document.removeEventListener("keydown", onPlayerKeydown, true);

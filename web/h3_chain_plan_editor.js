@@ -11,6 +11,7 @@ import {
     formatClock,
     makeShot,
     moveShot,
+    removePlanShot,
     parsePlanJson,
     planToJson,
     promptTextToLines,
@@ -742,8 +743,19 @@ function mountEditor(node) {
         id.title = "Stable scene ID used in checkpoint filenames and resume validation. Keep it unique and avoid changing it after rendering.";
         id.addEventListener("input", () => {
             const previousKey = sceneColorKey(shot, index);
+            const previousId = safeShotId(
+                shot.id, `clip_${String(index + 1).padStart(4, "0")}`,
+            );
             if (id.value) shot.id = id.value;
             else delete shot.id;
+            const nextId = safeShotId(
+                shot.id, `clip_${String(index + 1).padStart(4, "0")}`,
+            );
+            for (const chapter of state.plan.chapters ?? []) {
+                if (chapter.start_scene_id === previousId) {
+                    chapter.start_scene_id = nextId;
+                }
+            }
             const nextKey = sceneColorKey(shot, index);
             const colors = colorOverrides(node);
             if (previousKey !== nextKey && colors[previousKey]) {
@@ -784,7 +796,7 @@ function mountEditor(node) {
             if (state.plan.shots.length <= 1) return;
             if (!window.confirm(`Delete scene ${index + 1}?`)) return;
             saveSceneColor(sceneColorKey(shot, index), null);
-            state.plan.shots.splice(index, 1);
+            removePlanShot(state.plan, index);
             syncPlan();
             render();
         });

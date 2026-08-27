@@ -15,11 +15,14 @@ import {
     derivedSceneSeed,
     duplicateShot,
     h3FrameLength,
+    makeChapter,
     moveShot,
+    orderedChapters,
     parsePlanJson,
     planToJson,
     promptValueToText,
     randomSceneSeed,
+    removePlanShot,
     sceneAudioContextLength,
     sceneContextLength,
     sceneContinuationMode,
@@ -244,6 +247,36 @@ assert.equal(promptValueToText(plan.shots[0].prompt), "Opening.\nKeep moving.");
 setSharedPrompt(plan, "New identity.\n\nNew wardrobe.");
 assert.deepEqual(plan.prompt_prefix, ["New identity.", "", "New wardrobe."]);
 assert.equal(JSON.parse(planToJson(plan)).shots[0].seed, "18446744073709551615");
+
+const chapterPlan = parsePlanJson(JSON.stringify({
+    shots:[
+        {id:"scene_a", prompt:"A"},
+        {id:"scene_b", prompt:"B"},
+        {id:"scene_c", prompt:"C"},
+    ],
+    chapters:[
+        {id:"second", title:"Chapter 2", start_scene_id:"scene_c", text:["lyrics", "notes"]},
+        {id:"first", title:"Chapter 1", start_scene_id:"scene_a", text:"setup"},
+    ],
+}));
+assert.deepEqual(orderedChapters(chapterPlan).map((chapter) => chapter.id), [
+    "first", "second",
+]);
+assert.equal(chapterPlan.chapters[1].text, "lyrics\nnotes");
+const middleChapter = makeChapter(chapterPlan, 1);
+assert.equal(middleChapter.start_scene_id, "scene_b");
+assert.throws(() => makeChapter(chapterPlan, 1), /already starts before scene 2/);
+removePlanShot(chapterPlan, 1);
+assert.equal(chapterPlan.shots[1].id, "scene_c");
+assert.equal(
+    chapterPlan.chapters.filter((chapter) => chapter.start_scene_id === "scene_c").length,
+    1,
+    "removing a boundary scene never creates duplicate chapter markers",
+);
+assert.throws(() => parsePlanJson(JSON.stringify({
+    shots:[{id:"one", prompt:"x"}],
+    chapters:[{id:"bad", start_scene_id:"missing", text:"x"}],
+})), /starts at missing scene/);
 
 const numericSeed = parsePlanJson(
     '{"shots":[{"id":"seed","prompt":"x","seed":18446744073709551615}]}',
@@ -773,6 +806,7 @@ assert.match(editorSource, /widget\.draw = \(\) => \{\}/);
 assert.match(editorSource, /node\.size\?\.\[1\][^\n]+0,/);
 assert.doesNotMatch(editorSource, /const computed = node\.computeSize/);
 assert.match(editorSource, /h3_chain_plan_layout/);
+assert.match(editorSource, /removePlanShot/);
 assert.match(editorSource, /new ResizeObserver/);
 assert.match(editorSource, /"pointerdown", "pointerup", "mousedown", "mouseup", "click"/);
 assert.match(editorSource, /availableReferenceRecords/);

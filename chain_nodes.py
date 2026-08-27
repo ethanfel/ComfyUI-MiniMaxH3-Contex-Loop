@@ -6784,9 +6784,105 @@ def _read_json(path: str) -> Any:
         return json.load(handle)
 
 
+def _run_editorial_path(run_name: Any) -> str:
+    normalized = _safe_name(run_name, "")
+    if not normalized:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    return os.path.join(
+        _output_root(), "h3_chains", normalized, "editorial.json")
+
+
+def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("H3 run editorial data must be a JSON object.")
+    normalized_run = _safe_name(run_name, "")
+    if not normalized_run:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    raw_order = value.get("scene_order", [])
+    raw_chapters = value.get("chapters", [])
+    if not isinstance(raw_order, list) or len(raw_order) > MAX_SHOTS:
+        raise ValueError("scene_order must contain at most %d scenes." % MAX_SHOTS)
+    if not isinstance(raw_chapters, list) or len(raw_chapters) > MAX_SHOTS:
+        raise ValueError("chapters must contain at most %d entries." % MAX_SHOTS)
+    scene_order: list[dict[str, Any]] = []
+    scene_by_id: dict[str, int] = {}
+    for offset, item in enumerate(raw_order):
+        if not isinstance(item, dict):
+            raise ValueError("Editorial scene %d must be an object." % (offset + 1))
+        scene = int(item.get("scene", offset + 1))
+        if scene < 1 or scene > MAX_SHOTS:
+            raise ValueError("Editorial scene numbers must be between 1 and %d." % MAX_SHOTS)
+        scene_id = _safe_name(item.get("scene_id"), "clip_%04d" % scene)
+        if scene_id in scene_by_id:
+            raise ValueError("Duplicate editorial scene id: %s." % scene_id)
+        scene_by_id[scene_id] = scene
+        scene_order.append({"scene": scene, "scene_id": scene_id})
+    scene_order.sort(key=lambda item: int(item["scene"]))
+
+    chapters: list[dict[str, Any]] = []
+    used_ids: set[str] = set()
+    used_starts: set[str] = set()
+    for offset, item in enumerate(raw_chapters):
+        if not isinstance(item, dict):
+            raise ValueError("Chapter %d must be an object." % (offset + 1))
+        chapter_id = _safe_name(
+            item.get("id"), "chapter_%02d" % (offset + 1))
+        if chapter_id in used_ids:
+            raise ValueError("Duplicate chapter id: %s." % chapter_id)
+        used_ids.add(chapter_id)
+        start_id = _safe_name(item.get("start_scene_id"), "")
+        if not start_id or (scene_by_id and start_id not in scene_by_id):
+            raise ValueError(
+                "Chapter %d must start at a scene in scene_order." % (offset + 1))
+        if start_id in used_starts:
+            raise ValueError("Only one chapter may start at scene %s." % start_id)
+        used_starts.add(start_id)
+        text = str(item.get("text") or "")
+        if len(text.encode("utf-8")) > 2 * 1024 * 1024:
+            raise ValueError("Chapter %d notes exceed 2 MiB." % (offset + 1))
+        chapters.append({
+            "id": chapter_id,
+            "title": (str(item.get("title") or "Chapter %d" % (offset + 1))
+                      .strip()[:160] or "Chapter %d" % (offset + 1)),
+            "start_scene_id": start_id,
+            "start_scene": int(scene_by_id.get(
+                start_id, item.get("start_scene", offset + 1))),
+            "text": text,
+        })
+    chapters.sort(key=lambda item: int(item["start_scene"]))
+    return {
+        "format": "h3_chain_editorial_v1",
+        "run_name": normalized_run,
+        "updated_at": str(value.get("updated_at") or
+                          datetime.now(timezone.utc).isoformat(
+                              timespec="seconds").replace("+00:00", "Z")),
+        "chapters": chapters,
+        "scene_order": scene_order,
+    }
+
+
+def _load_run_editorial(run_name: Any) -> dict[str, Any]:
+    normalized = _safe_name(run_name, "")
+    empty = {
+        "format": "h3_chain_editorial_v1", "run_name": normalized,
+        "chapters": [], "scene_order": [],
+    }
+    if not normalized:
+        return empty
+    path = _run_editorial_path(normalized)
+    if not os.path.isfile(path):
+        return empty
+    try:
+        document = _read_json(path)
+        return _normalize_run_editorial(document, normalized)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        _LOG.warning("Ignoring invalid H3 run editorial sidecar %s: %s", path, exc)
+        return empty
+
+
 def _effective_editor_plan(plan: dict[str, Any]) -> dict[str, Any]:
     """Return an exact, editable plan source for this execution revision."""
-    return {
+    result = {
         "prompt_prefix": str(plan.get("prompt_prefix") or ""),
         "shots": [dict({
             "id": shot["id"],
@@ -6827,6 +6923,15 @@ def _effective_editor_plan(plan: dict[str, Any]) -> dict[str, Any]:
                 if "lora_route" in shot else {}))
             for shot in plan["shots"]],
     }
+    editorial = _load_run_editorial(plan.get("run_name"))
+    if editorial["chapters"]:
+        result["chapters"] = [{
+            "id": chapter["id"],
+            "title": chapter["title"],
+            "start_scene_id": chapter["start_scene_id"],
+            "text": chapter["text"],
+        } for chapter in editorial["chapters"]]
+    return result
 
 
 def _json_document(value: Any) -> Any:
@@ -20424,6 +20529,7 @@ def _saved_checkpoint_listing(
     payload: dict[str, Any] = {
         "run_name": run_name,
         "checkpoints": checkpoints,
+        "editorial": _load_run_editorial(run_name),
     }
     if not include_graph:
         return payload
@@ -20469,6 +20575,30 @@ async def _list_saved_checkpoints(request):
             "H3 checkpoint listing took %.2fs for run %s (%s)",
             elapsed, run_name, "full graph" if include_graph else "active only")
     return web.json_response(payload)
+
+
+def _save_run_editorial_document(body: Any) -> dict[str, Any]:
+    if not isinstance(body, dict):
+        raise ValueError("H3 run editorial data must be a JSON object.")
+    document = dict(body)
+    document["updated_at"] = datetime.now(timezone.utc).isoformat(
+        timespec="seconds").replace("+00:00", "Z")
+    normalized = _normalize_run_editorial(document, body.get("run_name"))
+    _atomic_json(_run_editorial_path(normalized["run_name"]), normalized)
+    return normalized
+
+
+async def _update_run_editorial(request):
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response(
+            {"error": "H3 run editorial data requires JSON."}, status=400)
+    try:
+        payload = await asyncio.to_thread(_save_run_editorial_document, body)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response({"ok": True, "editorial": payload})
 
 
 async def _open_run_folder(request):
@@ -21429,6 +21559,8 @@ if (PromptServer is not None and web is not None and
         "/minimax_h3_context_loop/reviews")(_list_pending_reviews)
     PromptServer.instance.routes.get(
         "/minimax_h3_context_loop/checkpoints")(_list_saved_checkpoints)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/editorial")(_update_run_editorial)
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/checkpoint-revisions/restore")(
             _restore_checkpoint_revisions)

@@ -3,6 +3,7 @@
 
 export const FPS = 24;
 export const MAX_SHOTS = 128;
+export const MAX_CHAPTERS = MAX_SHOTS;
 export const MAX_H3_FRAMES = 3592;
 export const MAX_SEED = 18446744073709551615n;
 export const CONTINUATION_MODES = Object.freeze([
@@ -348,6 +349,54 @@ export function parsePlanJson(source) {
         return normalized;
     });
 
+    const shotIds = plan.shots.map((shot, offset) => safeShotId(
+        shot?.id,
+        `clip_${String(offset + 1).padStart(4, "0")}`,
+    ));
+    const shotIdSet = new Set(shotIds);
+    if (Object.hasOwn(plan, "chapters")) {
+        if (!Array.isArray(plan.chapters)) {
+            throw new Error("chapters must be a list.");
+        }
+        if (plan.chapters.length > MAX_CHAPTERS) {
+            throw new Error(`The plan supports at most ${MAX_CHAPTERS} chapters.`);
+        }
+        const usedIds = new Set();
+        const usedStarts = new Set();
+        plan.chapters = plan.chapters.map((chapter, offset) => {
+            if (!chapter || typeof chapter !== "object" || Array.isArray(chapter)) {
+                throw new Error(`Chapter ${offset + 1} must be an object.`);
+            }
+            const fallbackId = `chapter_${String(offset + 1).padStart(2, "0")}`;
+            const id = safeChapterId(chapter.id, fallbackId);
+            if (usedIds.has(id)) throw new Error(`Duplicate chapter id: ${id}.`);
+            usedIds.add(id);
+            const startSceneId = safeShotId(
+                chapter.start_scene_id,
+                shotIds[Math.min(offset, shotIds.length - 1)],
+            );
+            if (!shotIdSet.has(startSceneId)) {
+                throw new Error(
+                    `Chapter ${offset + 1} starts at missing scene ${startSceneId}.`,
+                );
+            }
+            if (usedStarts.has(startSceneId)) {
+                throw new Error(`Only one chapter may start at scene ${startSceneId}.`);
+            }
+            usedStarts.add(startSceneId);
+            return {
+                id,
+                title: String(chapter.title ?? `Chapter ${offset + 1}`).trim()
+                    .slice(0, 160) || `Chapter ${offset + 1}`,
+                start_scene_id: startSceneId,
+                text: promptValueToText(chapter.text ?? chapter.notes ?? "", `Chapter ${offset + 1} text`),
+            };
+        }).sort((left, right) => (
+            shotIds.indexOf(left.start_scene_id) - shotIds.indexOf(right.start_scene_id)
+        ));
+        if (plan.chapters.length === 0) delete plan.chapters;
+    }
+
     if (Object.hasOwn(plan, "prompt_prefix")) {
         plan.prompt_prefix = promptTextToLines(
             promptValueToText(plan.prompt_prefix, "prompt_prefix"),
@@ -380,6 +429,89 @@ export function safeShotId(value, fallback) {
     let text = String(value ?? "").trim().replace(/[^A-Za-z0-9._-]+/g, "_");
     text = text.replace(/^[._-]+|[._-]+$/g, "");
     return (text || fallback).slice(0, 96);
+}
+
+export function safeChapterId(value, fallback = "chapter") {
+    return safeShotId(value, fallback);
+}
+
+export function orderedChapters(plan) {
+    const shots = Array.isArray(plan?.shots) ? plan.shots : [];
+    const order = new Map(shots.map((shot, offset) => [
+        safeShotId(shot?.id, `clip_${String(offset + 1).padStart(4, "0")}`),
+        offset,
+    ]));
+    return (Array.isArray(plan?.chapters) ? plan.chapters : [])
+        .filter((chapter) => order.has(chapter?.start_scene_id))
+        .slice()
+        .sort((left, right) => (
+            order.get(left.start_scene_id) - order.get(right.start_scene_id)
+        ));
+}
+
+export function uniqueChapterId(chapters, requested = "chapter") {
+    const used = new Set((chapters ?? []).map((chapter, offset) => safeChapterId(
+        chapter?.id,
+        `chapter_${String(offset + 1).padStart(2, "0")}`,
+    )));
+    const base = safeChapterId(requested, "chapter");
+    if (!used.has(base)) return base;
+    for (let suffix = 2; suffix <= MAX_CHAPTERS + 1; suffix += 1) {
+        const candidate = `${base}_${suffix}`.slice(0, 96);
+        if (!used.has(candidate)) return candidate;
+    }
+    return `${base}_${Date.now()}`.slice(0, 96);
+}
+
+export function makeChapter(plan, startIndex = 0) {
+    const shots = Array.isArray(plan?.shots) ? plan.shots : [];
+    const index = Math.max(0, Math.min(shots.length - 1, Number(startIndex) || 0));
+    const startSceneId = safeShotId(
+        shots[index]?.id,
+        `clip_${String(index + 1).padStart(4, "0")}`,
+    );
+    const chapters = Array.isArray(plan.chapters) ? plan.chapters : [];
+    if (chapters.some((chapter) => chapter?.start_scene_id === startSceneId)) {
+        throw new Error(`A chapter already starts before scene ${index + 1}.`);
+    }
+    const ordinal = chapters.length + 1;
+    const chapter = {
+        id: uniqueChapterId(chapters, `chapter_${String(ordinal).padStart(2, "0")}`),
+        title: `Chapter ${ordinal}`,
+        start_scene_id: startSceneId,
+        text: "",
+    };
+    plan.chapters = [...chapters, chapter];
+    return chapter;
+}
+
+export function removePlanShot(plan, index) {
+    const shots = Array.isArray(plan?.shots) ? plan.shots : [];
+    if (index < 0 || index >= shots.length) return null;
+    const removedId = safeShotId(
+        shots[index]?.id,
+        `clip_${String(index + 1).padStart(4, "0")}`,
+    );
+    const [removed] = shots.splice(index, 1);
+    if (Array.isArray(plan.chapters)) {
+        const replacement = shots[index] ?? shots[index - 1] ?? null;
+        const replacementId = replacement ? safeShotId(
+            replacement.id,
+            `clip_${String(Math.max(1, index + 1)).padStart(4, "0")}`,
+        ) : null;
+        const occupied = new Set(plan.chapters
+            .filter((chapter) => chapter.start_scene_id !== removedId)
+            .map((chapter) => chapter.start_scene_id));
+        plan.chapters = plan.chapters.filter((chapter) => {
+            if (chapter.start_scene_id !== removedId) return true;
+            if (!replacementId || occupied.has(replacementId)) return false;
+            chapter.start_scene_id = replacementId;
+            occupied.add(replacementId);
+            return true;
+        });
+        if (plan.chapters.length === 0) delete plan.chapters;
+    }
+    return removed;
 }
 
 export function uniqueShotId(shots, requested = "scene") {
