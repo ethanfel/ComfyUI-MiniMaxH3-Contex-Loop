@@ -318,6 +318,45 @@ function collapseWidget(widget) {
     }
 }
 
+function setProjectAssetManagedWidget(widget, managed) {
+    if (!widget) return;
+    widget._h3ProjectAssetOriginal ??= {
+        hidden: widget.hidden,
+        type: widget.type,
+        computeSize: widget.computeSize,
+        draw: widget.draw,
+        disabled: widget.disabled,
+    };
+    if (widget._h3ProjectAssetManaged === managed) return;
+    widget._h3ProjectAssetManaged = managed;
+    const original = widget._h3ProjectAssetOriginal;
+    if (managed) {
+        widget.hidden = true;
+        widget.type = "hidden";
+        widget.computeSize = () => [0, -4];
+        widget.draw = () => {};
+        widget.disabled = true;
+    } else {
+        widget.hidden = original.hidden;
+        widget.type = original.type;
+        widget.computeSize = original.computeSize;
+        widget.draw = original.draw;
+        widget.disabled = original.disabled;
+    }
+    for (const item of new Set([widget.inputEl, widget.element])) {
+        if (!item?.style) continue;
+        if (managed) {
+            item.style.setProperty("display", "none", "important");
+            item.style.setProperty("pointer-events", "none", "important");
+            item.setAttribute?.("aria-hidden", "true");
+        } else {
+            item.style.removeProperty("display");
+            item.style.removeProperty("pointer-events");
+            item.removeAttribute?.("aria-hidden");
+        }
+    }
+}
+
 function colorOverrides(node) {
     node.properties ??= {};
     const current = node.properties[SCENE_COLOR_PROPERTY];
@@ -488,6 +527,21 @@ function mountEditor(node) {
         // onNodeCreated. Reallocate the DOM viewport once layout has settled.
         requestAnimationFrame(() => requestAnimationFrame(applyResponsiveSize));
         setTimeout(applyResponsiveSize, 150);
+    }
+
+    function syncProjectAssetManagedWidgets() {
+        const managed = inputConnected(node, "project_assets");
+        setProjectAssetManagedWidget(
+            node.widgets?.find((item) => item.name === "run_name"), managed,
+        );
+        setProjectAssetManagedWidget(
+            node.widgets?.find((item) => item.name === "generation_fingerprint"),
+            managed,
+        );
+        root.classList.toggle("h3c-project-assets-managed", managed);
+        root.title = managed
+            ? "Run name and reference fingerprint are managed by the connected Project Assets node."
+            : "Build an ordered MiniMax H3 scene plan. Hover individual controls for wiring, timing, and formatting guidance.";
     }
 
     function currentSettings() {
@@ -1645,14 +1699,20 @@ function mountEditor(node) {
 
     node._h3ChainEditorRefresh = () => {
         collapseWidget(planWidget);
+        syncProjectAssetManagedWidgets();
         const layout = planLayout(node);
         state.advanced = Boolean(layout.advanced);
         state.jsonOpen = Boolean(layout.jsonOpen);
         loadFromWidget(true);
         scheduleResponsiveSize();
     };
-    node._h3ChainEditorConnectionRefresh = () => render();
+    node._h3ChainEditorConnectionRefresh = () => {
+        syncProjectAssetManagedWidgets();
+        scheduleResponsiveSize();
+        render();
+    };
     node._h3ChainEditorFit = applyResponsiveSize;
+    syncProjectAssetManagedWidgets();
     loadFromWidget(true);
     scheduleResponsiveSize();
     const removed = node.onRemoved;

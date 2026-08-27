@@ -124,6 +124,31 @@ def main():
         assert all(slot["available"] for slot in template_catalog["reference_slots"])
         assert "0 native, 0 semantic, 2 unassigned" in template_status
 
+        tagged_audio = chain._append_tagged_reference(
+            None, kind="audio", tag="dialogue", value={"test": "audio"},
+            content_hash="audio-source-hash",
+            timeline_mode="source_timeline", align_audio_reference=True)
+        audio_record, audio_refs, _token, _timeline, _status = (
+            chain.MiniMaxH3ProjectAssetManager().build(
+                "audio_template", "", "512", "timestamped_video",
+                tagged_references=tagged_audio))
+        audio_slot = audio_record["catalog"]["reference_slots"][0]
+        assert audio_slot["role"] == "audio_reference"
+        assert audio_slot["options"]["timeline_mode"] == "source_timeline"
+        assert audio_slot["options"]["align_audio_reference"] is True
+        store.bind_reference_slot(
+            "audio_template", audio_slot["id"], music,
+            source_kind="input")
+        _record, audio_refs, _token, _timeline, _status = (
+            chain.MiniMaxH3ProjectAssetManager().build(
+                "audio_template", "", "512", "timestamped_video",
+                tagged_references=tagged_audio))
+        audio_entry = audio_refs["entries"][0]
+        assert audio_entry["kind"] == "audio"
+        assert audio_entry["tag"] == "dialogue"
+        assert audio_entry["timeline_mode"] == "source_timeline"
+        assert audio_entry["align_audio_reference"] is True
+
     print("H3 Project Asset Manager: registry, metadata template, lazy picture, and Plan pass")
 
 

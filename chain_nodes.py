@@ -12922,11 +12922,16 @@ class MiniMaxH3ProjectAssetManager:
                     references = _decorate_motion_reference(
                         references, target, description, short_edge)
             elif role == "audio_reference":
+                timeline_mode = str(
+                    options.get("timeline_mode") or "standalone")
                 references = _append_tagged_reference(
                     references, kind="audio", tag=asset.get("tag"),
                     value=_project_asset_descriptor(asset, path),
                     content_hash=content_hash,
-                    timeline_mode="standalone")
+                    timeline_mode=timeline_mode,
+                    align_audio_reference=(
+                        timeline_mode == "source_timeline" and bool(
+                            options.get("align_audio_reference", False))))
             else:
                 raise ValueError("Unsupported project asset role %r." % role)
             native_count += 1

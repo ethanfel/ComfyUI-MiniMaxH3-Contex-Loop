@@ -831,6 +831,12 @@ assert.doesNotMatch(editorSource, /Uses JSON defaults/);
 assert.match(editorSource, /External plan input connected/);
 assert.match(editorSource, /non-empty upstream string controls execution/);
 assert.match(editorSource, /onConnectionsChange/);
+assert.match(editorSource, /setProjectAssetManagedWidget/);
+assert.match(editorSource, /inputConnected\(node, "project_assets"\)/);
+assert.match(editorSource, /item\.name === "run_name"/);
+assert.match(editorSource, /item\.name === "generation_fingerprint"/);
+assert.match(editorSource, /widget\._h3ProjectAssetOriginal/);
+assert.match(editorSource, /style\.removeProperty\("display"\)/);
 assert.doesNotMatch(editorSource, /h3_motion_context\.chain_plan_editor/);
 
 console.log("H3 Chain Plan editor core: parsing, uint64 seeds, timing and edits pass");
