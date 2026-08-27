@@ -115,6 +115,12 @@ function injectStyles() {
         .h3pa-editor{display:flex;flex-direction:column;gap:8px;padding:10px;overflow:auto;border:1px solid
           var(--border-color,#566174);border-radius:9px;background:var(--comfy-input-bg,#151820)}
         .h3pa-editor label{display:flex;flex-direction:column;gap:3px;color:#aeb7c8}.h3pa-editor textarea{min-height:62px;resize:vertical}
+        .h3pa-editor label.h3pa-toggle{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;align-items:start;
+          padding:8px;border:1px solid color-mix(in srgb,var(--border-color,#566174) 72%,transparent);border-radius:7px;
+          background:color-mix(in srgb,var(--comfy-input-bg,#151820) 78%,#263247);cursor:pointer}
+        .h3pa-editor .h3pa-toggle input{width:16px;height:16px;min-width:16px;margin:2px 0 0;padding:0;cursor:pointer}
+        .h3pa-toggle-copy{display:flex;flex-direction:column;gap:2px;min-width:0}.h3pa-toggle-copy strong{color:inherit}
+        .h3pa-toggle-copy small{color:#8f9bb0;font-size:11px;line-height:1.3}
         .h3pa-carousel{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:4px 1px 7px;min-height:126px}
         .h3pa-card{position:relative;flex:0 0 150px;height:112px;padding:0;border:1px solid #495466;border-radius:8px;
           overflow:hidden;background:#11141a;color:inherit;text-align:left;cursor:pointer}.h3pa-card.selected{border:2px solid #76aaff}
@@ -396,10 +402,26 @@ function mount(node) {
         }
         role.addEventListener("change", () => updateAsset(asset, {role: role.value}));
         roleLabel.append(role); editor.append(roleLabel);
-        const enabledLabel = el("label");
+        const isSourceTrack = asset.role === "source_track";
+        const enabledTitle = isSourceTrack ? "Active source track" : "Available to prompts";
+        const enabledSummary = isSourceTrack
+            ? "Turn off to retain the track without using it as the project source."
+            : `${promptTag(asset)} is used only when a scene prompt includes its tag. Turn off to archive it from suggestions without deleting it.`;
+        const enabledHelp = isSourceTrack
+            ? "Use this file as the project-wide Source track. Turn it off to retain the stored track without exporting a Source Timeline."
+            : `Keep ${promptTag(asset)} registered in prompt suggestions and reference fingerprinting. Scene prompts still control where it is used. Turn it off to archive it without deleting the stored file.`;
+        const enabledLabel = el("label", "h3pa-toggle");
+        enabledLabel.title = enabledHelp;
         const enabled = el("input"); enabled.type = "checkbox"; enabled.checked = asset.enabled !== false;
+        enabled.setAttribute("aria-label", enabledTitle);
+        enabled.title = enabledHelp;
         enabled.addEventListener("change", () => updateAsset(asset, {enabled: enabled.checked}));
-        enabledLabel.append(enabled, document.createTextNode(" Enabled")); editor.append(enabledLabel);
+        const enabledCopy = el("span", "h3pa-toggle-copy");
+        enabledCopy.append(
+            el("strong", "", enabledTitle),
+            el("small", "", enabledSummary),
+        );
+        enabledLabel.append(enabled, enabledCopy); editor.append(enabledLabel);
         if (["video", "motion"].includes(asset.role)) {
             const timelineLabel = el("label", "", "Timeline mode");
             const timeline = el("select");
