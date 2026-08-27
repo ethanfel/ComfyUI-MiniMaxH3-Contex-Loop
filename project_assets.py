@@ -721,10 +721,21 @@ class ProjectAssetStore:
             entry["id"], str(entry.get("sha256") or "")[:12], suffix))
 
     def ensure_poster(self, project: Any, asset_id: Any) -> str:
+        return self._ensure_still_preview(
+            project, asset_id, ".jpg", (960, 540), 86)
+
+    def ensure_thumbnail(self, project: Any, asset_id: Any) -> str:
+        """Return a small cached still used by large carousel collections."""
+        return self._ensure_still_preview(
+            project, asset_id, ".thumb.jpg", (320, 180), 78)
+
+    def _ensure_still_preview(
+            self, project: Any, asset_id: Any, suffix: str,
+            bounds: tuple[int, int], quality: int) -> str:
         entry, source = self.asset(project, asset_id)
         if entry["kind"] == "audio":
             raise ValueError("Audio assets do not have poster frames.")
-        target = self._preview_path(project, entry, ".jpg")
+        target = self._preview_path(project, entry, suffix)
         os.makedirs(os.path.dirname(target), exist_ok=True)
         if os.path.isfile(target) and os.path.getsize(target) > 0:
             return target
@@ -733,15 +744,21 @@ class ProjectAssetStore:
             if entry["kind"] == "image" and Image is not None:
                 with Image.open(source) as image:
                     frame = image.convert("RGB")
-                    frame.thumbnail((960, 540))
-                    frame.save(temporary, format="JPEG", quality=86, optimize=True)
+                    frame.thumbnail(bounds)
+                    frame.save(
+                        temporary, format="JPEG", quality=quality,
+                        optimize=True)
             else:
                 ffmpeg = shutil.which("ffmpeg")
                 if ffmpeg:
+                    width, height = bounds
                     command = [
                         ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
                         "-ss", "0", "-i", source, "-frames:v", "1",
-                        "-vf", "scale='min(960,iw)':-2", "-q:v", "3", temporary,
+                        "-vf", "scale='min(%d,iw)':'min(%d,ih)':"
+                        "force_original_aspect_ratio=decrease" % (
+                            width, height),
+                        "-q:v", "3", temporary,
                     ]
                     completed = subprocess.run(
                         command, stdout=subprocess.DEVNULL,
@@ -756,8 +773,9 @@ class ProjectAssetStore:
                         if frame is None:
                             raise ValueError("Video contains no decodable frame.")
                         image = frame.to_image().convert("RGB")
-                        image.thumbnail((960, 540))
-                        image.save(temporary, format="JPEG", quality=86)
+                        image.thumbnail(bounds)
+                        image.save(
+                            temporary, format="JPEG", quality=quality)
                 else:
                     raise RuntimeError("Video poster generation requires ffmpeg or PyAV/Pillow.")
             if not os.path.isfile(temporary) or os.path.getsize(temporary) <= 0:

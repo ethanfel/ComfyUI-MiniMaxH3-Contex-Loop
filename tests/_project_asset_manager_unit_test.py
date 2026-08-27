@@ -52,6 +52,8 @@ def main():
         "optional", {})
     assert "run_name" in chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["required"]
     assert "project_name" not in chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["required"]
+    assert chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["required"][
+        "run_name"][1]["default"] == ""
     assert "tagged_references" in (
         chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"])
     with tempfile.TemporaryDirectory() as temporary:

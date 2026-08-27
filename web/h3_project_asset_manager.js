@@ -109,7 +109,7 @@ function injectStyles() {
         .h3pa-stage{flex:1 1 auto;min-height:230px;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;overflow:hidden}
         .h3pa-preview{position:relative;display:grid;place-items:center;min-width:0;min-height:220px;
           overflow:hidden;border:1px solid var(--border-color,#566174);border-radius:9px;background:#090b10}
-        .h3pa-preview img,.h3pa-preview video{display:block;max-width:100%;max-height:100%;object-fit:contain}
+        .h3pa-preview img,.h3pa-preview video{display:block;width:100%;height:100%;min-width:0;min-height:0;object-fit:contain}
         .h3pa-preview audio{width:min(94%,650px)}.h3pa-empty{color:#738097;text-align:center;padding:24px}
         .h3pa-editor{display:flex;flex-direction:column;gap:8px;padding:10px;overflow:auto;border:1px solid
           var(--border-color,#566174);border-radius:9px;background:var(--comfy-input-bg,#151820)}
@@ -154,6 +154,19 @@ function syncDownstreamPlan(node, runName) {
     }
 }
 
+function downstreamPlanRunName(node) {
+    for (const output of node.outputs ?? []) {
+        for (const linkId of output.links ?? []) {
+            const link = node.graph?.links?.[linkId];
+            const target = link ? node.graph?.getNodeById?.(link.target_id) : null;
+            if (!target || !PLAN_TYPES.has(nodeType(target))) continue;
+            const value = String(widget(target, "run_name")?.value ?? "").trim();
+            if (value) return value;
+        }
+    }
+    return "";
+}
+
 function mount(node) {
     if (node._h3ProjectAssetMounted) return;
     node._h3ProjectAssetMounted = true;
@@ -170,7 +183,17 @@ function mount(node) {
     runNameInput.placeholder = "Run name";
     runNameInput.title = "Authoritative H3 chain Run name. When this node is connected to Plan, the Plan run_name is synchronized automatically; enter it here only.";
     runNameInput.setAttribute("aria-label", "Run name");
-    runNameInput.value = String(runNameWidget?.value ?? "h3_project");
+    const savedRunName = String(runNameWidget?.value ?? "").trim();
+    const connectedRunName = downstreamPlanRunName(node);
+    runNameInput.value = (
+        savedRunName && savedRunName !== "h3_project"
+            ? savedRunName
+            : (connectedRunName || (savedRunName === "h3_project" ? "" : savedRunName))
+    );
+    if (runNameWidget && runNameWidget.value !== runNameInput.value) {
+        runNameWidget.value = runNameInput.value;
+        runNameWidget.callback?.(runNameInput.value);
+    }
     const sourceSelect = el("select");
     for (const [value, label] of [
         ["project", "Project assets"], ["input", "ComfyUI input"],
@@ -179,16 +202,27 @@ function mount(node) {
         const option = el("option", "", label); option.value = value;
         sourceSelect.append(option);
     }
-    top.append(el("span", "", "Run name"), runNameInput, sourceSelect);
+    const previewSelect = el("select");
+    for (const [value, label] of [
+        ["light", "Light previews"], ["full", "Full image previews"],
+    ]) {
+        const option = el("option", "", label); option.value = value;
+        previewSelect.append(option);
+    }
+    previewSelect.value = String(
+        node.properties?.h3_project_asset_preview_mode ?? "light");
+    previewSelect.title = "Light uses cached thumbnails and bounded JPEG previews. Full loads the selected original image; carousel cards remain lightweight.";
+    top.append(el("span", "", "Run name"), runNameInput, sourceSelect, previewSelect);
     const fileInput = el("input");
     fileInput.type = "file"; fileInput.accept = "image/*,video/*,audio/*";
     fileInput.hidden = true;
     top.append(
         button("Upload", () => {
-            state.bindingSlot = null;
+            state.bindingSlot = selectedUnassignedSlot();
             fileInput.click();
-        }, "Copy media into this project"),
-        button("Browse source", () => browseSource(), "Import from selected source"),
+        }, "Bind the selected Unassigned slot, or import a new asset when no slot is selected"),
+        button("Browse source", () => browseSource(selectedUnassignedSlot()),
+            "Bind the selected Unassigned slot, or import a new asset when no slot is selected"),
         button("Refresh", () => refresh()), fileInput,
     );
     const status = el("div", "h3pa-status", "Loading project assets…");
@@ -208,8 +242,10 @@ function mount(node) {
     const state = {
         catalog: {assets: [], reference_slots: []}, selected: "",
         filter: "all", media: null, bindingSlot: null,
+        previewMode: previewSelect.value === "full" ? "full" : "light",
     };
-    const project = () => String(runNameInput.value || "h3_project").trim();
+    const project = () => String(runNameInput.value || "").trim();
+    let refreshSequence = 0;
     function setStatus(text, error = false) {
         status.textContent = text;
         status.style.color = error ? "#ff8d8d" : "";
@@ -239,6 +275,11 @@ function mount(node) {
                 ...slot, _unresolved: true,
             })),
         ];
+    }
+    function selectedUnassignedSlot() {
+        return allItems().find((asset) => (
+            asset.id === state.selected && asset._unresolved
+        )) ?? null;
     }
     function filteredAssets() {
         return allItems().filter((asset) => matchesTab(asset, state.filter));
@@ -275,7 +316,11 @@ function mount(node) {
         }
         if (asset.kind === "image") {
             const image = el("img");
-            image.alt = asset.tag; image.src = mediaUrl(project(), asset, "original");
+            image.alt = asset.tag;
+            image.src = mediaUrl(
+                project(), asset,
+                state.previewMode === "full" ? "original" : "poster",
+            );
             preview.append(image); state.media = image;
         } else if (asset.kind === "video") {
             const video = el("video");
@@ -413,7 +458,7 @@ function mount(node) {
             card.classList.toggle("stale", asset._unresolved && asset.available === false);
             if (!asset._unresolved && ["image", "video"].includes(asset.kind)) {
                 const image = el("img"); image.loading = "lazy";
-                image.src = mediaUrl(project(), asset, "poster"); card.append(image);
+                image.src = mediaUrl(project(), asset, "thumbnail"); card.append(image);
             } else card.append(el(
                 "div", "fallback", asset._unresolved ? "?" : "♫",
             ));
@@ -435,11 +480,18 @@ function mount(node) {
         renderPreview(selected); renderEditor(selected);
     }
     async function refresh() {
+        const requestedProject = project();
+        const sequence = ++refreshSequence;
+        if (!requestedProject) {
+            setStatus("Enter a Run name, or connect this node to a named Plan.");
+            return;
+        }
         try {
-            setStatus(`Loading ${project()}…`);
+            setStatus(`Loading ${requestedProject}…`);
             const catalog = await jsonRequest(
-                `/minimax_h3_context_loop/project-assets?project=${encodeURIComponent(project())}`,
+                `/minimax_h3_context_loop/project-assets?project=${encodeURIComponent(requestedProject)}`,
             );
+            if (sequence !== refreshSequence || project() !== requestedProject) return;
             persistCatalog(catalog); render();
             setStatus(`${catalog.assets.length} project assets · ${(catalog.reference_slots ?? []).length} unassigned · revision ${(catalog.revision || "empty").slice(0, 12)}`);
         } catch (error) { setStatus(error.message, true); }
@@ -523,7 +575,18 @@ function mount(node) {
     });
     let projectTimer = 0;
     runNameInput.addEventListener("input", () => {
+        refreshSequence += 1;
+        if (runNameWidget) {
+            runNameWidget.value = project();
+            runNameWidget.callback?.(project());
+        }
         clearTimeout(projectTimer); projectTimer = setTimeout(refresh, 400);
+    });
+    previewSelect.addEventListener("change", () => {
+        state.previewMode = previewSelect.value === "full" ? "full" : "light";
+        node.properties ??= {};
+        node.properties.h3_project_asset_preview_mode = state.previewMode;
+        render();
     });
     const removed = node.onRemoved;
     node.onRemoved = function () { stopMedia(); return removed?.apply(this, arguments); };

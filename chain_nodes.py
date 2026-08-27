@@ -13686,7 +13686,7 @@ class MiniMaxH3ProjectAssetManager:
         return {
             "required": {
                 "run_name": ("STRING", {
-                    "default": "h3_project",
+                    "default": "",
                     "tooltip": "Authoritative H3 chain Run name. When "
                                "project_assets is connected to Plan, this "
                                "value automatically overrides and synchronizes "
@@ -21900,7 +21900,7 @@ def _project_asset_store() -> ProjectAssetStore:
 
 async def _project_asset_catalog(request):
     try:
-        project = request.query.get("project", "h3_project")
+        project = request.query.get("project", "")
         catalog = await asyncio.to_thread(
             _project_asset_store().public_catalog, project)
         return web.json_response(catalog)
@@ -21952,7 +21952,7 @@ async def _project_asset_upload(request):
             fields[part.name] = (await part.text()).strip()
         if upload is None:
             raise ValueError("Upload request contains no file.")
-        project = fields.get("project", "h3_project")
+        project = fields.get("project", "")
         filename = upload.filename or "asset"
         store = _project_asset_store()
         temporary = store.upload_path(project, filename)
@@ -22002,7 +22002,7 @@ async def _project_asset_import(request):
         slot_id = str(body.get("slot_id") or "")
         importer = (store.bind_reference_slot
                     if slot_id else store.import_file)
-        project = body.get("project", "h3_project")
+        project = body.get("project", "")
         positional = ((project, slot_id, path)
                       if slot_id else (project, path))
         result = await asyncio.to_thread(
@@ -22024,7 +22024,7 @@ async def _project_asset_update(request):
             raise ValueError("Asset update request must be a JSON object.")
         result = await asyncio.to_thread(
             _project_asset_store().update,
-            body.get("project", "h3_project"), body.get("asset_id"),
+            body.get("project", ""), body.get("asset_id"),
             body.get("changes"))
         return web.json_response(result)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -22033,18 +22033,23 @@ async def _project_asset_update(request):
 
 async def _project_asset_media(request):
     try:
-        project = request.query.get("project", "h3_project")
+        project = request.query.get("project", "")
         asset_id = request.query.get("asset", "")
         variant = str(request.query.get("variant", "original")).lower()
         store = _project_asset_store()
         entry, path = await asyncio.to_thread(store.asset, project, asset_id)
         if variant == "poster":
             path = await asyncio.to_thread(store.ensure_poster, project, asset_id)
+        elif variant == "thumbnail":
+            path = await asyncio.to_thread(
+                store.ensure_thumbnail, project, asset_id)
         elif variant == "preview":
             path = await asyncio.to_thread(
                 store.ensure_browser_media, project, asset_id)
         elif variant != "original":
-            raise ValueError("Asset media variant must be original, poster, or preview.")
+            raise ValueError(
+                "Asset media variant must be original, poster, thumbnail, "
+                "or preview.")
         return web.FileResponse(path, headers={
             "Cache-Control": "private, max-age=3600",
             "Content-Disposition": "inline; filename=%s" % json.dumps(

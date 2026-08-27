@@ -9,18 +9,18 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.6.38";
+} from "./h3_checkpoint_manager_core.mjs?v=0.6.39";
 import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.6.38";
-import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.38";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.38";
+} from "./h3_chain_plan_core.mjs?v=0.6.39";
+import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.39";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.39";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.38";
+} from "./h3_plan_restore_core.mjs?v=0.6.39";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";

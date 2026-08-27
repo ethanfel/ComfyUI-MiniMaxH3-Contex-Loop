@@ -1,4 +1,4 @@
-import {MAX_SEED} from "./h3_chain_plan_core.mjs?v=0.6.38";
+import {MAX_SEED} from "./h3_chain_plan_core.mjs?v=0.6.39";
 
 function normalizedPositiveInteger(value, label) {
     const number = Number(value);

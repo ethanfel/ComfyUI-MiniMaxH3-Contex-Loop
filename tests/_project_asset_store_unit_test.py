@@ -41,6 +41,11 @@ def main():
         assert len(second["catalog"]["assets"]) == 2
         assert pathlib.Path(store.asset(
             "episode_1", first["asset"]["id"])[1]).is_file()
+        thumbnail = pathlib.Path(store.ensure_thumbnail(
+            "episode_1", first["asset"]["id"]))
+        assert thumbnail.is_file()
+        with Image.open(thumbnail) as image:
+            assert image.width <= 320 and image.height <= 180
         assert (output_root / "h3_chains" / "episode_1" /
                 "project_assets" / "catalog.json").is_file()
         assert (output_root / "h3_chains" / "episode_1" /
