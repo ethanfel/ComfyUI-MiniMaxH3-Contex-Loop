@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Project Asset image variants now accept exact megapixel targets and presets
+  without requiring a crop. Output aspect locking couples width and height in
+  both directions, **Use full image** preserves the megapixel target, and a
+  connected upscale model reports its exact input and final saved dimensions.
+
 - Reference discovery in Plan Studio and both scene prompt editors now crosses
   ComfyUI subgraph input/output rails. Tagged references, Semantic Anchor
   Bundles, their internal semantic picture anchors, and externally supplied
