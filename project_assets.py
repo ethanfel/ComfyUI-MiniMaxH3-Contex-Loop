@@ -628,6 +628,71 @@ class ProjectAssetStore:
         catalog = self._save_catalog(catalog)
         return {"catalog": catalog, "asset": dict(entry)}
 
+    def reorder(self, project: Any, asset_ids: Any) -> dict[str, Any]:
+        """Persist one exact permutation of the project's asset cards."""
+        if not isinstance(asset_ids, list):
+            raise ValueError("Asset order must be a JSON list of asset IDs.")
+        catalog = self.load(project)
+        current_ids = [str(item.get("id") or "")
+                       for item in catalog["assets"]]
+        requested = [str(item or "") for item in asset_ids]
+        if (len(requested) != len(set(requested))
+                or set(requested) != set(current_ids)):
+            raise ValueError(
+                "Asset order must contain every current asset ID exactly once.")
+        by_id = {
+            str(item.get("id") or ""): item for item in catalog["assets"]}
+        catalog["assets"] = [by_id[asset_id] for asset_id in requested]
+        return {"catalog": self._save_catalog(catalog)}
+
+    def delete(self, project: Any, asset_id: Any) -> dict[str, Any]:
+        """Remove a catalog asset and its project-owned media copies."""
+        catalog = self.load(project)
+        wanted = str(asset_id or "")
+        entry = next((item for item in catalog["assets"]
+                      if str(item.get("id") or "") == wanted), None)
+        if entry is None:
+            raise FileNotFoundError("Project asset %s was not found." % wanted)
+        removed = dict(entry)
+        catalog["assets"] = [
+            item for item in catalog["assets"]
+            if str(item.get("id") or "") != wanted]
+        remaining_paths = {
+            str(item.get("relative_path") or "")
+            for item in catalog["assets"]}
+        saved = self._save_catalog(catalog)
+
+        deleted_files = 0
+        relative = str(removed.get("relative_path") or "")
+        if relative and relative not in remaining_paths:
+            project_dir, name = self._project_dir(project)
+            backup_dir, _name = self._backup_dir(name)
+            for root in (project_dir, backup_dir):
+                path = os.path.realpath(os.path.join(root, relative))
+                if not _inside(root, path):
+                    raise ValueError("Project asset media path escapes its store.")
+                try:
+                    os.unlink(path)
+                    deleted_files += 1
+                except FileNotFoundError:
+                    pass
+
+        project_dir, _name = self._project_dir(project)
+        preview_dir = os.path.join(project_dir, "previews")
+        preview_prefix = wanted + "_"
+        if os.path.isdir(preview_dir):
+            with os.scandir(preview_dir) as previews:
+                for preview in previews:
+                    if (preview.is_file(follow_symlinks=False)
+                            and preview.name.startswith(preview_prefix)):
+                        os.unlink(preview.path)
+                        deleted_files += 1
+        return {
+            "catalog": saved,
+            "asset": removed,
+            "deleted_files": deleted_files,
+        }
+
     def input_media(self, query: Any = "") -> list[dict[str, Any]]:
         needle = str(query or "").strip().lower()
         result = []
