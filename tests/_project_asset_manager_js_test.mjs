@@ -38,5 +38,12 @@ assert.match(source, /state\.previewMode === "full" \? "original" : "poster"/);
 assert.match(source, /downstreamPlanRunName\(node\)/);
 assert.match(source, /sequence !== refreshSequence \|\| project\(\) !== requestedProject/);
 assert.match(source, /Enter a Run name, or connect this node to a named Plan/);
+assert.match(source, /function adoptConnectedRunName\(\)/);
+assert.match(source, /function scheduleGraphRunNameSync\(\)/);
+assert.match(source, /\[0, 50, 200, 750\]/);
+assert.match(source, /node\.onConnectionsChange/);
+assert.match(source, /nodeClass\.prototype\.onGraphConfigured/);
+assert.match(source, /async afterConfigureGraph\(\)/);
+assert.match(source, /position:absolute;inset:0/);
 
 console.log("H3 Project Asset Carousel: metadata slots, binding, sources, lazy media, editing, and cleanup pass");
