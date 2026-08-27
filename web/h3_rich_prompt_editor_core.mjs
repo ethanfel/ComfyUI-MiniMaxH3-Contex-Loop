@@ -1,4 +1,4 @@
-import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.5.28";
+import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.5.29";
 
 export const RICH_PROMPT_GUIDES = Object.freeze([
     {id: "auto", label: "Auto · H3 mode"},

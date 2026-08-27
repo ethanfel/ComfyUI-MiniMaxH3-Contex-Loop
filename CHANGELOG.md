@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Reference discovery in Plan Studio and both scene prompt editors now crosses
+  ComfyUI subgraph input/output rails. Tagged references, Semantic Anchor
+  Bundles, their internal semantic picture anchors, and externally supplied
+  preview images remain visible when the reference registry is packed into a
+  subgraph for presentation or reusable storage.
+
 - Plan editing now exposes only two timing levels: the Plan-wide default
   seconds/steps widgets and optional per-scene overrides. The redundant
   JSON-level default controls were removed from both Scene Plan and Plan

@@ -131,10 +131,67 @@ const TRANSPARENT_REROUTE_TYPES = new Set([
     "Reroute",
     "Reroute (rgthree)",
 ]);
+const SUBGRAPH_INPUT_ID = "-10";
+const SUBGRAPH_OUTPUT_ID = "-20";
 
 function graphLink(graph, linkId) {
     if (linkId == null) return null;
     return graph?.links?.get?.(linkId) ?? graph?.links?.[linkId] ?? null;
+}
+
+function graphLinks(graph) {
+    if (graph?.links?.values) return [...graph.links.values()];
+    return Object.values(graph?.links ?? {});
+}
+
+function isGraphIoNode(id, expected) {
+    return String(id) === expected;
+}
+
+function subgraphHostNode(graph) {
+    if (!graph) return null;
+    const root = rootGraph(graph);
+    if (!root || graph === root) return null;
+    const graphs = [root, ...graphDescendants(root)];
+    for (const candidate of graphs) {
+        const host = candidate?._nodes?.find((node) => node?.subgraph === graph);
+        if (host) return host;
+    }
+    return null;
+}
+
+function connectionFromLink(graph, link) {
+    if (!graph || !link) return null;
+    if (isGraphIoNode(link.origin_id, SUBGRAPH_INPUT_ID)) {
+        const host = subgraphHostNode(graph);
+        const input = host?.inputs?.[Number(link.origin_slot ?? 0)];
+        const parentLink = graphLink(host?.graph, input?.link);
+        return connectionFromLink(host?.graph, parentLink);
+    }
+    const source = graph.getNodeById?.(link.origin_id) ?? null;
+    return source
+        ? {source, originSlot: Number(link.origin_slot ?? 0)}
+        : null;
+}
+
+function subgraphOutputConnection(node, originSlot) {
+    const graph = node?.subgraph;
+    if (!graph) return null;
+    const slotIndex = Number(originSlot ?? 0);
+    const slot = graph.outputs?.[slotIndex]
+        ?? graph.outputNode?.slots?.[slotIndex];
+    const linked = (slot?.linkIds ?? [])
+        .map((linkId) => graphLink(graph, linkId))
+        .filter(Boolean);
+    const candidates = linked.length ? linked : graphLinks(graph).filter(
+        (link) => isGraphIoNode(link?.target_id, SUBGRAPH_OUTPUT_ID)
+            && Number(link?.target_slot ?? -1) === slotIndex,
+    );
+    const link = candidates.find(
+        (item) => isGraphIoNode(item?.target_id, SUBGRAPH_OUTPUT_ID)
+            && Number(item?.target_slot ?? -1) === slotIndex,
+    ) ?? candidates[0];
+    return connectionFromLink(graph, link);
 }
 
 function directInputConnection(node, name = null) {
@@ -142,10 +199,7 @@ function directInputConnection(node, name = null) {
         ? node?.inputs?.find((item) => item.link != null)
         : node?.inputs?.find((item) => item.name === name);
     const link = graphLink(node?.graph, input?.link);
-    const source = link
-        ? node.graph?.getNodeById?.(link.origin_id) ?? null
-        : null;
-    return source ? {source, originSlot: Number(link.origin_slot ?? 0)} : null;
+    return connectionFromLink(node?.graph, link);
 }
 
 function rootGraph(graph) {
@@ -220,7 +274,10 @@ function getNodesFor(setNode) {
     ));
 }
 
-function transparentInputConnection(node) {
+function transparentInputConnection(node, originSlot = 0) {
+    if (node?.subgraph) {
+        return subgraphOutputConnection(node, originSlot);
+    }
     const type = nodeType(node);
     if (type === "GetNode") {
         const setter = setNodeFor(node);
@@ -237,7 +294,9 @@ function resolveInputConnection(connection) {
     const seen = new Set();
     while (current?.source && !seen.has(current.source)) {
         seen.add(current.source);
-        const next = transparentInputConnection(current.source);
+        const next = transparentInputConnection(
+            current.source, current.originSlot,
+        );
         if (!next) break;
         current = next;
     }
@@ -245,15 +304,7 @@ function resolveInputConnection(connection) {
 }
 
 function inputConnection(node, name) {
-    const input = node?.inputs?.find((item) => item.name === name);
-    const link = graphLink(node?.graph, input?.link);
-    const source = link ? node.graph?.getNodeById?.(link.origin_id) ?? null : null;
-    return source
-        ? resolveInputConnection({
-            source,
-            originSlot: Number(link.origin_slot ?? 0),
-        })
-        : null;
+    return resolveInputConnection(directInputConnection(node, name));
 }
 
 function connectedInputValue(node, name) {

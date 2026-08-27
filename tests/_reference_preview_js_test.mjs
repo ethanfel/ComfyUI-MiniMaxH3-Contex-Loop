@@ -126,6 +126,85 @@ function connect(source, target, targetName, sourceSlot = 0) {
     };
 }
 
+function connectExistingInput(source, target, targetName, sourceSlot = 0) {
+    const targetSlot = target.inputs.findIndex(
+        (input) => input.name === targetName,
+    );
+    assert.notEqual(targetSlot, -1);
+    const id = nextLink++;
+    source.outputs[sourceSlot].links.push(id);
+    target.inputs[targetSlot].link = id;
+    graph.links[id] = {
+        origin_id: source.id,
+        origin_slot: sourceSlot,
+        target_id: target.id,
+        target_slot: targetSlot,
+    };
+}
+
+function makeSubgraph(host, inputs = [], outputs = []) {
+    const subgraph = {
+        _nodes: [],
+        links: {},
+        inputs: inputs.map((name) => ({name, linkIds: []})),
+        outputs: outputs.map((name) => ({name, linkIds: []})),
+        rootGraph: graph,
+        getNodeById(id) {
+            return this._nodes.find((node) => node.id === id);
+        },
+    };
+    host.subgraph = subgraph;
+    host.inputs = inputs.map((name) => ({name, link: null}));
+    host.outputs = outputs.map((name) => ({name, links: []}));
+    return subgraph;
+}
+
+function addInside(subgraph, node) {
+    node.graph = subgraph;
+    subgraph._nodes.push(node);
+    return node;
+}
+
+function connectInside(source, target, targetName, sourceSlot = 0) {
+    const owner = source.graph;
+    const id = nextLink++;
+    while (source.outputs.length <= sourceSlot) {
+        source.outputs.push({name: `output_${source.outputs.length}`, links: []});
+    }
+    source.outputs[sourceSlot].links.push(id);
+    target.inputs.push({name: targetName, link: id});
+    owner.links[id] = {
+        origin_id: source.id,
+        origin_slot: sourceSlot,
+        target_id: target.id,
+        target_slot: target.inputs.length - 1,
+    };
+}
+
+function connectSubgraphInput(subgraph, inputSlot, target, targetName) {
+    const id = nextLink++;
+    target.inputs.push({name: targetName, link: id});
+    subgraph.inputs[inputSlot].linkIds.push(id);
+    subgraph.links[id] = {
+        origin_id: -10,
+        origin_slot: inputSlot,
+        target_id: target.id,
+        target_slot: target.inputs.length - 1,
+    };
+}
+
+function connectSubgraphOutput(subgraph, source, sourceSlot, outputSlot) {
+    const id = nextLink++;
+    source.outputs[sourceSlot].links.push(id);
+    subgraph.outputs[outputSlot].linkIds.push(id);
+    subgraph.links[id] = {
+        origin_id: source.id,
+        origin_slot: sourceSlot,
+        target_id: -20,
+        target_slot: outputSlot,
+    };
+}
+
 const editor = add(makeNode(1, "MiniMaxH3ChainScenePromptEditor"));
 const relay = add(makeNode(2, "MiniMaxH3ChainCurrent"));
 const wrapper = add(makeNode(3, "MiniMaxH3ScheduledReferenceToVideo"));
@@ -377,6 +456,50 @@ assert.deepEqual(
         {tag: "beat_b", token: "#beat_b[0.00s]", label: "<Picture 2>",
             active: true, semanticOnly: true, supportsSemantic: false},
     ],
+);
+
+// Packing the semantic registry into a ComfyUI subgraph is presentation-only.
+// Discovery must cross the output rail to find the bundle and the input rail
+// to resolve an externally connected image used by an internal anchor.
+const nestedEditor = add(makeNode(180, "MiniMaxH3ChainScenePromptEditor"));
+const nestedRelay = add(makeNode(181, "MiniMaxH3ChainCurrent"));
+const nestedWrapper = add(makeNode(182, "MiniMaxH3TaggedReferenceToVideo"));
+const nestedHost = add(makeNode(183, "semantic-registry-subgraph"));
+const nestedImage = add(makeNode(184, "LoadImage", {image: "nested.png"}));
+const nestedGraph = makeSubgraph(
+    nestedHost, ["semantic_image"], ["references"],
+);
+const nestedAnchor = addInside(nestedGraph, makeNode(
+    185, "MiniMaxH3SemanticPictureAnchor", {tag: "nested_beat"},
+));
+const nestedBundle = addInside(nestedGraph, makeNode(
+    186, "MiniMaxH3SemanticAnchorBundle", {
+        semantic_anchor_size: "768",
+        semantic_anchor_mode: "timestamped_video",
+    },
+));
+connect(nestedEditor, nestedRelay, "state");
+connect(nestedRelay, nestedWrapper, "prompt");
+connectExistingInput(nestedImage, nestedHost, "semantic_image");
+connectSubgraphInput(nestedGraph, 0, nestedAnchor, "image");
+connectInside(nestedAnchor, nestedBundle, "anchors");
+connectSubgraphOutput(nestedGraph, nestedBundle, 0, 0);
+connect(nestedHost, nestedWrapper, "references");
+
+assert.equal(findTaggedRef2VA(nestedEditor), nestedWrapper);
+assert.equal(collectSemanticAnchorNodes(nestedWrapper).bundle, nestedBundle);
+assert.deepEqual(
+    collectSemanticAnchorNodes(nestedWrapper).nodes,
+    [nestedAnchor],
+);
+const nestedRecords = taggedReferenceRecords(
+    nestedEditor, "Use #nested_beat[1.00s].",
+).records;
+assert.deepEqual(
+    nestedRecords.map(({tag, active, source}) => ({
+        tag, active, source: source.id,
+    })),
+    [{tag: "nested_beat", active: true, source: nestedImage.id}],
 );
 
 // The 0.5 Source Timeline motion node can be the final link in a tagged chain.
