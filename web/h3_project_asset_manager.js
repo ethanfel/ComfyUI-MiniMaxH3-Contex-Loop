@@ -79,8 +79,9 @@ function promptTag(asset) {
 
 function matchesTab(asset, filter) {
     if (filter === "all") return true;
+    // Assignment is an orthogonal status. Unresolved templates stay visible
+    // in their declared media/role category as well as the Unassigned queue.
     if (filter === "unassigned") return Boolean(asset._unresolved);
-    if (asset._unresolved) return false;
     if (filter === "semantic") return asset.role === "semantic_anchor";
     if (filter === "image") return asset.role === "picture";
     if (filter === "video") return ["video", "motion"].includes(asset.role);
