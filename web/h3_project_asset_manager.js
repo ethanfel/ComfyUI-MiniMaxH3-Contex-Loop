@@ -72,6 +72,23 @@ function assetDetail(asset) {
     return pieces.join(" · ");
 }
 
+function promptTag(asset) {
+    const prefix = asset?.role === "semantic_anchor" ? "#" : "@";
+    return `${prefix}${asset?.tag ?? ""}`;
+}
+
+function matchesTab(asset, filter) {
+    if (filter === "all") return true;
+    if (filter === "unassigned") return Boolean(asset._unresolved);
+    if (asset._unresolved) return false;
+    if (filter === "semantic") return asset.role === "semantic_anchor";
+    if (filter === "image") return asset.role === "picture";
+    if (filter === "video") return ["video", "motion"].includes(asset.role);
+    if (filter === "audio") return asset.role === "audio_reference";
+    if (filter === "source_track") return asset.role === "source_track";
+    return false;
+}
+
 function injectStyles() {
     if (document.getElementById("h3-project-assets-style")) return;
     const style = document.createElement("style");
@@ -121,16 +138,16 @@ function collapseWidget(item) {
     item.type = "hidden";
 }
 
-function syncDownstreamPlan(node, project) {
+function syncDownstreamPlan(node, runName) {
     for (const output of node.outputs ?? []) {
         for (const linkId of output.links ?? []) {
             const link = node.graph?.links?.[linkId];
             const target = link ? node.graph?.getNodeById?.(link.target_id) : null;
             if (!target || !PLAN_TYPES.has(nodeType(target))) continue;
             const run = widget(target, "run_name");
-            if (run && run.value !== project) {
-                run.value = project;
-                run.callback?.(project);
+            if (run && run.value !== runName) {
+                run.value = runName;
+                run.callback?.(runName);
             }
         }
     }
@@ -140,17 +157,19 @@ function mount(node) {
     if (node._h3ProjectAssetMounted) return;
     node._h3ProjectAssetMounted = true;
     injectStyles();
-    const projectWidget = widget(node, "project_name");
+    const runNameWidget = widget(node, "run_name");
     const catalogWidget = widget(node, "catalog_json");
     const semanticSize = widget(node, "semantic_anchor_size");
     const semanticMode = widget(node, "semantic_anchor_mode");
-    [projectWidget, catalogWidget, semanticSize, semanticMode].forEach(collapseWidget);
+    [runNameWidget, catalogWidget, semanticSize, semanticMode].forEach(collapseWidget);
 
     const root = el("div", "h3pa-root");
     const top = el("div", "h3pa-row");
-    const projectInput = el("input", "h3pa-project");
-    projectInput.placeholder = "Project name";
-    projectInput.value = String(projectWidget?.value ?? "h3_project");
+    const runNameInput = el("input", "h3pa-project");
+    runNameInput.placeholder = "Run name";
+    runNameInput.title = "Authoritative H3 chain Run name. When this node is connected to Plan, the Plan run_name is synchronized automatically; enter it here only.";
+    runNameInput.setAttribute("aria-label", "Run name");
+    runNameInput.value = String(runNameWidget?.value ?? "h3_project");
     const sourceSelect = el("select");
     for (const [value, label] of [
         ["project", "Project assets"], ["input", "ComfyUI input"],
@@ -159,7 +178,7 @@ function mount(node) {
         const option = el("option", "", label); option.value = value;
         sourceSelect.append(option);
     }
-    top.append(projectInput, sourceSelect);
+    top.append(el("span", "", "Run name"), runNameInput, sourceSelect);
     const fileInput = el("input");
     fileInput.type = "file"; fileInput.accept = "image/*,video/*,audio/*";
     fileInput.hidden = true;
@@ -189,7 +208,7 @@ function mount(node) {
         catalog: {assets: [], reference_slots: []}, selected: "",
         filter: "all", media: null, bindingSlot: null,
     };
-    const project = () => String(projectInput.value || "h3_project").trim();
+    const project = () => String(runNameInput.value || "h3_project").trim();
     function setStatus(text, error = false) {
         status.textContent = text;
         status.style.color = error ? "#ff8d8d" : "";
@@ -202,13 +221,13 @@ function mount(node) {
     function persistCatalog(catalog) {
         state.catalog = catalog ?? {assets: [], reference_slots: []};
         const canonicalProject = String(state.catalog.project || project());
-        projectInput.value = canonicalProject;
+        runNameInput.value = canonicalProject;
         if (catalogWidget) {
             catalogWidget.value = JSON.stringify(state.catalog);
             catalogWidget.callback?.(catalogWidget.value);
         }
-        projectWidget.value = canonicalProject;
-        projectWidget.callback?.(canonicalProject);
+        runNameWidget.value = canonicalProject;
+        runNameWidget.callback?.(canonicalProject);
         syncDownstreamPlan(node, canonicalProject);
         node.graph?.setDirtyCanvas?.(true, true);
     }
@@ -221,15 +240,7 @@ function mount(node) {
         ];
     }
     function filteredAssets() {
-        return allItems().filter((asset) => {
-            if (state.filter === "all") return true;
-            if (state.filter === "unassigned") return asset._unresolved;
-            if (state.filter === "semantic") return asset.role === "semantic_anchor";
-            if (state.filter === "image") return asset.kind === "image";
-            if (state.filter === "video") return asset.kind === "video";
-            if (state.filter === "audio") return asset.kind === "audio";
-            return asset.role === state.filter;
-        });
+        return allItems().filter((asset) => matchesTab(asset, state.filter));
     }
     function renderTabs() {
         tabs.replaceChildren();
@@ -237,11 +248,7 @@ function mount(node) {
             ["semantic", "Semantic"], ["video", "Video"],
             ["audio", "Audio"], ["unassigned", "Unassigned"],
             ["source_track", "Source track"]]) {
-            const count = allItems().filter((asset) => key === "all"
-                || (key === "unassigned" ? asset._unresolved
-                    : key === "semantic" ? asset.role === "semantic_anchor"
-                        : key === "source_track" ? asset.role === key
-                            : asset.kind === key)).length;
+            const count = allItems().filter((asset) => matchesTab(asset, key)).length;
             const item = button(`${label} ${count}`, () => {
                 state.filter = key; render();
             });
@@ -260,8 +267,8 @@ function mount(node) {
             preview.append(el(
                 "div", "h3pa-empty",
                 asset.available === false
-                    ? `@${asset.tag} is no longer present on the connected reference line.`
-                    : `@${asset.tag} is unassigned. Choose its ${asset.kind} from ComfyUI input or upload it.`,
+                    ? `${promptTag(asset)} is no longer present on the connected reference line.`
+                    : `${promptTag(asset)} is unassigned. Choose its ${asset.kind} from ComfyUI input or upload it.`,
             ));
             return;
         }
@@ -284,21 +291,21 @@ function mount(node) {
     }
     async function updateAsset(asset, changes) {
         try {
-            setStatus(`Updating @${asset.tag}…`);
+            setStatus(`Updating ${promptTag(asset)}…`);
             const result = await jsonRequest(
                 "/minimax_h3_context_loop/project-assets/update", {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({project: project(), asset_id: asset.id, changes}),
                 });
             persistCatalog(result.catalog); render();
-            setStatus(`Updated @${result.asset.tag}.`);
+            setStatus(`Updated ${promptTag(result.asset)}.`);
         } catch (error) { setStatus(error.message, true); }
     }
     function renderEditor(asset) {
         editor.replaceChildren();
         if (!asset) return;
         if (asset._unresolved) {
-            editor.append(el("strong", "h3pa-unassigned", `@${asset.tag} · Unassigned`));
+            editor.append(el("strong", "h3pa-unassigned", `${promptTag(asset)} · Unassigned`));
             editor.append(el(
                 "div", "h3pa-status",
                 `${asset.kind} · ${String(asset.role || "").replaceAll("_", " ")}`,
@@ -415,7 +422,7 @@ function mount(node) {
             ));
             card.append(el(
                 "span", "",
-                `${asset.available === false || asset.enabled === false ? "○ " : ""}@${asset.tag}`,
+                `${asset.available === false || asset.enabled === false ? "○ " : ""}${promptTag(asset)}`,
             ));
             card.addEventListener("click", () => { state.selected = asset.id; render(); });
             carousel.append(card);
@@ -443,7 +450,7 @@ function mount(node) {
                 body: JSON.stringify({project: project(), ...body}),
             });
         persistCatalog(result.catalog); state.selected = result.asset.id; render();
-        setStatus(`${result.bound_slot_id ? "Bound" : "Imported"} @${result.asset.tag} as ${result.asset.role}.`);
+        setStatus(`${result.bound_slot_id ? "Bound" : "Imported"} ${promptTag(result.asset)} as ${result.asset.role}.`);
     }
     async function browseSource(slot = null, forcedSource = "") {
         let source = forcedSource || sourceSelect.value;
@@ -475,7 +482,7 @@ function mount(node) {
                 for (const item of items) {
                     const rowItem = el("div", "h3pa-source-item");
                     rowItem.append(el("span", "", source === "chains"
-                        ? `${item.run_name} · @${item.tag}` : item.path),
+                        ? `${item.run_name} · ${promptTag(item)}` : item.path),
                     el("span", "", item.kind ?? ""), button(slot ? "Bind" : "Import", async () => {
                         try {
                             if (source === "chains") await importAsset({
@@ -504,17 +511,17 @@ function mount(node) {
         if (slot?.id) data.append("slot_id", slot.id);
         data.append("file", file, file.name);
         try {
-            setStatus(`${slot ? `Binding @${slot.tag} from` : "Uploading"} ${file.name}…`);
+            setStatus(`${slot ? `Binding ${promptTag(slot)} from` : "Uploading"} ${file.name}…`);
             const result = await jsonRequest(
                 "/minimax_h3_context_loop/project-assets/upload", {method: "POST", body: data});
             persistCatalog(result.catalog); state.selected = result.asset.id; render();
-            setStatus(`${slot ? "Bound" : "Uploaded"} @${result.asset.tag}.`);
+            setStatus(`${slot ? "Bound" : "Uploaded"} ${promptTag(result.asset)}.`);
         } catch (error) { setStatus(error.message, true); }
         state.bindingSlot = null;
         fileInput.value = "";
     });
     let projectTimer = 0;
-    projectInput.addEventListener("input", () => {
+    runNameInput.addEventListener("input", () => {
         clearTimeout(projectTimer); projectTimer = setTimeout(refresh, 400);
     });
     const removed = node.onRemoved;

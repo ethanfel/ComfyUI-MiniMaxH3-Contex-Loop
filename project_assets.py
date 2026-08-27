@@ -52,6 +52,9 @@ ALL_MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 MAX_CATALOG_ASSETS = 512
 MAX_REFERENCE_SLOTS = 512
 MAX_INPUT_RESULTS = 2000
+INPUT_BROWSER_EXCLUDED_DIRECTORIES = frozenset((
+    "clipspace", "h3_projects",
+))
 _TAG_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
 
 
@@ -69,7 +72,7 @@ def _safe_name(value: Any, fallback: str = "asset", limit: int = 128) -> str:
 def _safe_project(value: Any) -> str:
     project = _safe_name(value, "", 96)
     if not project:
-        raise ValueError("Project name cannot be blank.")
+        raise ValueError("Run name cannot be blank.")
     return project
 
 
@@ -631,8 +634,13 @@ class ProjectAssetStore:
         if not os.path.isdir(self.input_root):
             return result
         for root, directories, files in os.walk(self.input_root):
-            directories[:] = [name for name in directories
-                               if not (root == self.input_root and name == "h3_projects")]
+            # Walk normal input subfolders recursively, but omit storage that
+            # would either duplicate this catalog or flood the picker with
+            # transient clipboard/Clipspace images.
+            directories[:] = [
+                name for name in directories
+                if name.casefold() not in INPUT_BROWSER_EXCLUDED_DIRECTORIES
+            ]
             for filename in files:
                 suffix = os.path.splitext(filename)[1].lower()
                 if suffix not in ALL_MEDIA_EXTENSIONS:

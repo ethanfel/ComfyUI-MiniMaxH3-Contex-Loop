@@ -24,5 +24,11 @@ assert.match(source, /reference_slots/);
 assert.match(source, /Choose from ComfyUI Input/);
 assert.match(source, /slot_id/);
 assert.match(source, /node\.onExecuted/);
+assert.match(source, /widget\(node, "run_name"\)/);
+assert.match(source, /placeholder = "Run name"/);
+assert.match(source, /enter it here only/);
+assert.match(source, /asset\?\.role === "semantic_anchor" \? "#" : "@"/);
+assert.match(source, /if \(asset\._unresolved\) return false/);
+assert.match(source, /if \(filter === "image"\) return asset\.role === "picture"/);
 
 console.log("H3 Project Asset Carousel: metadata slots, binding, sources, lazy media, editing, and cleanup pass");

@@ -19,6 +19,12 @@ def main():
         loose.mkdir(parents=True)
         picture = loose / "Hero Face.png"
         Image.new("RGB", (64, 48), (120, 80, 40)).save(picture)
+        nested = loose / "chapter_2" / "hallway.png"
+        nested.parent.mkdir()
+        Image.new("RGB", (32, 32), (20, 40, 60)).save(nested)
+        clipspace = input_root / "Clipspace" / "clipboard.png"
+        clipspace.parent.mkdir()
+        Image.new("RGB", (32, 32), (80, 60, 40)).save(clipspace)
         audio = loose / "voice.wav"
         with wave.open(str(audio), "wb") as handle:
             handle.setnchannels(1)
@@ -41,8 +47,11 @@ def main():
                 "project_assets" / first["asset"]["relative_path"]).is_file()
         listed = store.input_media()
         assert {item["path"] for item in listed} == {
-            "loose/Hero Face.png", "loose/voice.wav"}
+            "loose/Hero Face.png", "loose/chapter_2/hallway.png",
+            "loose/voice.wav"}
         assert all(not item["path"].startswith("h3_projects/")
+                   for item in listed)
+        assert all(not item["path"].lower().startswith("clipspace/")
                    for item in listed)
 
         changed = store.update(

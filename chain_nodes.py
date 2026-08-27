@@ -11340,7 +11340,8 @@ class MiniMaxH3ChainPlan:
                                "in one connection."}),
                 "project_assets": (PROJECT_ASSETS_TYPE, {
                     "tooltip": "Optional upstream Project Asset Manager. Its "
-                               "project name becomes run_name and its "
+                               "Run name overrides and synchronizes this "
+                               "Plan's run_name; do not enter it twice. Its "
                                "order-neutral reference lineage is folded "
                                "into generation_fingerprint automatically. "
                                "Its Source track is stored on the Plan for "
@@ -12776,11 +12777,15 @@ class MiniMaxH3ProjectAssetManager:
     def INPUT_TYPES(cls):
         return {
             "required": {
-                "project_name": ("STRING", {
+                "run_name": ("STRING", {
                     "default": "h3_project",
-                    "tooltip": "Project/run name. Media is copied below "
-                               "input/h3_projects/<project> and mirrored in "
-                               "output/h3_chains/<project>/project_assets."}),
+                    "tooltip": "Authoritative H3 chain Run name. When "
+                               "project_assets is connected to Plan, this "
+                               "value automatically overrides and synchronizes "
+                               "Plan's run_name; enter it here only. Media is "
+                               "copied below "
+                               "input/h3_projects/<run_name> and mirrored in "
+                               "output/h3_chains/<run_name>/project_assets."}),
                 "catalog_json": ("STRING", {
                     "default": "", "multiline": False,
                     "dynamicPrompts": False,
@@ -12819,7 +12824,7 @@ class MiniMaxH3ProjectAssetManager:
         "Order-neutral incremental reference lineage for Plan compatibility.",
         "Optional path-backed Source Timeline for specialized direct uses. "
         "Plan already absorbs this automatically through project_assets.",
-        "Project, enabled reference count, source-track state, and revision.",
+        "Run name, enabled reference count, source-track state, and revision.",
     )
     FUNCTION = "build"
     CATEGORY = "conditioning/minimax/contex_loop/project"
@@ -12831,24 +12836,24 @@ class MiniMaxH3ProjectAssetManager:
         "references are decoded during sampling.")
 
     @classmethod
-    def IS_CHANGED(cls, project_name, catalog_json="", **_kwargs):
+    def IS_CHANGED(cls, run_name, catalog_json="", **_kwargs):
         try:
             catalog = ProjectAssetStore(
-                _input_root(), _output_root()).load(project_name)
+                _input_root(), _output_root()).load(run_name)
             return str(catalog.get("revision") or "")
         except Exception:
             return str(catalog_json or "")
 
-    def build(self, project_name, catalog_json="", semantic_anchor_size="512",
+    def build(self, run_name, catalog_json="", semantic_anchor_size="512",
               semantic_anchor_mode="timestamped_video",
               tagged_references=None):
         del catalog_json  # Disk catalog is authoritative; widget is UI state.
         store = ProjectAssetStore(_input_root(), _output_root())
         if tagged_references is not None:
             store.sync_reference_slots(
-                project_name,
+                run_name,
                 _project_asset_reference_templates(tagged_references))
-        catalog = store.public_catalog(project_name)
+        catalog = store.public_catalog(run_name)
         references = _make_tagged_references([])
         semantic_entries = []
         enabled = [
@@ -12869,7 +12874,7 @@ class MiniMaxH3ProjectAssetManager:
             role = str(entry.get("role") or "")
             if role == "source_track":
                 continue
-            asset, path = store.asset(project_name, entry.get("id"))
+            asset, path = store.asset(run_name, entry.get("id"))
             content_hash = str(asset.get("sha256") or "")
             options = asset.get("options")
             options = options if isinstance(options, dict) else {}
@@ -12935,7 +12940,7 @@ class MiniMaxH3ProjectAssetManager:
 
         source_timeline = None
         if source_entries:
-            source, path = store.asset(project_name, source_entries[0]["id"])
+            source, path = store.asset(run_name, source_entries[0]["id"])
             if source.get("kind") == "video":
                 source_timeline = _make_source_timeline(
                     video_path=path, embedded_audio="auto",
