@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.41";
+} from "./h3_chain_plan_core.mjs?v=0.6.42";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.41";
+} from "./h3_prompt_history_core.mjs?v=0.6.42";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.41";
+} from "./h3_reference_preview_core.mjs?v=0.6.42";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.41";
+} from "./h3_policy_core.mjs?v=0.6.42";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.41";
+} from "./h3_socket_presentation_core.mjs?v=0.6.42";
 import {
     locateStudioTimelineSecond,
     h3StudioGridMarkers,
@@ -80,8 +80,8 @@ import {
     studioSourceSecond,
     studioTimelineLayout,
     studioWaveformSceneSamples,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.41";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.41";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.42";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.42";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -390,6 +390,11 @@ function inputSource(node, name) {
     return link ? node.graph?.getNodeById?.(link.origin_id) ?? null : null;
 }
 
+function inputConnected(node, name) {
+    const input = node?.inputs?.find((item) => item.name === name);
+    return input?.link !== null && input?.link !== undefined;
+}
+
 function mediaExtension(kind) {
     if (kind === "image") return /\.(?:avif|bmp|gif|jpe?g|png|webp)$/i;
     if (kind === "video") return /\.(?:m4v|mkv|mov|mp4|webm)$/i;
@@ -610,6 +615,7 @@ function mount(node) {
             audioPolicy.sourceReference,
             audioPolicy.generatedContinuity,
             audioPolicy.sourceAudioTarget ?? "off",
+            inputConnected(planOwner, "project_assets"),
             ...PLAN_SETTING_WIDGETS.slice(1).map(
                 (name) => widget(planOwner, name)?.value ?? null),
         ]);
@@ -2416,6 +2422,7 @@ function mount(node) {
         const owner = state.planOwner ?? node;
         const transition = resolveTransitionPolicy(owner);
         const audioPolicy = resolveAudioPolicy(owner);
+        const projectAssetsManaged = inputConnected(owner, "project_assets");
         const value = (name, fallback = "") => widget(owner, name)?.value ?? fallback;
         const section = (title) => element(
             "div", "h3studio-plan-settings-section", title,
@@ -2477,13 +2484,21 @@ function mount(node) {
         const mode = state.planNode
             ? "Connected mode · changes are written to the H3 Chain Plan and mirrored into Studio. Disconnecting keeps this synchronized snapshot."
             : "Standalone mode · this node owns, validates, and outputs the complete H3 Chain Plan.";
-        grid.append(
-            element("div", "h3studio-plan-defaults-help", mode),
-            section("Run identity and canvas"),
+        const identityFields = projectAssetsManaged ? [
+            element(
+                "div", "h3studio-plan-defaults-help",
+                "Run name and reference-derived generation fingerprint are managed by connected Project Assets. Their stored widget values are preserved; disconnect Project Assets to edit them.",
+            ),
+        ] : [
             field("Run name", textControl("run_name", "h3_chain", "h3_chain")),
             field("Generation fingerprint", textControl(
                 "generation_fingerprint", "", "optional compatibility tag",
             )),
+        ];
+        grid.append(
+            element("div", "h3studio-plan-defaults-help", mode),
+            section("Run identity and canvas"),
+            ...identityFields,
             field("Base seed", baseSeed),
             field("Width", numberControl("width", 960, 32, 4096, 32)),
             field("Height", numberControl("height", 544, 32, 4096, 32)),

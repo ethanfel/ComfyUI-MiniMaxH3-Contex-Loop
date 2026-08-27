@@ -10,6 +10,18 @@ const ROLES = {
     video: ["video", "motion", "source_track"],
     audio: ["audio_reference", "source_track"],
 };
+const ROLE_LABELS = {
+    picture: "picture reference",
+    semantic_anchor: "semantic anchor",
+    video: "video reference",
+    motion: "motion reference",
+    audio_reference: "tagged audio reference",
+    source_track: "source track",
+};
+
+function displayRole(role) {
+    return ROLE_LABELS[role] ?? String(role || "").replaceAll("_", " ");
+}
 
 function nodeType(node) {
     return node?.comfyClass ?? node?.type ?? "";
@@ -213,15 +225,15 @@ function mount(node) {
     }
     const previewSelect = el("select");
     for (const [value, label] of [
-        ["light", "Light UI previews — generation uses originals"],
-        ["full", "Full UI image previews — generation uses originals"],
+        ["light", "Light previews"],
+        ["full", "Full previews"],
     ]) {
         const option = el("option", "", label); option.value = value;
         previewSelect.append(option);
     }
     previewSelect.value = String(
         node.properties?.h3_project_asset_preview_mode ?? "light");
-    previewSelect.title = "Display only: this setting never changes generation media. H3 always uses the original stored asset. Light uses cached thumbnails and bounded JPEG previews; Full loads the selected original into the Carousel UI.";
+    previewSelect.title = "Display quality for this Carousel only. Generation always uses the original stored asset. Light uses cached thumbnails and bounded JPEG previews; Full loads the selected original into the Carousel UI.";
     previewSelect.setAttribute("aria-label", "Carousel display preview quality; generation always uses original assets");
     top.append(el("span", "", "Run name"), runNameInput, sourceSelect, previewSelect);
     const fileInput = el("input");
@@ -366,7 +378,7 @@ function mount(node) {
             editor.append(el("strong", "h3pa-unassigned", `${promptTag(asset)} · Unassigned`));
             editor.append(el(
                 "div", "h3pa-status",
-                `${asset.kind} · ${String(asset.role || "").replaceAll("_", " ")}`,
+                `${asset.kind} · ${displayRole(asset.role)}`,
             ));
             const pairedTag = String(asset.options?.audio_tag ?? "");
             if (pairedTag) editor.append(el("div", "h3pa-status", `Paired alias @${pairedTag}`));
@@ -390,25 +402,63 @@ function mount(node) {
         }
         editor.append(el("strong", "", asset.original_name || asset.tag));
         editor.append(el("div", "h3pa-status", assetDetail(asset)));
-        const tagLabel = el("label", "", "Prompt tag");
+        const isAudio = asset.kind === "audio";
+        const isSourceTrack = asset.role === "source_track";
+        const audioMode = String(asset.options?.timeline_mode ?? "standalone");
+        if (isAudio) {
+            const audioUseLabel = el("label", "", "Audio use");
+            audioUseLabel.title = "Tagged clip sends the complete audio only when @tag is present. Tagged timeline slice follows the current scene position only when @tag is present and requires Chain Policy Source reference=on. Project timeline source only selects the available full track; Chain Policy controls its unprompted sampling and final-audio use.";
+            const audioUse = el("select");
+            const currentUse = isSourceTrack
+                ? "source_track"
+                : (audioMode === "source_timeline" ? "tagged_timeline" : "tagged_clip");
+            for (const [value, label] of [
+                ["tagged_clip", "Tagged clip (@tag)"],
+                ["tagged_timeline", "Tagged timeline slice (@tag)"],
+                ["source_track", "Project timeline source"],
+            ]) {
+                const option = el("option", "", label);
+                option.value = value; option.selected = value === currentUse;
+                audioUse.append(option);
+            }
+            audioUse.addEventListener("change", () => {
+                const use = audioUse.value;
+                updateAsset(asset, use === "source_track" ? {
+                    role: "source_track",
+                } : {
+                    role: "audio_reference",
+                    options: {
+                        timeline_mode: use === "tagged_timeline"
+                            ? "source_timeline" : "standalone",
+                        ...(use === "tagged_clip"
+                            ? {align_audio_reference: false} : {}),
+                    },
+                });
+            });
+            audioUseLabel.append(audioUse); editor.append(audioUseLabel);
+        } else {
+            const roleLabel = el("label", "", "Asset use");
+            const role = el("select");
+            for (const value of ROLES[asset.kind] ?? []) {
+                const option = el("option", "", displayRole(value));
+                option.value = value; option.selected = value === asset.role; role.append(option);
+            }
+            role.addEventListener("change", () => updateAsset(asset, {role: role.value}));
+            roleLabel.append(role); editor.append(roleLabel);
+        }
+        const tagLabel = el("label", "", isSourceTrack ? "Catalog tag" : "Prompt tag");
+        tagLabel.title = isSourceTrack
+            ? "Internal catalog identifier. A Project source track is not activated from scene prompts."
+            : `Scene prompts activate this asset by including ${promptTag(asset)}.`;
         const tag = el("input"); tag.value = asset.tag ?? "";
         tag.addEventListener("change", () => updateAsset(asset, {tag: tag.value}));
         tagLabel.append(tag); editor.append(tagLabel);
-        const roleLabel = el("label", "", "Role");
-        const role = el("select");
-        for (const value of ROLES[asset.kind] ?? []) {
-            const option = el("option", "", value.replaceAll("_", " "));
-            option.value = value; option.selected = value === asset.role; role.append(option);
-        }
-        role.addEventListener("change", () => updateAsset(asset, {role: role.value}));
-        roleLabel.append(role); editor.append(roleLabel);
-        const isSourceTrack = asset.role === "source_track";
-        const enabledTitle = isSourceTrack ? "Active source track" : "Available to prompts";
+        const enabledTitle = isSourceTrack ? "Selected timeline source" : "Available to prompts";
         const enabledSummary = isSourceTrack
-            ? "Turn off to retain the track without using it as the project source."
+            ? "Makes this file available to the Plan; Chain Policy decides how it is used."
             : `${promptTag(asset)} is used only when a scene prompt includes its tag. Turn off to archive it from suggestions without deleting it.`;
         const enabledHelp = isSourceTrack
-            ? "Use this file as the project-wide Source track. Turn it off to retain the stored track without exporting a Source Timeline."
+            ? "Select this file as the Plan's project timeline source. This does not activate it in sampling or final audio: Chain Policy Source reference and Final audio remain authoritative. Turn it off to retain the stored file without exporting its Source Timeline."
             : `Keep ${promptTag(asset)} registered in prompt suggestions and reference fingerprinting. Scene prompts still control where it is used. Turn it off to archive it without deleting the stored file.`;
         const enabledLabel = el("label", "h3pa-toggle");
         enabledLabel.title = enabledHelp;
@@ -422,6 +472,24 @@ function mount(node) {
             el("small", "", enabledSummary),
         );
         enabledLabel.append(enabled, enabledCopy); editor.append(enabledLabel);
+        if (asset.role === "audio_reference" && audioMode === "source_timeline") {
+                const alignHelp = "Apply the optional H3 audio-grid alignment to the per-scene reference slice. The stored full track and final assembled audio are unchanged.";
+                const alignLabel = el("label", "h3pa-toggle");
+                alignLabel.title = alignHelp;
+                const align = el("input"); align.type = "checkbox";
+                align.checked = Boolean(asset.options?.align_audio_reference);
+                align.title = alignHelp;
+                align.setAttribute("aria-label", "Align tagged audio reference to the H3 grid");
+                align.addEventListener("change", () => updateAsset(
+                    asset, {options: {align_audio_reference: align.checked}},
+                ));
+                const alignCopy = el("span", "h3pa-toggle-copy");
+                alignCopy.append(
+                    el("strong", "", "Align audio reference"),
+                    el("small", "", "Align only the derived per-scene reference slice."),
+                );
+                alignLabel.append(align, alignCopy); editor.append(alignLabel);
+        }
         if (["video", "motion"].includes(asset.role)) {
             const timelineLabel = el("label", "", "Timeline mode");
             const timeline = el("select");
@@ -492,7 +560,7 @@ function mount(node) {
             ));
             card.append(el(
                 "span", "h3pa-badge",
-                `${asset.role.replaceAll("_", " ")}${asset._unresolved ? " · unassigned" : ""}`,
+                `${displayRole(asset.role)}${asset._unresolved ? " · unassigned" : ""}`,
             ));
             card.append(el(
                 "span", "",
