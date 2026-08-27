@@ -95,9 +95,12 @@ reference slots and never enter the generation fingerprint.
 Images can be edited nondestructively from the Carousel. **Edit / upscale**
 opens a full-source pixel editor with draggable placement, exact dimensions,
 megapixel targets and presets, working aspect locking, and
-Lanczos/bicubic/bilinear/nearest resampling. **Use full image** removes cropping
-without discarding the selected megapixel target. Every operation creates a new
-PNG variant and records its parent and transform; the source remains unchanged.
+Lanczos/bicubic/bilinear/nearest resampling. Final dimensions can be snapped to
+`8`, `16`, `32`, or `64` while retaining the locked ratio; snapping defaults to
+`8`. **Use full image** removes cropping without discarding the selected
+megapixel target, while **Reset all** restores the complete editor defaults.
+Every operation creates a new PNG variant and records its parent and transform;
+the source remains unchanged.
 Connect ComfyUI core's **Load Upscale Model** output to the optional
 `upscale_model` input to enable **Model upscale**. The editor reports both the
 exact full-image/crop size sent into the model and the final fitted asset size.
