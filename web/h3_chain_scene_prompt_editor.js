@@ -8,7 +8,7 @@ import {
     promptTextToLines,
     promptValueToText,
     sharedPrompt,
-} from "./h3_chain_plan_core.mjs?v=0.6.50";
+} from "./h3_chain_plan_core.mjs?v=0.6.52";
 import {
     PROMPT_ASSIST_DEFAULT_INSTRUCTIONS,
     PROMPT_ASSIST_MODES,
@@ -17,14 +17,14 @@ import {
     makePromptAssistRequest,
     promptSceneKey,
     promptSourceRevision,
-} from "./h3_prompt_assistant_core.mjs?v=0.6.50";
-import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.6.50";
+} from "./h3_prompt_assistant_core.mjs?v=0.6.52";
+import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.6.52";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
     promptRevisionTree,
-} from "./h3_prompt_history_core.mjs?v=0.6.50";
+} from "./h3_prompt_history_core.mjs?v=0.6.52";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
@@ -32,15 +32,15 @@ import {
     replacePromptReferenceOccurrence,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.50";
+} from "./h3_reference_preview_core.mjs?v=0.6.52";
 import {
     PromptUndoHistory,
     promptUndoDirection,
     tokenizeRichPrompt,
-} from "./h3_rich_prompt_editor_core.mjs?v=0.6.50";
-import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.6.50";
-import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.6.50";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.50";
+} from "./h3_rich_prompt_editor_core.mjs?v=0.6.52";
+import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.6.52";
+import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.6.52";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.52";
 
 const {publishCompanionScene, rebaseScenePrompt} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -447,6 +447,16 @@ function findMediaPreview(start, kind) {
         }
     }
     return {url: null, source: start};
+}
+
+function referenceMediaPreview(record, kind) {
+    if (record?.previewUrl) {
+        return {
+            url: api.apiURL(record.previewUrl),
+            source: record.source ?? record.node ?? null,
+        };
+    }
+    return findMediaPreview(record?.source, kind);
 }
 
 function insertText(textarea, text, selectionOffset = text.length) {
@@ -1813,9 +1823,7 @@ function mount(node) {
         const popover = ensureTokenPopover();
         popover.replaceChildren(element("div", "h3sp-popover-title", record.token));
         const mediaKind = record.kind === "picture" ? "image" : record.kind;
-        const media = record.previewUrl
-            ? api.apiURL(record.previewUrl)
-            : findMediaPreview(record.source, mediaKind);
+        const media = referenceMediaPreview(record, mediaKind);
         if (media.url) {
             const mediaElement = element(
                 mediaKind === "image" ? "img" : mediaKind === "video" ? "video" : "audio",
@@ -2003,10 +2011,8 @@ function mount(node) {
             return token;
         }
         const mediaKind = kind === "picture" ? "image" : kind;
-        const media = part.record?.previewUrl
-            ? api.apiURL(part.record.previewUrl)
-            : part.record?.source
-                ? findMediaPreview(part.record.source, mediaKind) : null;
+        const media = part.record
+            ? referenceMediaPreview(part.record, mediaKind) : null;
         if (kind === "picture" && media?.url) {
             const thumbnail = element("img", "h3sp-token-thumb");
             thumbnail.src = media.url;
@@ -2216,9 +2222,7 @@ function mount(node) {
         preview.replaceChildren();
         preview.classList.add("h3sp-visible");
         const mediaKind = record.kind === "picture" ? "image" : record.kind;
-        const media = record.previewUrl
-            ? api.apiURL(record.previewUrl)
-            : findMediaPreview(record.source, mediaKind);
+        const media = referenceMediaPreview(record, mediaKind);
         if (media.url) {
             const mediaElement = element(mediaKind === "image" ? "img"
                 : mediaKind === "video" ? "video" : "audio",

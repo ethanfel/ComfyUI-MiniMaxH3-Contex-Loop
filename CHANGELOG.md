@@ -4,9 +4,16 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Project Asset previews now resolve correctly in both prompt editors. The
+  Carousel media URL is retained as a preview record instead of being mistaken
+  for a preview object, restoring hover players, inline picture thumbnails,
+  reference-tray thumbnails, and the owning Carousel source label.
+
 - The Project Asset Carousel is now a direct media drop target. Dropping one
   or several image, video, or audio files creates ordered project assets
-  immediately, without interfering with internal card drag-reordering. The
+  immediately. External file drops are isolated from internal card dragging,
+  thumbnails no longer start native browser drags, and the compact drop cue
+  leaves reorder targets visible. The
   source browser now defaults explicitly to ComfyUI input, so existing input
   files can be turned into assets through **Import** without uploading them
   again.

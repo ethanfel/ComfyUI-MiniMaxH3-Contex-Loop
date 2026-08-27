@@ -5,7 +5,7 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.50";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.52";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -164,9 +164,9 @@ function injectStyles() {
         .h3pa-carousel{position:relative;display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:4px 1px 7px;min-height:126px;
           border:1px solid transparent;border-radius:9px;transition:border-color .12s ease,background .12s ease,box-shadow .12s ease}
         .h3pa-carousel.h3pa-drop-active{border-color:#70a9ff;background:#23446b38;box-shadow:inset 0 0 0 2px #70a9ff55}
-        .h3pa-carousel.h3pa-drop-active::after{content:"Drop to create project assets";position:absolute;inset:4px;z-index:20;
-          display:grid;place-items:center;border:2px dashed #8bb9ff;border-radius:7px;background:#101826e8;color:#dceaff;
-          font-size:14px;font-weight:700;pointer-events:none}
+        .h3pa-carousel.h3pa-drop-active::before{content:"Drop to create assets";position:sticky;left:10px;align-self:flex-start;z-index:20;
+          flex:0 0 auto;margin:7px 0 0 -1px;padding:6px 9px;border:1px dashed #8bb9ff;border-radius:6px;
+          background:#101826e8;color:#dceaff;font-size:12px;font-weight:700;pointer-events:none}
         .h3pa-carousel-empty{flex:1 0 100%;display:grid;place-items:center;min-height:112px;color:#8190a8;text-align:center}
         .h3pa-card{position:relative;flex:0 0 150px;height:112px;padding:0;border:1px solid #495466;border-radius:8px;
           overflow:hidden;background:#11141a;color:inherit;text-align:left;cursor:pointer}.h3pa-card.selected{border:2px solid #76aaff}
@@ -1314,6 +1314,7 @@ function mount(node) {
             }
             if (!asset._unresolved && ["image", "video"].includes(asset.kind)) {
                 const image = el("img"); image.loading = "lazy";
+                image.draggable = false;
                 image.src = mediaUrl(project(), asset, "thumbnail"); card.append(image);
             } else card.append(el(
                 "div", "fallback", asset._unresolved ? "?" : "♫",
@@ -1333,6 +1334,7 @@ function mount(node) {
             if (!asset._unresolved) {
                 card.addEventListener("dragstart", (event) => {
                     state.dragging = asset.id;
+                    clearFileDropState();
                     card.classList.add("dragging");
                     event.dataTransfer.effectAllowed = "move";
                     event.dataTransfer.setData("text/plain", asset.id);
@@ -1365,6 +1367,7 @@ function mount(node) {
                 });
                 card.addEventListener("dragend", () => {
                     state.dragging = "";
+                    clearFileDropState();
                     for (const item of carousel.children) {
                         item.classList.remove("dragging", "drag-over");
                     }
@@ -1560,6 +1563,7 @@ function mount(node) {
     const dropListenerOptions = {signal: dropController.signal};
     let fileDragDepth = 0;
     function hasDraggedFiles(event) {
+        if (state.dragging) return false;
         return Array.from(event.dataTransfer?.types ?? []).includes("Files");
     }
     function clearFileDropState() {
