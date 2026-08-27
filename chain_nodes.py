@@ -13678,6 +13678,133 @@ def _project_asset_reference_templates(references: Any) -> list[dict[str, Any]]:
     return templates
 
 
+def _project_asset_pending_operation(value: Any) -> dict[str, Any] | None:
+    text = str(value or "").strip()
+    if not text:
+        return None
+    try:
+        operation = json.loads(text)
+    except json.JSONDecodeError as exc:
+        raise ValueError("Project asset operation is not valid JSON.") from exc
+    if not isinstance(operation, dict):
+        raise ValueError("Project asset operation must be a JSON object.")
+    if str(operation.get("mode") or "").strip().lower() != "model":
+        raise ValueError("Project asset operation mode must be model.")
+    if not str(operation.get("asset_id") or ""):
+        raise ValueError("Project asset operation is missing its source asset.")
+    if not isinstance(operation.get("crop"), dict):
+        raise ValueError("Project asset operation is missing its crop rectangle.")
+    if not isinstance(operation.get("target"), dict):
+        raise ValueError("Project asset operation is missing its target size.")
+    return operation
+
+
+def _project_asset_model_upscale(image: Any, upscale_model: Any) -> Any:
+    """Run the same tiled UPSCALE_MODEL contract as ComfyUI core."""
+    if torch is None or np is None or Image is None:
+        raise RuntimeError(
+            "Torch, NumPy, and Pillow are required for model-upscaled assets.")
+    try:
+        import comfy.model_management as model_management
+        import comfy.utils as comfy_utils
+    except ImportError as exc:
+        raise RuntimeError(
+            "ComfyUI model management is required for UPSCALE_MODEL assets.") from exc
+    rgb = image.convert("RGB")
+    pixels = np.array(rgb, dtype=np.float32, copy=True) / 255.0
+    tensor = torch.from_numpy(pixels).unsqueeze(0)
+    device = upscale_model.patcher.load_device
+    memory_required = (
+        (512 * 512 * 3) * tensor.element_size()
+        * max(float(upscale_model.scale), 1.0) * 384.0)
+    memory_required += tensor.nelement() * tensor.element_size()
+    model_management.load_models_gpu(
+        [upscale_model.patcher], memory_required=memory_required,
+        force_full_load=True)
+    input_image = tensor.movedim(-1, -3).to(device)
+    tile = 512
+    overlap = 32
+    output_device = model_management.intermediate_device()
+    while True:
+        try:
+            steps = (
+                input_image.shape[0]
+                * comfy_utils.get_tiled_scale_steps(
+                    input_image.shape[3], input_image.shape[2],
+                    tile_x=tile, tile_y=tile, overlap=overlap))
+            progress = comfy_utils.ProgressBar(steps)
+            output = comfy_utils.tiled_scale(
+                input_image, lambda block: upscale_model(block.float()),
+                tile_x=tile, tile_y=tile, overlap=overlap,
+                upscale_amount=upscale_model.scale, pbar=progress,
+                output_device=output_device)
+            break
+        except Exception as exc:
+            model_management.raise_non_oom(exc)
+            tile //= 2
+            if tile < 128:
+                raise
+    output = torch.clamp(output.movedim(-3, -1), 0, 1)
+    array = output[0].detach().to("cpu", torch.float32).numpy()
+    return Image.fromarray(np.rint(array * 255.0).astype(np.uint8))
+
+
+def _execute_project_asset_model_operation(
+        store: ProjectAssetStore, run_name: str, operation: dict[str, Any],
+        upscale_model: Any) -> dict[str, Any]:
+    operation_project = str(operation.get("project") or "").strip()
+    if (operation_project
+            and _safe_name(operation_project, "") != _safe_name(run_name, "")):
+        raise ValueError(
+            "Pending project asset operation belongs to another Run name.")
+    existing = store.operation_asset(
+        run_name, operation.get("operation_id", ""))
+    if existing is not None:
+        return existing
+    parent, cropped, geometry = store.prepare_image_crop(
+        run_name, operation.get("asset_id"), operation.get("crop"),
+        operation.get("target"))
+    alpha = None
+    if "A" in cropped.getbands() or "transparency" in cropped.info:
+        alpha = cropped.convert("RGBA").getchannel("A")
+    rendered = _project_asset_model_upscale(cropped, upscale_model)
+    target_size = (geometry["target_width"], geometry["target_height"])
+    if rendered.size != target_size:
+        rendered = rendered.resize(
+            target_size, resample=Image.Resampling.LANCZOS)
+    if alpha is not None:
+        alpha = alpha.resize(
+            target_size, resample=Image.Resampling.LANCZOS)
+        rendered = rendered.convert("RGBA")
+        rendered.putalpha(alpha)
+    temporary = store.upload_path(
+        run_name, "%s_model_variant.png" % parent.get("tag", "asset"))
+    try:
+        rendered.save(temporary, format="PNG")
+        return store.register_derived_image(
+            run_name, operation.get("asset_id"), temporary,
+            tag=operation.get("tag", ""),
+            folder_id=(operation.get("folder_id")
+                       if "folder_id" in operation else None),
+            operation_id=operation.get("operation_id", ""),
+            transform={
+                "kind": "model_upscale_crop",
+                "crop": {key: geometry[key]
+                         for key in ("x", "y", "width", "height")},
+                "target": {
+                    "width": geometry["target_width"],
+                    "height": geometry["target_height"],
+                },
+                "source": {
+                    "width": geometry["source_width"],
+                    "height": geometry["source_height"],
+                },
+                "model_scale": float(getattr(upscale_model, "scale", 1.0)),
+            })
+    finally:
+        _safe_unlink(temporary)
+
+
 class MiniMaxH3ProjectAssetManager:
     """Project-owned, path-backed references with one compact workflow node."""
 
@@ -13708,6 +13835,12 @@ class MiniMaxH3ProjectAssetManager:
                     "default": "timestamped_video",
                     "tooltip": "Presentation mode for #tag[timestamp] "
                                "project semantic anchors."}),
+                "operation_json": ("STRING", {
+                    "default": "", "multiline": False,
+                    "dynamicPrompts": False,
+                    "tooltip": "Internal one-shot image operation maintained "
+                               "by the Carousel. It remains blank during normal "
+                               "H3 generation."}),
             },
             "optional": {
                 "tagged_references": (TAGGED_REFERENCE_TYPE, {
@@ -13717,6 +13850,12 @@ class MiniMaxH3ProjectAssetManager:
                                "does not copy, encode, or serialize the media. "
                                "Bind each card explicitly from ComfyUI input, "
                                "upload, backup, or server path."}),
+                "upscale_model": ("UPSCALE_MODEL", {
+                    "lazy": True,
+                    "tooltip": "Optional core upscale model for creating an "
+                               "edited image variant. It is evaluated only when "
+                               "you press Model upscale in the asset editor; "
+                               "normal H3 generation never loads it."}),
             },
         }
 
@@ -13735,6 +13874,7 @@ class MiniMaxH3ProjectAssetManager:
         "Run name, enabled reference count, source-track state, and revision.",
     )
     FUNCTION = "build"
+    OUTPUT_NODE = True
     CATEGORY = "conditioning/minimax/contex_loop/project"
     DESCRIPTION = (
         "Large project asset carousel for pictures, semantic anchors, video, "
@@ -13744,19 +13884,58 @@ class MiniMaxH3ProjectAssetManager:
         "references are decoded during sampling.")
 
     @classmethod
-    def IS_CHANGED(cls, run_name, catalog_json="", **_kwargs):
+    def IS_CHANGED(cls, run_name, catalog_json="", operation_json="", **_kwargs):
         try:
             catalog = ProjectAssetStore(
                 _input_root(), _output_root()).load(run_name)
-            return str(catalog.get("revision") or "")
+            return "%s:%s" % (
+                str(catalog.get("revision") or ""),
+                hashlib.sha256(str(operation_json or "").encode(
+                    "utf-8")).hexdigest())
         except Exception:
-            return str(catalog_json or "")
+            return "%s:%s" % (str(catalog_json or ""), operation_json or "")
+
+    def check_lazy_status(
+            self, run_name, catalog_json="", semantic_anchor_size="512",
+            semantic_anchor_mode="timestamped_video",
+            tagged_references=None, operation_json="",
+            upscale_model=_LAZY_INPUT_MISSING):
+        del catalog_json, semantic_anchor_size
+        del semantic_anchor_mode, tagged_references
+        operation = _project_asset_pending_operation(operation_json)
+        if operation is not None:
+            try:
+                if ProjectAssetStore(
+                        _input_root(), _output_root()).operation_asset(
+                            run_name, operation.get("operation_id", "")) is not None:
+                    return []
+            except (OSError, TypeError, ValueError):
+                pass
+        if operation is not None and upscale_model is None:
+            return ["upscale_model"]
+        return []
 
     def build(self, run_name, catalog_json="", semantic_anchor_size="512",
               semantic_anchor_mode="timestamped_video",
-              tagged_references=None):
+              tagged_references=None, operation_json="",
+              upscale_model=_LAZY_INPUT_MISSING):
         del catalog_json  # Disk catalog is authoritative; widget is UI state.
         store = ProjectAssetStore(_input_root(), _output_root())
+        operation = _project_asset_pending_operation(operation_json)
+        completed_operation = ""
+        if operation is not None:
+            result = store.operation_asset(
+                run_name, operation.get("operation_id", ""))
+            if (result is None and
+                    (upscale_model is _LAZY_INPUT_MISSING
+                     or upscale_model is None)):
+                raise ValueError(
+                    "Connect a core UPSCALE_MODEL before using Model upscale.")
+            if result is None:
+                result = _execute_project_asset_model_operation(
+                    store, run_name, operation, upscale_model)
+            completed_operation = str(
+                (result.get("asset") or {}).get("id") or "")
         if tagged_references is not None:
             store.sync_reference_slots(
                 run_name,
@@ -13891,6 +14070,8 @@ class MiniMaxH3ProjectAssetManager:
             unresolved,
             "on" if source_timeline is not None else "off",
             str(catalog.get("revision") or "")[:12]))
+        if completed_operation:
+            status += "; created image variant %s" % completed_operation[:8]
         return record, references, fingerprint, source_timeline, status
 
 
@@ -22036,6 +22217,72 @@ async def _project_asset_update(request):
         return web.json_response({"error": str(exc)}, status=400)
 
 
+async def _project_asset_duplicate(request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Asset duplication request must be a JSON object.")
+        result = await asyncio.to_thread(
+            _project_asset_store().duplicate,
+            body.get("project", ""), body.get("asset_id"),
+            tag=body.get("tag", ""),
+            folder_id=(body.get("folder_id")
+                       if "folder_id" in body else None))
+        return web.json_response(result)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+async def _project_asset_derive(request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Image variant request must be a JSON object.")
+        result = await asyncio.to_thread(
+            _project_asset_store().derive_image,
+            body.get("project", ""), body.get("asset_id"),
+            crop=body.get("crop"), target=body.get("target"),
+            resample=body.get("resample", "lanczos"),
+            tag=body.get("tag", ""),
+            folder_id=(body.get("folder_id")
+                       if "folder_id" in body else None),
+            operation_id=body.get("operation_id", ""))
+        return web.json_response(result)
+    except (OSError, RuntimeError, TypeError, ValueError,
+            json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+async def _project_asset_folder(request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Asset folder request must be a JSON object.")
+        store = _project_asset_store()
+        action = str(body.get("action") or "").strip().lower()
+        project = body.get("project", "")
+        if action == "create":
+            result = await asyncio.to_thread(
+                store.create_folder, project, body.get("name"),
+                color=body.get("color", ""))
+        elif action == "update":
+            result = await asyncio.to_thread(
+                store.update_folder, project, body.get("folder_id"),
+                body.get("changes"))
+        elif action == "delete":
+            result = await asyncio.to_thread(
+                store.delete_folder, project, body.get("folder_id"))
+        elif action == "reorder":
+            result = await asyncio.to_thread(
+                store.reorder_folders, project, body.get("folder_ids"))
+        else:
+            raise ValueError(
+                "Asset folder action must be create, update, delete, or reorder.")
+        return web.json_response(result)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
 async def _project_asset_reorder(request):
     try:
         body = await request.json()
@@ -22161,6 +22408,15 @@ if (PromptServer is not None and web is not None and
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/project-assets/update")(
             _project_asset_update)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-assets/duplicate")(
+            _project_asset_duplicate)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-assets/derive")(
+            _project_asset_derive)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-assets/folder")(
+            _project_asset_folder)
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/project-assets/reorder")(
             _project_asset_reorder)

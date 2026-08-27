@@ -3,7 +3,7 @@ import {
     H3_ALL_SECTIONS,
     H3_TASK_DIRECTIVES,
     h3SectionsForMode,
-} from "./h3_prompt_schema_core.mjs?v=0.6.44";
+} from "./h3_prompt_schema_core.mjs?v=0.6.45";
 
 export const H3_PROMPT_SECTIONS = Object.freeze(
     H3_ALL_SECTIONS.map((section) => `${section}:`),

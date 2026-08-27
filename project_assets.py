@@ -25,9 +25,9 @@ except ImportError:  # ComfyUI normally includes PyAV.
     av = None
 
 try:
-    from PIL import Image
+    from PIL import Image, ImageOps
 except ImportError:  # ComfyUI normally includes Pillow.
-    Image = None
+    Image = ImageOps = None
 
 
 PROJECT_ASSET_FORMAT = "h3_project_assets_v1"
@@ -51,6 +51,8 @@ AUDIO_EXTENSIONS = frozenset((
 ALL_MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 MAX_CATALOG_ASSETS = 512
 MAX_REFERENCE_SLOTS = 512
+MAX_ASSET_FOLDERS = 128
+MAX_DERIVED_IMAGE_PIXELS = 268_435_456
 MAX_INPUT_RESULTS = 2000
 INPUT_BROWSER_EXCLUDED_DIRECTORIES = frozenset((
     "clipspace", "h3_projects",
@@ -90,6 +92,77 @@ def _safe_tag(value: Any, fallback: str = "asset") -> str:
     if _TAG_RE.fullmatch(tag) is None:
         raise ValueError("Asset tag must begin with a letter and contain only letters, numbers, _ or -.")
     return tag
+
+
+def _safe_folder_name(value: Any) -> str:
+    name = re.sub(r"[\x00-\x1f\x7f]+", " ", str(value or "")).strip()
+    name = re.sub(r"\s+", " ", name)
+    if not name:
+        raise ValueError("Asset folder name cannot be blank.")
+    return name[:80]
+
+
+def _unique_tag(catalog: dict[str, Any], value: Any, fallback: str,
+                *, exclude_id: str = "") -> str:
+    tag = _safe_tag(value, fallback)
+    used = {
+        str(item.get("tag") or "") for item in catalog.get("assets", [])
+        if str(item.get("id") or "") != exclude_id
+        and bool(item.get("enabled", True))
+    }
+    if tag not in used:
+        return tag
+    base = tag
+    ordinal = 2
+    while tag in used:
+        suffix = "_%d" % ordinal
+        tag = base[:64 - len(suffix)] + suffix
+        ordinal += 1
+    return tag
+
+
+def _image_resampling(value: Any):
+    if Image is None:
+        raise RuntimeError("Pillow is required for project image variants.")
+    name = str(value or "lanczos").strip().lower()
+    modes = {
+        "nearest": Image.Resampling.NEAREST,
+        "box": Image.Resampling.BOX,
+        "bilinear": Image.Resampling.BILINEAR,
+        "hamming": Image.Resampling.HAMMING,
+        "bicubic": Image.Resampling.BICUBIC,
+        "lanczos": Image.Resampling.LANCZOS,
+    }
+    if name not in modes:
+        raise ValueError("Image resampling must be nearest, box, bilinear, hamming, bicubic, or lanczos.")
+    return name, modes[name]
+
+
+def _image_operation_geometry(image: Any, crop: Any, target: Any) -> tuple[int, int, int, int, int, int]:
+    if not isinstance(crop, dict):
+        raise ValueError("Image crop must be a JSON object.")
+    if not isinstance(target, dict):
+        raise ValueError("Image target size must be a JSON object.")
+    try:
+        x = int(crop.get("x", 0))
+        y = int(crop.get("y", 0))
+        width = int(crop.get("width", image.width))
+        height = int(crop.get("height", image.height))
+        target_width = int(target.get("width", width))
+        target_height = int(target.get("height", height))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Crop and target dimensions must be whole pixels.") from exc
+    if x < 0 or y < 0 or width < 1 or height < 1:
+        raise ValueError("Crop dimensions must describe a positive area inside the source image.")
+    if x + width > image.width or y + height > image.height:
+        raise ValueError(
+            "Crop %d,%d %dx%d exceeds the oriented source image %dx%d." %
+            (x, y, width, height, image.width, image.height))
+    if target_width < 1 or target_height < 1:
+        raise ValueError("Target width and height must be positive.")
+    if target_width * target_height > MAX_DERIVED_IMAGE_PIXELS:
+        raise ValueError("Derived image target exceeds %d pixels." % MAX_DERIVED_IMAGE_PIXELS)
+    return x, y, width, height, target_width, target_height
 
 
 def _inside(root: str, path: str) -> bool:
@@ -304,6 +377,7 @@ class ProjectAssetStore:
             "revision": "",
             "assets": [],
             "reference_slots": [],
+            "folders": [],
         }
 
     def load(self, project: Any, *, create: bool = False) -> dict[str, Any]:
@@ -325,6 +399,8 @@ class ProjectAssetStore:
         slots = catalog.get("reference_slots")
         catalog["reference_slots"] = (
             slots if isinstance(slots, list) else [])
+        folders = catalog.get("folders")
+        catalog["folders"] = folders if isinstance(folders, list) else []
         return catalog
 
     def _save_catalog(self, catalog: dict[str, Any]) -> dict[str, Any]:
@@ -333,12 +409,27 @@ class ProjectAssetStore:
                   if isinstance(item, dict)]
         slots = [dict(item) for item in catalog.get("reference_slots", [])
                  if isinstance(item, dict)]
+        folders = [dict(item) for item in catalog.get("folders", [])
+                   if isinstance(item, dict)]
         if len(assets) > MAX_CATALOG_ASSETS:
             raise ValueError("Project asset catalog supports at most %d assets." % MAX_CATALOG_ASSETS)
         if len(slots) > MAX_REFERENCE_SLOTS:
             raise ValueError(
                 "Project asset catalog supports at most %d unresolved "
                 "reference slots." % MAX_REFERENCE_SLOTS)
+        if len(folders) > MAX_ASSET_FOLDERS:
+            raise ValueError(
+                "Project asset catalog supports at most %d folders." %
+                MAX_ASSET_FOLDERS)
+        folder_ids = [str(item.get("id") or "") for item in folders]
+        if (any(not item for item in folder_ids)
+                or len(folder_ids) != len(set(folder_ids))):
+            raise ValueError("Every asset folder must have a unique ID.")
+        known_folders = set(folder_ids)
+        for asset in assets:
+            folder_id = str(asset.get("folder_id") or "")
+            if folder_id and folder_id not in known_folders:
+                asset["folder_id"] = ""
         document = {
             "format": PROJECT_ASSET_FORMAT,
             "version": PROJECT_ASSET_VERSION,
@@ -346,6 +437,7 @@ class ProjectAssetStore:
             "updated_at": _utc_now(),
             "assets": assets,
             "reference_slots": slots,
+            "folders": folders,
         }
         document["revision"] = _canonical_fingerprint({
             "assets": [_entry_contract(item) for item in assets],
@@ -366,6 +458,7 @@ class ProjectAssetStore:
             "assets": [dict(item) for item in catalog["assets"]],
             "reference_slots": [
                 dict(item) for item in catalog.get("reference_slots", [])],
+            "folders": [dict(item) for item in catalog.get("folders", [])],
         }
 
     def _asset_path(self, project: Any, entry: dict[str, Any]) -> str:
@@ -534,17 +627,7 @@ class ProjectAssetStore:
                 except FileNotFoundError:
                     pass
         metadata = _probe_media(destination, kind)
-        used_tags = {
-            str(item.get("tag") or "") for item in catalog["assets"]
-            if bool(item.get("enabled", True))
-        }
-        if tag in used_tags:
-            base = tag
-            ordinal = 2
-            while tag in used_tags:
-                suffix_text = "_%d" % ordinal
-                tag = base[:64 - len(suffix_text)] + suffix_text
-                ordinal += 1
+        tag = _unique_tag(catalog, tag, stem)
         now = _utc_now()
         entry = {
             "id": uuid.uuid4().hex,
@@ -581,6 +664,237 @@ class ProjectAssetStore:
                     pass
         return {"catalog": catalog, "asset": entry}
 
+    def create_folder(self, project: Any, name: Any, *, color: Any = "") -> dict[str, Any]:
+        catalog = self.load(project, create=True)
+        if len(catalog.get("folders", [])) >= MAX_ASSET_FOLDERS:
+            raise ValueError(
+                "Project asset catalog supports at most %d folders." %
+                MAX_ASSET_FOLDERS)
+        folder_name = _safe_folder_name(name)
+        if any(str(item.get("name") or "").casefold() == folder_name.casefold()
+               for item in catalog.get("folders", [])):
+            raise ValueError("An asset folder named %r already exists." % folder_name)
+        now = _utc_now()
+        folder = {
+            "id": "folder_" + uuid.uuid4().hex,
+            "name": folder_name,
+            "color": str(color or "")[:32],
+            "created_at": now,
+            "updated_at": now,
+        }
+        catalog.setdefault("folders", []).append(folder)
+        return {"catalog": self._save_catalog(catalog), "folder": dict(folder)}
+
+    def update_folder(self, project: Any, folder_id: Any,
+                      changes: Any) -> dict[str, Any]:
+        if not isinstance(changes, dict):
+            raise ValueError("Asset folder changes must be a JSON object.")
+        catalog = self.load(project)
+        wanted = str(folder_id or "")
+        folder = next((item for item in catalog.get("folders", [])
+                       if str(item.get("id") or "") == wanted), None)
+        if folder is None:
+            raise FileNotFoundError("Asset folder %s was not found." % wanted)
+        if "name" in changes:
+            name = _safe_folder_name(changes["name"])
+            if any(str(item.get("name") or "").casefold() == name.casefold()
+                   and str(item.get("id") or "") != wanted
+                   for item in catalog.get("folders", [])):
+                raise ValueError("An asset folder named %r already exists." % name)
+            folder["name"] = name
+        if "color" in changes:
+            folder["color"] = str(changes["color"] or "")[:32]
+        folder["updated_at"] = _utc_now()
+        return {"catalog": self._save_catalog(catalog), "folder": dict(folder)}
+
+    def delete_folder(self, project: Any, folder_id: Any) -> dict[str, Any]:
+        catalog = self.load(project)
+        wanted = str(folder_id or "")
+        folder = next((item for item in catalog.get("folders", [])
+                       if str(item.get("id") or "") == wanted), None)
+        if folder is None:
+            raise FileNotFoundError("Asset folder %s was not found." % wanted)
+        catalog["folders"] = [
+            item for item in catalog.get("folders", [])
+            if str(item.get("id") or "") != wanted]
+        moved = 0
+        for asset in catalog.get("assets", []):
+            if str(asset.get("folder_id") or "") == wanted:
+                asset["folder_id"] = ""
+                asset["updated_at"] = _utc_now()
+                moved += 1
+        return {
+            "catalog": self._save_catalog(catalog),
+            "folder": dict(folder),
+            "assets_unfiled": moved,
+        }
+
+    def reorder_folders(self, project: Any, folder_ids: Any) -> dict[str, Any]:
+        if not isinstance(folder_ids, list):
+            raise ValueError("Folder order must be a JSON list of folder IDs.")
+        catalog = self.load(project)
+        current = [str(item.get("id") or "")
+                   for item in catalog.get("folders", [])]
+        requested = [str(item or "") for item in folder_ids]
+        if (len(requested) != len(set(requested))
+                or set(requested) != set(current)):
+            raise ValueError(
+                "Folder order must contain every current folder ID exactly once.")
+        by_id = {str(item.get("id") or ""): item
+                 for item in catalog.get("folders", [])}
+        catalog["folders"] = [by_id[item] for item in requested]
+        return {"catalog": self._save_catalog(catalog)}
+
+    def duplicate(self, project: Any, asset_id: Any, *, tag: Any = "",
+                  folder_id: Any = None) -> dict[str, Any]:
+        """Create a second catalog card without copying its media bytes."""
+        catalog = self.load(project)
+        wanted = str(asset_id or "")
+        source = next((item for item in catalog["assets"]
+                       if str(item.get("id") or "") == wanted), None)
+        if source is None:
+            raise FileNotFoundError("Project asset %s was not found." % wanted)
+        target_folder = (str(source.get("folder_id") or "")
+                         if folder_id is None else str(folder_id or ""))
+        known_folders = {str(item.get("id") or "")
+                         for item in catalog.get("folders", [])}
+        if target_folder and target_folder not in known_folders:
+            raise FileNotFoundError("Asset folder %s was not found." % target_folder)
+        now = _utc_now()
+        clone = dict(source)
+        clone.update({
+            "id": uuid.uuid4().hex,
+            "tag": _unique_tag(
+                catalog, tag or "%s_copy" % source.get("tag", "asset"),
+                "%s_copy" % source.get("tag", "asset")),
+            "folder_id": target_folder,
+            "parent_asset_id": wanted,
+            "source_kind": "catalog_duplicate",
+            "created_at": now,
+            "updated_at": now,
+        })
+        if source.get("role") == "source_track":
+            clone["enabled"] = False
+        clone["options"] = dict(source.get("options") or {})
+        clone["metadata"] = dict(source.get("metadata") or {})
+        catalog["assets"].append(clone)
+        return {"catalog": self._save_catalog(catalog), "asset": dict(clone)}
+
+    def operation_asset(self, project: Any, operation_id: Any) -> dict[str, Any] | None:
+        wanted = str(operation_id or "")[:128]
+        if not wanted:
+            return None
+        catalog = self.load(project)
+        existing = next((item for item in catalog["assets"]
+                         if str((item.get("transform") or {}).get(
+                             "operation_id") or "") == wanted), None)
+        if existing is None:
+            return None
+        return {"catalog": catalog, "asset": dict(existing), "reused": True}
+
+    def prepare_image_crop(self, project: Any, asset_id: Any,
+                           crop: Any, target: Any) -> tuple[dict[str, Any], Any, dict[str, int]]:
+        if Image is None or ImageOps is None:
+            raise RuntimeError("Pillow is required for project image variants.")
+        entry, path = self.asset(project, asset_id)
+        if entry.get("kind") != "image":
+            raise ValueError("Only image assets can create cropped variants.")
+        with Image.open(path) as opened:
+            oriented = ImageOps.exif_transpose(opened).copy()
+        geometry = _image_operation_geometry(oriented, crop, target)
+        x, y, width, height, target_width, target_height = geometry
+        cropped = oriented.crop((x, y, x + width, y + height))
+        values = {
+            "x": x, "y": y, "width": width, "height": height,
+            "target_width": target_width, "target_height": target_height,
+            "source_width": int(oriented.width),
+            "source_height": int(oriented.height),
+        }
+        return entry, cropped, values
+
+    def register_derived_image(
+            self, project: Any, parent_asset_id: Any, rendered_path: Any, *,
+            tag: Any = "", folder_id: Any = None,
+            transform: dict[str, Any] | None = None,
+            operation_id: Any = "") -> dict[str, Any]:
+        parent, _path = self.asset(project, parent_asset_id)
+        if parent.get("kind") != "image":
+            raise ValueError("Only image assets can own image variants.")
+        catalog = self.load(project)
+        operation_id = str(operation_id or "")[:128]
+        if operation_id:
+            existing = next((item for item in catalog["assets"]
+                             if str((item.get("transform") or {}).get(
+                                 "operation_id") or "") == operation_id), None)
+            if existing is not None:
+                return {"catalog": catalog, "asset": dict(existing), "reused": True}
+        target_folder = (str(parent.get("folder_id") or "")
+                         if folder_id is None else str(folder_id or ""))
+        result = self.import_file(
+            project, rendered_path,
+            role=parent.get("role"),
+            tag=tag or "%s_variant" % parent.get("tag", "asset"),
+            original_name="%s_variant.png" % parent.get("tag", "asset"),
+            source_kind="derived_image",
+            options=dict(parent.get("options") or {}))
+        derived_id = str(result["asset"]["id"])
+        catalog = result["catalog"]
+        derived = next(item for item in catalog["assets"]
+                       if str(item.get("id") or "") == derived_id)
+        derived["folder_id"] = target_folder
+        derived["parent_asset_id"] = str(parent_asset_id or "")
+        lineage = dict(transform or {})
+        if operation_id:
+            lineage["operation_id"] = operation_id
+        derived["transform"] = lineage
+        derived["updated_at"] = _utc_now()
+        saved = self._save_catalog(catalog)
+        return {"catalog": saved, "asset": dict(derived), "reused": False}
+
+    def derive_image(
+            self, project: Any, asset_id: Any, *, crop: Any, target: Any,
+            resample: Any = "lanczos", tag: Any = "", folder_id: Any = None,
+            operation_id: Any = "") -> dict[str, Any]:
+        existing = self.operation_asset(project, operation_id)
+        if existing is not None:
+            return existing
+        _entry, cropped, geometry = self.prepare_image_crop(
+            project, asset_id, crop, target)
+        resample_name, resample_mode = _image_resampling(resample)
+        if "A" in cropped.getbands() or "transparency" in cropped.info:
+            cropped = cropped.convert("RGBA")
+        output_size = (geometry["target_width"], geometry["target_height"])
+        if cropped.size != output_size:
+            cropped = cropped.resize(output_size, resample=resample_mode)
+        if cropped.mode not in ("RGB", "RGBA", "L", "LA"):
+            cropped = cropped.convert("RGBA" if "A" in cropped.getbands() else "RGB")
+        temporary = self.upload_path(project, "%s_variant.png" % asset_id)
+        try:
+            cropped.save(temporary, format="PNG")
+            return self.register_derived_image(
+                project, asset_id, temporary, tag=tag,
+                folder_id=folder_id,
+                operation_id=operation_id,
+                transform={
+                    "kind": "crop_resize",
+                    "crop": {key: geometry[key]
+                             for key in ("x", "y", "width", "height")},
+                    "target": {
+                        "width": geometry["target_width"],
+                        "height": geometry["target_height"],
+                    },
+                    "source": {
+                        "width": geometry["source_width"],
+                        "height": geometry["source_height"],
+                    },
+                    "resample": resample_name,
+                })
+        finally:
+            try:
+                os.unlink(temporary)
+            except FileNotFoundError:
+                pass
+
     def update(self, project: Any, asset_id: Any, changes: Any) -> dict[str, Any]:
         if not isinstance(changes, dict):
             raise ValueError("Asset changes must be a JSON object.")
@@ -603,6 +917,14 @@ class ProjectAssetStore:
             entry["tag"] = tag
         if "enabled" in changes:
             entry["enabled"] = bool(changes["enabled"])
+        if "folder_id" in changes:
+            folder_id = str(changes["folder_id"] or "")
+            known_folders = {str(item.get("id") or "")
+                             for item in catalog.get("folders", [])}
+            if folder_id and folder_id not in known_folders:
+                raise FileNotFoundError(
+                    "Asset folder %s was not found." % folder_id)
+            entry["folder_id"] = folder_id
         if "options" in changes:
             if not isinstance(changes["options"], dict):
                 raise ValueError("Asset options must be a JSON object.")

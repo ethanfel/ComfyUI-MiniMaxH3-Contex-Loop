@@ -31,6 +31,27 @@ function widget(node, name) {
     return node?.widgets?.find((item) => item.name === name) ?? null;
 }
 
+function partialExecutionId(node) {
+    const graph = node?.graph;
+    const root = graph?.rootGraph ?? app.graph;
+    if (!graph || !root || graph === root || graph.isRootGraph) return String(node.id);
+    function pathTo(target, current) {
+        for (const candidate of current?.nodes ?? current?._nodes ?? []) {
+            const subgraph = candidate?.subgraph;
+            if (!subgraph) continue;
+            if (subgraph === target) return String(candidate.id);
+            const child = pathTo(target, subgraph);
+            if (child !== undefined) return `${candidate.id}:${child}`;
+        }
+        return undefined;
+    }
+    const parent = pathTo(graph, root);
+    if (parent === undefined) {
+        throw new Error("Could not resolve this Carousel inside its subgraph.");
+    }
+    return `${parent}:${node.id}`;
+}
+
 function el(tag, className = "", text = null) {
     const item = document.createElement(tag);
     if (className) item.className = className;
@@ -117,7 +138,8 @@ function injectStyles() {
         .h3pa-button{padding:6px 9px;border:1px solid var(--border-color,#566174);border-radius:6px;
           background:var(--comfy-input-bg,#20242d);color:inherit;cursor:pointer}.h3pa-button:hover{border-color:#79a9ff}
         .h3pa-status{min-height:18px;color:#9eabc0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .h3pa-tabs{display:flex;gap:5px;overflow-x:auto}.h3pa-tab.active{background:#284d7e;border-color:#70a9ff}
+        .h3pa-tabs,.h3pa-folders{display:flex;gap:5px;overflow-x:auto;flex:0 0 auto}.h3pa-tab.active,.h3pa-folder.active{background:#284d7e;border-color:#70a9ff}
+        .h3pa-folders{padding-bottom:1px}.h3pa-folder{white-space:nowrap}.h3pa-folder-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:#7793bd}
         .h3pa-stage{flex:1 1 auto;min-height:230px;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;overflow:hidden}
         .h3pa-preview{position:relative;display:grid;place-items:center;min-width:0;min-height:220px;
           overflow:hidden;border:1px solid var(--border-color,#566174);border-radius:9px;background:#090b10}
@@ -145,17 +167,26 @@ function injectStyles() {
         .h3pa-badge{position:absolute;top:5px;left:5px;padding:2px 5px!important;border-radius:4px;background:#111c;color:#fff;font-size:10px}
         .h3pa-drag-handle{position:absolute;top:4px;right:4px;width:24px;padding:2px 4px!important;border-radius:4px;
           background:#111c;color:#dce8ff;text-align:center;font-size:14px;line-height:16px}
-        .h3pa-editor-actions{display:grid;grid-template-columns:auto 30px 30px minmax(0,1fr);gap:5px;
+        .h3pa-editor-actions{display:flex;flex-wrap:wrap;gap:5px;
           align-items:center;margin-top:auto;padding-top:8px;border-top:1px solid color-mix(in srgb,var(--border-color,#566174) 55%,transparent)}
         .h3pa-editor-actions .h3pa-button{height:28px;padding:3px 7px}.h3pa-action-label{color:#8f9bb0;font-size:11px}
         .h3pa-editor-actions .h3pa-button:disabled{opacity:.35;cursor:default}
-        .h3pa-button.danger{justify-self:end;border-color:#9a5151;color:#ffb4b4}.h3pa-button.danger:hover{border-color:#ff7777}
+        .h3pa-button.danger{margin-left:auto;border-color:#9a5151;color:#ffb4b4}.h3pa-button.danger:hover{border-color:#ff7777}
         .h3pa-modal{position:fixed;z-index:100000;left:50%;top:50%;transform:translate(-50%,-50%);
           width:min(760px,calc(100vw - 32px));height:min(520px,calc(100vh - 48px));
           display:flex;flex-direction:column;gap:8px;padding:14px;
           border:1px solid #65738a;border-radius:10px;background:#141820;color:#eee;box-shadow:0 20px 70px #000b}
         .h3pa-source-list{overflow:auto;display:flex;flex-direction:column;gap:5px}.h3pa-source-item{display:grid;
           grid-template-columns:1fr auto auto;gap:8px;align-items:center;padding:7px;border:1px solid #3d4655;border-radius:6px}
+        .h3pa-crop-modal{width:min(1180px,calc(100vw - 28px));height:min(780px,calc(100vh - 32px))}
+        .h3pa-crop-layout{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:12px;min-height:0;flex:1}
+        .h3pa-crop-canvas-wrap{min-width:0;min-height:0;display:grid;place-items:center;overflow:hidden;border:1px solid #48556a;border-radius:8px;background:#080a0f}
+        .h3pa-crop-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair;outline:none}
+        .h3pa-crop-controls{display:flex;flex-direction:column;gap:9px;min-height:0;overflow:auto;padding:10px;border:1px solid #48556a;border-radius:8px;background:#11151d}
+        .h3pa-crop-controls label{display:flex;flex-direction:column;gap:3px;color:#aeb7c8}.h3pa-crop-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
+        .h3pa-crop-controls input,.h3pa-crop-controls select{width:100%;min-width:0;padding:6px 7px;border:1px solid #566174;border-radius:6px;background:#151820;color:inherit}
+        .h3pa-crop-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}.h3pa-crop-note{color:#8f9bb0;font-size:11px}
+        @media(max-width:850px){.h3pa-crop-layout{grid-template-columns:1fr}.h3pa-crop-controls{max-height:320px}}
         @media(max-width:800px){.h3pa-stage{grid-template-columns:1fr}.h3pa-editor{max-height:190px}}
     `;
     document.head.appendChild(style);
@@ -203,9 +234,10 @@ function mount(node) {
     injectStyles();
     const runNameWidget = widget(node, "run_name");
     const catalogWidget = widget(node, "catalog_json");
+    const operationWidget = widget(node, "operation_json");
     const semanticSize = widget(node, "semantic_anchor_size");
     const semanticMode = widget(node, "semantic_anchor_mode");
-    [runNameWidget, catalogWidget, semanticSize, semanticMode].forEach(collapseWidget);
+    [runNameWidget, catalogWidget, operationWidget, semanticSize, semanticMode].forEach(collapseWidget);
 
     const root = el("div", "h3pa-root");
     const top = el("div", "h3pa-row");
@@ -259,12 +291,13 @@ function mount(node) {
     );
     const status = el("div", "h3pa-status", "Loading project assets…");
     const tabs = el("div", "h3pa-tabs");
+    const folders = el("div", "h3pa-folders");
     const stage = el("div", "h3pa-stage");
     const preview = el("div", "h3pa-preview");
     const editor = el("div", "h3pa-editor");
     stage.append(preview, editor);
     const carousel = el("div", "h3pa-carousel");
-    root.append(top, status, tabs, stage, carousel);
+    root.append(top, status, tabs, folders, stage, carousel);
     const dom = node.addDOMWidget("project_asset_carousel", "div", root, {
         serialize: false, hideOnZoom: false, getMinHeight: () => 560,
     });
@@ -272,8 +305,8 @@ function mount(node) {
     node.setSize?.([Math.max(node.size?.[0] ?? 680, 760), Math.max(node.size?.[1] ?? 650, 700)]);
 
     const state = {
-        catalog: {assets: [], reference_slots: []}, selected: "",
-        filter: "all", media: null, bindingSlot: null,
+        catalog: {assets: [], reference_slots: [], folders: []}, selected: "",
+        filter: "all", folder: "all", media: null, bindingSlot: null,
         dragging: "",
         previewMode: previewSelect.value === "full" ? "full" : "light",
     };
@@ -290,7 +323,8 @@ function mount(node) {
         preview.replaceChildren();
     }
     function persistCatalog(catalog) {
-        state.catalog = catalog ?? {assets: [], reference_slots: []};
+        state.catalog = catalog ?? {assets: [], reference_slots: [], folders: []};
+        state.catalog.folders ??= [];
         const canonicalProject = String(state.catalog.project || project());
         runNameInput.value = canonicalProject;
         if (catalogWidget) {
@@ -316,7 +350,14 @@ function mount(node) {
         )) ?? null;
     }
     function filteredAssets() {
-        return allItems().filter((asset) => matchesTab(asset, state.filter));
+        return allItems().filter((asset) => {
+            if (!matchesTab(asset, state.filter)) return false;
+            if (state.folder === "all") return true;
+            if (state.folder === "unfiled") {
+                return asset._unresolved || !String(asset.folder_id ?? "");
+            }
+            return !asset._unresolved && asset.folder_id === state.folder;
+        });
     }
     function renderTabs() {
         tabs.replaceChildren();
@@ -331,6 +372,76 @@ function mount(node) {
             item.classList.add("h3pa-tab");
             item.classList.toggle("active", state.filter === key);
             tabs.append(item);
+        }
+    }
+    async function folderRequest(body, success) {
+        try {
+            setStatus("Saving asset folders…");
+            const result = await jsonRequest(
+                "/minimax_h3_context_loop/project-assets/folder", {
+                    method: "POST", headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({project: project(), ...body}),
+                });
+            persistCatalog(result.catalog); render(); setStatus(success);
+            return result;
+        } catch (error) { setStatus(error.message, true); return null; }
+    }
+    function renderFolders() {
+        folders.replaceChildren();
+        const assetList = state.catalog.assets ?? [];
+        const addFolder = button("+ Folder", async () => {
+            const name = window.prompt("New asset folder name");
+            if (!name?.trim()) return;
+            const result = await folderRequest(
+                {action: "create", name}, `Created folder ${name.trim()}.`,
+            );
+            if (result?.folder?.id) { state.folder = result.folder.id; render(); }
+        }, "Create a presentation-only folder. Folders never affect prompts, fingerprints, or generation.");
+        addFolder.classList.add("h3pa-folder"); folders.append(addFolder);
+        const choices = [
+            {id: "all", name: "All", count: allItems().length},
+            {id: "unfiled", name: "Unfiled", count: allItems().filter(
+                (asset) => asset._unresolved || !String(asset.folder_id ?? ""),
+            ).length},
+            ...(state.catalog.folders ?? []).map((folder) => ({
+                ...folder,
+                count: assetList.filter((asset) => asset.folder_id === folder.id).length,
+            })),
+        ];
+        for (const folder of choices) {
+            const item = button(`${folder.name} ${folder.count}`, () => {
+                state.folder = folder.id; render();
+            }, folder.id === "all" || folder.id === "unfiled"
+                ? "Filter the Carousel by folder"
+                : "Presentation-only asset folder; generation is unchanged");
+            item.classList.add("h3pa-folder");
+            item.classList.toggle("active", state.folder === folder.id);
+            if (folder.color) item.style.borderColor = folder.color;
+            folders.append(item);
+        }
+        const active = (state.catalog.folders ?? []).find(
+            (folder) => folder.id === state.folder,
+        );
+        if (active) {
+            folders.append(
+                button("Rename", async () => {
+                    const name = window.prompt("Rename asset folder", active.name);
+                    if (!name?.trim() || name.trim() === active.name) return;
+                    await folderRequest({
+                        action: "update", folder_id: active.id,
+                        changes: {name: name.trim()},
+                    }, `Renamed folder to ${name.trim()}.`);
+                }),
+                button("Remove folder", async () => {
+                    if (!window.confirm(
+                        `Remove folder ${active.name}? Its assets will move to Unfiled; no media is deleted.`,
+                    )) return;
+                    const result = await folderRequest({
+                        action: "delete", folder_id: active.id,
+                    }, `Removed folder ${active.name}.`);
+                    if (result) { state.folder = "unfiled"; render(); }
+                }),
+            );
         }
     }
     function renderPreview(asset) {
@@ -427,6 +538,262 @@ function mount(node) {
             setStatus(`Deleted ${promptTag(result.asset)}.`);
         } catch (error) { setStatus(error.message, true); }
     }
+    async function duplicateAsset(asset) {
+        try {
+            setStatus(`Duplicating ${promptTag(asset)}…`);
+            const result = await jsonRequest(
+                "/minimax_h3_context_loop/project-assets/duplicate", {
+                    method: "POST", headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({project: project(), asset_id: asset.id}),
+                });
+            persistCatalog(result.catalog); state.selected = result.asset.id; render();
+            setStatus(`Duplicated ${promptTag(asset)} as ${promptTag(result.asset)} without copying media bytes.`);
+        } catch (error) { setStatus(error.message, true); }
+    }
+    function openImageEditor(asset) {
+        const modal = el("div", "h3pa-modal h3pa-crop-modal");
+        const heading = el("div", "h3pa-row");
+        heading.append(
+            el("strong", "h3pa-project", `Crop / resize variant · ${promptTag(asset)}`),
+            button("Close", () => modal.remove()),
+        );
+        const layout = el("div", "h3pa-crop-layout");
+        const canvasWrap = el("div", "h3pa-crop-canvas-wrap");
+        const canvas = el("canvas", "h3pa-crop-canvas"); canvas.tabIndex = 0;
+        canvas.setAttribute("aria-label", "Crop selector; drag to move, drag the lower-right handle to resize, arrow keys nudge");
+        canvasWrap.append(canvas);
+        const controls = el("div", "h3pa-crop-controls");
+        layout.append(canvasWrap, controls); modal.append(heading, layout); document.body.append(modal);
+
+        const image = new Image(); image.decoding = "async";
+        const crop = {x: 0, y: 0, width: 1, height: 1};
+        let sourceWidth = 1; let sourceHeight = 1;
+        let drawScale = 1; let drawX = 0; let drawY = 0;
+        let drag = null;
+        const cropInputs = {};
+        function numberField(name, label, value, minimum = 0) {
+            const wrapper = el("label", "", label);
+            const input = el("input"); input.type = "number"; input.step = "1";
+            input.min = String(minimum); input.value = String(value);
+            wrapper.append(input); cropInputs[name] = input; return wrapper;
+        }
+        const cropGrid = el("div", "h3pa-crop-grid");
+        cropGrid.append(
+            numberField("x", "Crop X", 0), numberField("y", "Crop Y", 0),
+            numberField("width", "Crop width", 1, 1),
+            numberField("height", "Crop height", 1, 1),
+        );
+        const targetGrid = el("div", "h3pa-crop-grid");
+        targetGrid.append(
+            numberField("targetWidth", "Output width", 1, 1),
+            numberField("targetHeight", "Output height", 1, 1),
+        );
+        const ratioLabel = el("label", "h3pa-toggle");
+        const ratioLock = el("input"); ratioLock.type = "checkbox"; ratioLock.checked = true;
+        const ratioCopy = el("span", "h3pa-toggle-copy");
+        ratioCopy.append(el("strong", "", "Lock output ratio"), el("small", "", "Resizing the crop keeps the output aspect ratio."));
+        ratioLabel.append(ratioLock, ratioCopy);
+        const resampleLabel = el("label", "", "Resampling");
+        const resample = el("select");
+        for (const value of ["lanczos", "bicubic", "bilinear", "nearest"]) {
+            const option = el("option", "", value); option.value = value; resample.append(option);
+        }
+        resampleLabel.append(resample);
+        const tagLabel = el("label", "", "Variant prompt tag");
+        const variantTag = el("input"); variantTag.value = `${asset.tag}_variant`;
+        tagLabel.append(variantTag);
+        const cropStatus = el("div", "h3pa-crop-note", "Loading full source image…");
+        controls.append(
+            el("div", "h3pa-crop-note", "Coordinates are oriented source-image pixels. Drag the selection to place it; drag its lower-right handle to resize; arrow keys nudge by 1 px (Shift: 10 px)."),
+            cropGrid, targetGrid, ratioLabel, resampleLabel, tagLabel, cropStatus,
+        );
+        const actions = el("div", "h3pa-crop-actions");
+        const reset = button("Use full image", () => {
+            crop.x = 0; crop.y = 0; crop.width = sourceWidth; crop.height = sourceHeight;
+            cropInputs.targetWidth.value = String(sourceWidth);
+            cropInputs.targetHeight.value = String(sourceHeight);
+            syncInputs(); draw();
+        });
+        const save = button("Save crop / resize", async () => {
+            const payload = operationPayload("resample"); if (!payload) return;
+            try {
+                save.disabled = true; modelButton.disabled = true;
+                cropStatus.textContent = "Creating full-resolution variant…";
+                const result = await jsonRequest(
+                    "/minimax_h3_context_loop/project-assets/derive", {
+                        method: "POST", headers: {"Content-Type": "application/json"},
+                        body: JSON.stringify({...payload, resample: resample.value}),
+                    });
+                persistCatalog(result.catalog); state.selected = result.asset.id;
+                modal.remove(); render();
+                setStatus(`Created ${promptTag(result.asset)} from the full stored image.`);
+            } catch (error) {
+                cropStatus.textContent = error.message; save.disabled = false;
+                modelButton.disabled = !modelConnected();
+            }
+        }, "Create a new full-quality PNG variant; the source asset remains unchanged");
+        const modelButton = button("Model upscale", async () => {
+            const payload = operationPayload("model"); if (!payload) return;
+            if (!modelConnected()) {
+                cropStatus.textContent = "Connect a core UPSCALE_MODEL to the Carousel first."; return;
+            }
+            try {
+                operationWidget.value = JSON.stringify(payload);
+                operationWidget.callback?.(operationWidget.value);
+                node.graph?.setDirtyCanvas?.(true, true);
+                save.disabled = true; modelButton.disabled = true;
+                cropStatus.textContent = "Queued asset-only model upscale…";
+                await app.queuePrompt(0, 1, [partialExecutionId(node)]);
+                // queuePrompt has already serialized and submitted this one-shot
+                // operation. Clear the workflow state immediately so a failed
+                // model run cannot poison the user's next normal H3 queue.
+                operationWidget.value = ""; operationWidget.callback?.("");
+                modal.remove();
+                setStatus("Asset-only model upscale queued; the H3 chain was not queued.");
+            } catch (error) {
+                operationWidget.value = ""; operationWidget.callback?.("");
+                save.disabled = false; modelButton.disabled = !modelConnected();
+                cropStatus.textContent = error.message;
+            }
+        }, "Run only this Carousel and its connected core upscale model; downstream H3 nodes are excluded");
+        function modelConnected() {
+            return (node.inputs ?? []).some((input) => (
+                input.name === "upscale_model" && input.link != null
+            ));
+        }
+        modelButton.disabled = !modelConnected();
+        if (!modelConnected()) modelButton.title += " (No UPSCALE_MODEL is connected.)";
+        actions.append(reset, save, modelButton); controls.append(actions);
+
+        function operationPayload(mode) {
+            applyNumericInputs();
+            const targetWidth = Math.round(Number(cropInputs.targetWidth.value));
+            const targetHeight = Math.round(Number(cropInputs.targetHeight.value));
+            if (!targetWidth || !targetHeight) {
+                cropStatus.textContent = "Output width and height must be positive."; return null;
+            }
+            return {
+                project: project(), asset_id: asset.id, mode,
+                operation_id: globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`,
+                crop: {x: crop.x, y: crop.y, width: crop.width, height: crop.height},
+                target: {width: targetWidth, height: targetHeight},
+                tag: variantTag.value, folder_id: asset.folder_id ?? "",
+            };
+        }
+        function clampCrop() {
+            crop.width = Math.max(1, Math.min(sourceWidth, Math.round(crop.width)));
+            crop.height = Math.max(1, Math.min(sourceHeight, Math.round(crop.height)));
+            crop.x = Math.max(0, Math.min(sourceWidth - crop.width, Math.round(crop.x)));
+            crop.y = Math.max(0, Math.min(sourceHeight - crop.height, Math.round(crop.y)));
+        }
+        function syncInputs() {
+            clampCrop();
+            for (const key of ["x", "y", "width", "height"]) cropInputs[key].value = String(crop[key]);
+            cropStatus.textContent = `${sourceWidth}×${sourceHeight} source → ${cropInputs.targetWidth.value}×${cropInputs.targetHeight.value} variant`;
+        }
+        function applyNumericInputs(changed = "") {
+            for (const key of ["x", "y", "width", "height"]) {
+                const value = Math.round(Number(cropInputs[key].value));
+                if (Number.isFinite(value)) crop[key] = value;
+            }
+            if (ratioLock.checked && ["width", "height", "targetWidth", "targetHeight"].includes(changed)) {
+                const targetWidth = Math.max(1, Number(cropInputs.targetWidth.value) || 1);
+                const targetHeight = Math.max(1, Number(cropInputs.targetHeight.value) || 1);
+                const ratio = targetWidth / targetHeight;
+                if (changed === "height") crop.width = Math.round(crop.height * ratio);
+                else crop.height = Math.round(crop.width / ratio);
+            }
+            syncInputs(); draw();
+        }
+        for (const [name, input] of Object.entries(cropInputs)) {
+            input.addEventListener("change", () => applyNumericInputs(name));
+        }
+        function canvasPoint(event) {
+            const bounds = canvas.getBoundingClientRect();
+            return {
+                x: (event.clientX - bounds.left) * canvas.width / bounds.width,
+                y: (event.clientY - bounds.top) * canvas.height / bounds.height,
+            };
+        }
+        function sourcePoint(point) {
+            return {x: (point.x - drawX) / drawScale, y: (point.y - drawY) / drawScale};
+        }
+        function draw() {
+            const bounds = canvasWrap.getBoundingClientRect();
+            const density = Math.min(globalThis.devicePixelRatio || 1, 2);
+            const width = Math.max(320, Math.round(bounds.width * density));
+            const height = Math.max(260, Math.round(bounds.height * density));
+            if (canvas.width !== width || canvas.height !== height) { canvas.width = width; canvas.height = height; }
+            const context = canvas.getContext("2d"); context.clearRect(0, 0, width, height);
+            context.fillStyle = "#080a0f"; context.fillRect(0, 0, width, height);
+            if (!image.complete || !image.naturalWidth) return;
+            drawScale = Math.min((width - 24) / sourceWidth, (height - 24) / sourceHeight);
+            drawX = (width - sourceWidth * drawScale) / 2;
+            drawY = (height - sourceHeight * drawScale) / 2;
+            context.drawImage(image, drawX, drawY, sourceWidth * drawScale, sourceHeight * drawScale);
+            const x = drawX + crop.x * drawScale; const y = drawY + crop.y * drawScale;
+            const w = crop.width * drawScale; const h = crop.height * drawScale;
+            context.save(); context.fillStyle = "#0009"; context.beginPath();
+            context.rect(drawX, drawY, sourceWidth * drawScale, sourceHeight * drawScale);
+            context.rect(x, y, w, h); context.fill("evenodd");
+            context.strokeStyle = "#72a9ff"; context.lineWidth = Math.max(2, density * 1.5);
+            context.strokeRect(x, y, w, h); context.fillStyle = "#72a9ff";
+            const handle = 12 * density; context.fillRect(x + w - handle, y + h - handle, handle, handle);
+            context.restore();
+        }
+        canvas.addEventListener("pointerdown", (event) => {
+            if (!image.naturalWidth) return;
+            const point = sourcePoint(canvasPoint(event));
+            const nearHandle = Math.hypot(
+                point.x - (crop.x + crop.width), point.y - (crop.y + crop.height),
+            ) <= Math.max(12 / drawScale, 8);
+            const inside = point.x >= crop.x && point.x <= crop.x + crop.width && point.y >= crop.y && point.y <= crop.y + crop.height;
+            if (!inside && !nearHandle) {
+                crop.x = point.x - crop.width / 2; crop.y = point.y - crop.height / 2;
+                clampCrop(); syncInputs(); draw();
+            }
+            drag = {mode: nearHandle ? "resize" : "move", point, start: {...crop}};
+            canvas.setPointerCapture(event.pointerId); canvas.focus(); event.preventDefault();
+        });
+        canvas.addEventListener("pointermove", (event) => {
+            if (!drag) return;
+            const point = sourcePoint(canvasPoint(event));
+            const dx = point.x - drag.point.x; const dy = point.y - drag.point.y;
+            if (drag.mode === "move") {
+                crop.x = drag.start.x + dx; crop.y = drag.start.y + dy;
+            } else {
+                crop.width = drag.start.width + dx;
+                if (ratioLock.checked) {
+                    const ratio = Math.max(1, Number(cropInputs.targetWidth.value)) / Math.max(1, Number(cropInputs.targetHeight.value));
+                    crop.height = crop.width / ratio;
+                } else crop.height = drag.start.height + dy;
+            }
+            clampCrop(); syncInputs(); draw(); event.preventDefault();
+        });
+        const endDrag = () => { drag = null; };
+        canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag);
+        canvas.addEventListener("keydown", (event) => {
+            const step = event.shiftKey ? 10 : 1;
+            if (event.key === "ArrowLeft") crop.x -= step;
+            else if (event.key === "ArrowRight") crop.x += step;
+            else if (event.key === "ArrowUp") crop.y -= step;
+            else if (event.key === "ArrowDown") crop.y += step;
+            else return;
+            clampCrop(); syncInputs(); draw(); event.preventDefault();
+        });
+        image.addEventListener("load", () => {
+            sourceWidth = image.naturalWidth; sourceHeight = image.naturalHeight;
+            crop.x = 0; crop.y = 0; crop.width = sourceWidth; crop.height = sourceHeight;
+            cropInputs.targetWidth.value = String(sourceWidth);
+            cropInputs.targetHeight.value = String(sourceHeight);
+            syncInputs(); draw();
+        });
+        image.addEventListener("error", () => { cropStatus.textContent = "Could not load the full stored source image."; });
+        image.src = mediaUrl(project(), asset, "original");
+        const observer = new ResizeObserver(draw); observer.observe(canvasWrap);
+        const removeModal = modal.remove.bind(modal);
+        modal.remove = () => { observer.disconnect(); removeModal(); };
+    }
     function renderEditor(asset) {
         editor.replaceChildren();
         if (!asset) return;
@@ -509,6 +876,20 @@ function mount(node) {
         const tag = el("input"); tag.value = asset.tag ?? "";
         tag.addEventListener("change", () => updateAsset(asset, {tag: tag.value}));
         tagLabel.append(tag); editor.append(tagLabel);
+        const folderLabel = el("label", "", "Folder");
+        folderLabel.title = "Presentation only. Folder membership never changes prompts, references, fingerprints, or generation.";
+        const folderSelect = el("select");
+        const unfiled = el("option", "", "Unfiled"); unfiled.value = "";
+        folderSelect.append(unfiled);
+        for (const folder of state.catalog.folders ?? []) {
+            const option = el("option", "", folder.name); option.value = folder.id;
+            option.selected = folder.id === String(asset.folder_id ?? "");
+            folderSelect.append(option);
+        }
+        folderSelect.addEventListener("change", () => updateAsset(
+            asset, {folder_id: folderSelect.value},
+        ));
+        folderLabel.append(folderSelect); editor.append(folderLabel);
         const enabledTitle = isSourceTrack ? "Selected timeline source" : "Available to prompts";
         const enabledSummary = isSourceTrack
             ? "Makes this file available to the Plan; Chain Policy decides how it is used."
@@ -613,7 +994,14 @@ function mount(node) {
         remove.setAttribute("aria-label", "Delete asset");
         remove.classList.add("danger");
         actions.append(
-            el("span", "h3pa-action-label", "Order"), earlier, later, remove,
+            el("span", "h3pa-action-label", "Asset"),
+            ...(asset.kind === "image" ? [button(
+                "Crop / resize", () => openImageEditor(asset),
+                "Create a nondestructive image variant from exact source pixels",
+            )] : []),
+            button("Duplicate", () => duplicateAsset(asset),
+                "Create another catalog card that initially shares the same stored media bytes"),
+            earlier, later, remove,
         );
         editor.append(actions);
     }
@@ -694,7 +1082,11 @@ function mount(node) {
         }
     }
     function render() {
-        renderTabs(); renderCarousel();
+        if (state.folder !== "all" && state.folder !== "unfiled"
+                && !(state.catalog.folders ?? []).some((folder) => folder.id === state.folder)) {
+            state.folder = "all";
+        }
+        renderTabs(); renderFolders(); renderCarousel();
         const selected = allItems().find((asset) => asset.id === state.selected);
         renderPreview(selected); renderEditor(selected);
     }
@@ -851,6 +1243,10 @@ function mount(node) {
     const executed = node.onExecuted;
     node.onExecuted = function () {
         const result = executed?.apply(this, arguments);
+        if (operationWidget?.value) {
+            operationWidget.value = "";
+            operationWidget.callback?.("");
+        }
         void refresh();
         return result;
     };
