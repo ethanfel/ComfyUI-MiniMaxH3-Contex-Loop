@@ -33,7 +33,11 @@ assert.match(source, /if \(filter === "image"\) return asset\.role === "picture"
 assert.match(source, /selectedUnassignedSlot\(\)/);
 assert.match(source, /state\.bindingSlot = selectedUnassignedSlot\(\)/);
 assert.match(source, /asset, "thumbnail"/);
-assert.match(source, /Light previews/);
+assert.match(source, /Light UI previews — generation uses originals/);
+assert.match(source, /this setting never changes generation media/);
+assert.match(source, /H3 always uses the original stored asset/);
+assert.match(source, /width:min\(760px,calc\(100vw - 32px\)\)/);
+assert.match(source, /height:min\(520px,calc\(100vh - 48px\)\)/);
 assert.match(source, /state\.previewMode === "full" \? "original" : "poster"/);
 assert.match(source, /downstreamPlanRunName\(node\)/);
 assert.match(source, /sequence !== refreshSequence \|\| project\(\) !== requestedProject/);
