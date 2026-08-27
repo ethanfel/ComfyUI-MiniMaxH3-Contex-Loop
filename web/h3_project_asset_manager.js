@@ -5,7 +5,7 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.49";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.50";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -161,7 +161,13 @@ function injectStyles() {
         .h3pa-editor .h3pa-toggle input,.h3pa-crop-controls .h3pa-toggle input{width:16px;height:16px;min-width:16px;margin:2px 0 0;padding:0;cursor:pointer}
         .h3pa-toggle-copy{display:flex;flex-direction:column;gap:2px;min-width:0}.h3pa-toggle-copy strong{color:inherit}
         .h3pa-toggle-copy small{color:#8f9bb0;font-size:11px;line-height:1.3}
-        .h3pa-carousel{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:4px 1px 7px;min-height:126px}
+        .h3pa-carousel{position:relative;display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:4px 1px 7px;min-height:126px;
+          border:1px solid transparent;border-radius:9px;transition:border-color .12s ease,background .12s ease,box-shadow .12s ease}
+        .h3pa-carousel.h3pa-drop-active{border-color:#70a9ff;background:#23446b38;box-shadow:inset 0 0 0 2px #70a9ff55}
+        .h3pa-carousel.h3pa-drop-active::after{content:"Drop to create project assets";position:absolute;inset:4px;z-index:20;
+          display:grid;place-items:center;border:2px dashed #8bb9ff;border-radius:7px;background:#101826e8;color:#dceaff;
+          font-size:14px;font-weight:700;pointer-events:none}
+        .h3pa-carousel-empty{flex:1 0 100%;display:grid;place-items:center;min-height:112px;color:#8190a8;text-align:center}
         .h3pa-card{position:relative;flex:0 0 150px;height:112px;padding:0;border:1px solid #495466;border-radius:8px;
           overflow:hidden;background:#11141a;color:inherit;text-align:left;cursor:pointer}.h3pa-card.selected{border:2px solid #76aaff}
         .h3pa-card[draggable="true"]{cursor:grab}.h3pa-card.dragging{opacity:.42;cursor:grabbing}
@@ -271,12 +277,13 @@ function mount(node) {
     }
     const sourceSelect = el("select");
     for (const [value, label] of [
-        ["project", "Project assets"], ["input", "ComfyUI input"],
-        ["path", "Server path"], ["chains", "H3 backups"],
+        ["input", "ComfyUI input"], ["path", "Server path"],
+        ["chains", "H3 backups"],
     ]) {
         const option = el("option", "", label); option.value = value;
         sourceSelect.append(option);
     }
+    sourceSelect.title = "Choose where Import browses for media to copy into this project.";
     const previewSelect = el("select");
     for (const [value, label] of [
         ["light", "Light previews"],
@@ -297,9 +304,9 @@ function mount(node) {
         button("Upload", () => {
             state.bindingSlot = selectedUnassignedSlot();
             fileInput.click();
-        }, "Bind the selected Unassigned slot, or import a new asset when no slot is selected"),
-        button("Browse source", () => browseSource(selectedUnassignedSlot()),
-            "Bind the selected Unassigned slot, or import a new asset when no slot is selected"),
+        }, "Choose a local media file, or drop files directly onto the Carousel. A selected Unassigned slot is bound; otherwise a new asset is created."),
+        button("Import", () => browseSource(selectedUnassignedSlot()),
+            "Create a project asset from the selected source. ComfyUI input is the default; a selected Unassigned slot is bound instead."),
         button("Refresh", () => refresh()), fileInput,
     );
     const status = el("div", "h3pa-status", "Loading project assets…");
@@ -309,6 +316,7 @@ function mount(node) {
     const editor = el("div", "h3pa-editor");
     stage.append(preview, editor);
     const carousel = el("div", "h3pa-carousel");
+    carousel.title = "Drop one or more image, video, or audio files here to create project assets immediately.";
     root.append(top, status, tabs, stage, carousel);
     const dom = node.addDOMWidget("project_asset_carousel", "div", root, {
         serialize: false, hideOnZoom: false, getMinHeight: () => 560,
@@ -319,7 +327,7 @@ function mount(node) {
     const state = {
         catalog: {assets: [], reference_slots: [], folders: []}, selected: "",
         filter: "all", folder: "all", media: null, bindingSlot: null,
-        dragging: "",
+        dragging: "", uploading: false,
         previewMode: previewSelect.value === "full" ? "full" : "light",
     };
     const project = () => String(runNameInput.value || "").trim();
@@ -1289,6 +1297,12 @@ function mount(node) {
         if (!assets.some((asset) => asset.id === state.selected)) {
             state.selected = assets[0]?.id ?? "";
         }
+        if (!assets.length) {
+            carousel.append(el(
+                "div", "h3pa-carousel-empty",
+                "Drop image, video, or audio files here, or use Upload / Import.",
+            ));
+        }
         for (const asset of assets) {
             const card = el("button", "h3pa-card"); card.type = "button";
             card.classList.toggle("selected", asset.id === state.selected);
@@ -1422,10 +1436,74 @@ function mount(node) {
         persistCatalog(result.catalog); state.selected = result.asset.id; render();
         setStatus(`${result.bound_slot_id ? "Bound" : "Imported"} ${promptTag(result.asset)} as ${result.asset.role}.`);
     }
+    async function uploadFiles(fileList, {slot = null, dropped = false} = {}) {
+        const files = Array.from(fileList ?? []).filter(
+            (file) => file && typeof file.name === "string" && file.name,
+        );
+        if (!files.length) {
+            setStatus("No media files were dropped.", true);
+            return;
+        }
+        if (!project()) {
+            setStatus("Enter a Run name, or connect this node to a named Plan before adding assets.", true);
+            return;
+        }
+        if (state.uploading) {
+            setStatus("Project assets are already being added. Wait for that batch to finish.", true);
+            return;
+        }
+        state.uploading = true;
+        let completed = 0;
+        let lastResult = null;
+        const failures = [];
+        try {
+            for (let index = 0; index < files.length; index += 1) {
+                const file = files[index];
+                const targetSlot = index === 0 ? slot : null;
+                const data = new FormData();
+                data.append("project", project());
+                if (targetSlot?.id) data.append("slot_id", targetSlot.id);
+                data.append("file", file, file.name);
+                setStatus(
+                    `${targetSlot ? `Binding ${promptTag(targetSlot)} from` : "Creating asset from"} ${file.name}`
+                    + `${files.length > 1 ? ` (${index + 1}/${files.length})` : ""}…`,
+                );
+                try {
+                    lastResult = await jsonRequest(
+                        "/minimax_h3_context_loop/project-assets/upload",
+                        {method: "POST", body: data},
+                    );
+                    completed += 1;
+                } catch (error) {
+                    failures.push(`${file.name}: ${error.message}`);
+                }
+            }
+            if (lastResult) {
+                persistCatalog(lastResult.catalog);
+                state.selected = lastResult.asset.id;
+                render();
+            }
+            if (failures.length) {
+                setStatus(
+                    `${completed ? `Created ${completed} asset${completed === 1 ? "" : "s"}; ` : ""}`
+                    + `${failures.length} file${failures.length === 1 ? "" : "s"} failed: ${failures.join(" | ")}`,
+                    true,
+                );
+            } else if (slot && lastResult) {
+                setStatus(`Bound ${promptTag(lastResult.asset)} from ${files[0].name}.`);
+            } else if (dropped && lastResult) {
+                setStatus(files.length === 1
+                    ? `Created ${promptTag(lastResult.asset)} from dropped file.`
+                    : `Created ${completed} project assets from dropped files.`);
+            } else if (lastResult) {
+                setStatus(`Uploaded ${promptTag(lastResult.asset)}.`);
+            }
+        } finally {
+            state.uploading = false;
+        }
+    }
     async function browseSource(slot = null, forcedSource = "") {
         let source = forcedSource || sourceSelect.value;
-        if (source === "project" && slot) source = "input";
-        if (source === "project") { await refresh(); return; }
         if (source === "path") {
             const path = window.prompt("Absolute server media path");
             if (!path) return;
@@ -1474,22 +1552,45 @@ function mount(node) {
         await load();
     }
     fileInput.addEventListener("change", async () => {
-        const file = fileInput.files?.[0]; if (!file) return;
-        const slot = state.bindingSlot;
-        const data = new FormData();
-        data.append("project", project());
-        if (slot?.id) data.append("slot_id", slot.id);
-        data.append("file", file, file.name);
-        try {
-            setStatus(`${slot ? `Binding ${promptTag(slot)} from` : "Uploading"} ${file.name}…`);
-            const result = await jsonRequest(
-                "/minimax_h3_context_loop/project-assets/upload", {method: "POST", body: data});
-            persistCatalog(result.catalog); state.selected = result.asset.id; render();
-            setStatus(`${slot ? "Bound" : "Uploaded"} ${promptTag(result.asset)}.`);
-        } catch (error) { setStatus(error.message, true); }
+        await uploadFiles(fileInput.files, {slot: state.bindingSlot});
         state.bindingSlot = null;
         fileInput.value = "";
     });
+    const dropController = new AbortController();
+    const dropListenerOptions = {signal: dropController.signal};
+    let fileDragDepth = 0;
+    function hasDraggedFiles(event) {
+        return Array.from(event.dataTransfer?.types ?? []).includes("Files");
+    }
+    function clearFileDropState() {
+        fileDragDepth = 0;
+        carousel.classList.remove("h3pa-drop-active");
+    }
+    carousel.addEventListener("dragenter", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        fileDragDepth += 1;
+        carousel.classList.add("h3pa-drop-active");
+    }, dropListenerOptions);
+    carousel.addEventListener("dragover", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        event.dataTransfer.dropEffect = "copy";
+        carousel.classList.add("h3pa-drop-active");
+    }, dropListenerOptions);
+    carousel.addEventListener("dragleave", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        fileDragDepth = Math.max(0, fileDragDepth - 1);
+        if (!fileDragDepth) carousel.classList.remove("h3pa-drop-active");
+    }, dropListenerOptions);
+    carousel.addEventListener("drop", (event) => {
+        if (!hasDraggedFiles(event)) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const files = Array.from(event.dataTransfer?.files ?? []);
+        clearFileDropState();
+        void uploadFiles(files, {dropped: true});
+    }, dropListenerOptions);
     let projectTimer = 0;
     runNameInput.addEventListener("input", () => {
         refreshSequence += 1;
@@ -1515,6 +1616,7 @@ function mount(node) {
     node.onRemoved = function () {
         for (const timer of graphSyncTimers) clearTimeout(timer);
         graphSyncTimers.clear();
+        dropController.abort();
         stopMedia();
         return removed?.apply(this, arguments);
     };

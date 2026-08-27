@@ -92,6 +92,12 @@ copying media from the carrier. Bind each card explicitly from ComfyUI input,
 an upload, a backup, or a server path. Unassigned cards never consume H3
 reference slots and never enter the generation fingerprint.
 
+Drop one or several image, video, or audio files directly onto the Carousel to
+create project assets immediately. Files can also be chosen with **Upload**, or
+copied from the existing ComfyUI input folder with **Import** (the default
+source); Server path and H3 backup imports remain available from the same
+source selector.
+
 Images can be edited nondestructively from the Carousel. **Edit / upscale**
 opens a full-source pixel editor with draggable placement, exact dimensions,
 megapixel targets and presets, working aspect locking, and

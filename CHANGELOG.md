@@ -4,6 +4,13 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- The Project Asset Carousel is now a direct media drop target. Dropping one
+  or several image, video, or audio files creates ordered project assets
+  immediately, without interfering with internal card drag-reordering. The
+  source browser now defaults explicitly to ComfyUI input, so existing input
+  files can be turned into assets through **Import** without uploading them
+  again.
+
 - Project Asset image variants now accept exact megapixel targets and presets
   without requiring a crop. Output aspect locking couples width and height in
   both directions, **Use full image** preserves the megapixel target, and a
