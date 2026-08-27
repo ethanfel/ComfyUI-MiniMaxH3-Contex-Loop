@@ -22036,6 +22036,32 @@ async def _project_asset_update(request):
         return web.json_response({"error": str(exc)}, status=400)
 
 
+async def _project_asset_reorder(request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Asset reorder request must be a JSON object.")
+        result = await asyncio.to_thread(
+            _project_asset_store().reorder,
+            body.get("project", ""), body.get("asset_ids"))
+        return web.json_response(result)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+async def _project_asset_delete(request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Asset deletion request must be a JSON object.")
+        result = await asyncio.to_thread(
+            _project_asset_store().delete,
+            body.get("project", ""), body.get("asset_id"))
+        return web.json_response(result)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
 async def _project_asset_media(request):
     try:
         project = request.query.get("project", "")
@@ -22135,6 +22161,12 @@ if (PromptServer is not None and web is not None and
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/project-assets/update")(
             _project_asset_update)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-assets/reorder")(
+            _project_asset_reorder)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-assets/delete")(
+            _project_asset_delete)
     PromptServer.instance.routes.get(
         "/minimax_h3_context_loop/project-assets/media")(
             _project_asset_media)

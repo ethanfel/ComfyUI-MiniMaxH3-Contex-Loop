@@ -44,6 +44,11 @@ def main():
         thumbnail = pathlib.Path(store.ensure_thumbnail(
             "episode_1", first["asset"]["id"]))
         assert thumbnail.is_file()
+        first_project_copy = pathlib.Path(store.asset(
+            "episode_1", first["asset"]["id"])[1])
+        first_backup_copy = (
+            output_root / "h3_chains" / "episode_1" / "project_assets" /
+            first["asset"]["relative_path"])
         with Image.open(thumbnail) as image:
             assert image.width <= 320 and image.height <= 180
         assert (output_root / "h3_chains" / "episode_1" /
@@ -65,6 +70,26 @@ def main():
         assert changed["asset"]["role"] == "semantic_anchor"
         assert changed["asset"]["tag"] == "hero_semantic"
         assert changed["catalog"]["revision"] != first["catalog"]["revision"]
+        reordered = store.reorder("episode_1", [
+            second["asset"]["id"], first["asset"]["id"],
+        ])
+        assert [item["id"] for item in reordered["catalog"]["assets"]] == [
+            second["asset"]["id"], first["asset"]["id"],
+        ]
+        try:
+            store.reorder("episode_1", [first["asset"]["id"]])
+        except ValueError as exc:
+            assert "every current asset ID exactly once" in str(exc)
+        else:
+            raise AssertionError("Incomplete project asset order was accepted")
+        deleted = store.delete("episode_1", first["asset"]["id"])
+        assert deleted["asset"]["tag"] == "hero_semantic"
+        assert [item["id"] for item in deleted["catalog"]["assets"]] == [
+            second["asset"]["id"]]
+        assert not first_project_copy.exists()
+        assert not first_backup_copy.exists()
+        assert not thumbnail.exists()
+        assert picture.is_file()
 
         templated = store.sync_reference_slots("episode_migration", [{
             "kind": "image",
@@ -93,7 +118,7 @@ def main():
         assert bound["catalog"]["reference_slots"] == []
         assert len(bound["catalog"]["assets"]) == 1
 
-    print("H3 Project Asset Store: import, backup, metadata sync, binding, listing, and edit pass")
+    print("H3 Project Asset Store: import, backup, metadata sync, binding, listing, ordering, deletion, and edit pass")
 
 
 if __name__ == "__main__":

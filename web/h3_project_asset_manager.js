@@ -136,11 +136,17 @@ function injectStyles() {
         .h3pa-carousel{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:4px 1px 7px;min-height:126px}
         .h3pa-card{position:relative;flex:0 0 150px;height:112px;padding:0;border:1px solid #495466;border-radius:8px;
           overflow:hidden;background:#11141a;color:inherit;text-align:left;cursor:pointer}.h3pa-card.selected{border:2px solid #76aaff}
+        .h3pa-card[draggable="true"]{cursor:grab}.h3pa-card.dragging{opacity:.42;cursor:grabbing}
+        .h3pa-card.drag-over{border-color:#82d7a0;box-shadow:0 0 0 2px #82d7a066}
         .h3pa-card.unresolved{border-style:dashed;background:#171922}.h3pa-card.unresolved.stale{opacity:.58}
         .h3pa-card.unresolved .fallback{color:#d7a95c}.h3pa-unassigned{color:#e6b76a;font-weight:650}
         .h3pa-card img{width:100%;height:78px;object-fit:cover;background:#090b10}.h3pa-card .fallback{height:78px;display:grid;
           place-items:center;font-size:24px;color:#81a8dc}.h3pa-card span{display:block;padding:4px 6px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
         .h3pa-badge{position:absolute;top:5px;left:5px;padding:2px 5px!important;border-radius:4px;background:#111c;color:#fff;font-size:10px}
+        .h3pa-drag-handle{position:absolute;top:4px;right:4px;width:24px;padding:2px 4px!important;border-radius:4px;
+          background:#111c;color:#dce8ff;text-align:center;font-size:14px;line-height:16px}
+        .h3pa-editor-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto;padding-top:4px}
+        .h3pa-button.danger{border-color:#9a5151;color:#ffb4b4}.h3pa-button.danger:hover{border-color:#ff7777}
         .h3pa-modal{position:fixed;z-index:100000;left:50%;top:50%;transform:translate(-50%,-50%);
           width:min(760px,calc(100vw - 32px));height:min(520px,calc(100vh - 48px));
           display:flex;flex-direction:column;gap:8px;padding:14px;
@@ -265,6 +271,7 @@ function mount(node) {
     const state = {
         catalog: {assets: [], reference_slots: []}, selected: "",
         filter: "all", media: null, bindingSlot: null,
+        dragging: "",
         previewMode: previewSelect.value === "full" ? "full" : "light",
     };
     const project = () => String(runNameInput.value || "").trim();
@@ -371,6 +378,52 @@ function mount(node) {
             setStatus(`Updated ${promptTag(result.asset)}.`);
         } catch (error) { setStatus(error.message, true); }
     }
+    async function reorderAssets(assetIds) {
+        try {
+            setStatus("Saving asset order…");
+            const result = await jsonRequest(
+                "/minimax_h3_context_loop/project-assets/reorder", {
+                    method: "POST", headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({project: project(), asset_ids: assetIds}),
+                });
+            persistCatalog(result.catalog); render();
+            setStatus("Asset order saved.");
+        } catch (error) { setStatus(error.message, true); }
+    }
+    function moveAsset(asset, offset) {
+        const assetIds = (state.catalog.assets ?? []).map((item) => item.id);
+        const index = assetIds.indexOf(asset.id);
+        const target = Math.max(0, Math.min(assetIds.length - 1, index + offset));
+        if (index < 0 || index === target) return;
+        assetIds.splice(index, 1);
+        assetIds.splice(target, 0, asset.id);
+        void reorderAssets(assetIds);
+    }
+    async function deleteAsset(asset) {
+        const confirmed = window.confirm(
+            `Delete ${promptTag(asset)} from this project?\n\n` +
+            "This removes the Carousel-owned input copy and its H3 backup. " +
+            "The original file you imported is not touched.",
+        );
+        if (!confirmed) return;
+        const previous = state.catalog.assets ?? [];
+        const previousIndex = previous.findIndex((item) => item.id === asset.id);
+        try {
+            setStatus(`Deleting ${promptTag(asset)}…`);
+            const result = await jsonRequest(
+                "/minimax_h3_context_loop/project-assets/delete", {
+                    method: "POST", headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({project: project(), asset_id: asset.id}),
+                });
+            persistCatalog(result.catalog);
+            const remaining = result.catalog.assets ?? [];
+            state.selected = remaining[
+                Math.min(Math.max(previousIndex, 0), remaining.length - 1)
+            ]?.id ?? "";
+            render();
+            setStatus(`Deleted ${promptTag(result.asset)}.`);
+        } catch (error) { setStatus(error.message, true); }
+    }
     function renderEditor(asset) {
         editor.replaceChildren();
         if (!asset) return;
@@ -407,7 +460,7 @@ function mount(node) {
         const audioMode = String(asset.options?.timeline_mode ?? "standalone");
         if (isAudio) {
             const audioUseLabel = el("label", "", "Audio use");
-            audioUseLabel.title = "Tagged clip sends the complete audio only when @tag is present. Tagged timeline slice follows the current scene position only when @tag is present and requires Chain Policy Source reference=on. Project timeline source only selects the available full track; Chain Policy controls its unprompted sampling and final-audio use.";
+            audioUseLabel.title = "Tagged clip sends the complete audio only when @tag is present. Tagged timeline slice follows the current scene position only when @tag is present and requires Chain Policy Source reference=on. Project timeline source selects the project's full audio track. No @tag is required: Chain Policy decides whether scenes use it as generation reference audio and whether it becomes the final soundtrack.";
             const audioUse = el("select");
             const currentUse = isSourceTrack
                 ? "source_track"
@@ -539,6 +592,20 @@ function mount(node) {
                 wrapper.append(input); editor.append(wrapper);
             }
         }
+        const actions = el("div", "h3pa-editor-actions");
+        const assetIndex = (state.catalog.assets ?? []).findIndex(
+            (item) => item.id === asset.id,
+        );
+        const earlier = button("← Earlier", () => moveAsset(asset, -1),
+            "Move this asset one position earlier in the project Carousel");
+        earlier.disabled = assetIndex <= 0;
+        const later = button("Later →", () => moveAsset(asset, 1),
+            "Move this asset one position later in the project Carousel");
+        later.disabled = assetIndex < 0 || assetIndex >= state.catalog.assets.length - 1;
+        const remove = button("Delete asset", () => deleteAsset(asset),
+            "Permanently remove this project-owned copy and its H3 backup");
+        remove.classList.add("danger");
+        actions.append(earlier, later, remove); editor.append(actions);
         editor.append(el("small", "h3pa-status", `input/${asset.input_path}`));
     }
     function renderCarousel() {
@@ -552,6 +619,10 @@ function mount(node) {
             card.classList.toggle("selected", asset.id === state.selected);
             card.classList.toggle("unresolved", Boolean(asset._unresolved));
             card.classList.toggle("stale", asset._unresolved && asset.available === false);
+            if (!asset._unresolved) {
+                card.draggable = true;
+                card.title = "Drag to reorder this project asset.";
+            }
             if (!asset._unresolved && ["image", "video"].includes(asset.kind)) {
                 const image = el("img"); image.loading = "lazy";
                 image.src = mediaUrl(project(), asset, "thumbnail"); card.append(image);
@@ -562,11 +633,54 @@ function mount(node) {
                 "span", "h3pa-badge",
                 `${displayRole(asset.role)}${asset._unresolved ? " · unassigned" : ""}`,
             ));
+            if (!asset._unresolved) card.append(el(
+                "span", "h3pa-drag-handle", "↔",
+            ));
             card.append(el(
                 "span", "",
                 `${asset.available === false || asset.enabled === false ? "○ " : ""}${promptTag(asset)}`,
             ));
             card.addEventListener("click", () => { state.selected = asset.id; render(); });
+            if (!asset._unresolved) {
+                card.addEventListener("dragstart", (event) => {
+                    state.dragging = asset.id;
+                    card.classList.add("dragging");
+                    event.dataTransfer.effectAllowed = "move";
+                    event.dataTransfer.setData("text/plain", asset.id);
+                });
+                card.addEventListener("dragover", (event) => {
+                    if (!state.dragging || state.dragging === asset.id) return;
+                    event.preventDefault();
+                    event.dataTransfer.dropEffect = "move";
+                    card.classList.add("drag-over");
+                });
+                card.addEventListener("dragleave", () => {
+                    card.classList.remove("drag-over");
+                });
+                card.addEventListener("drop", (event) => {
+                    event.preventDefault();
+                    card.classList.remove("drag-over");
+                    const dragged = state.dragging || event.dataTransfer.getData("text/plain");
+                    if (!dragged || dragged === asset.id) return;
+                    const assetIds = (state.catalog.assets ?? []).map((item) => item.id);
+                    const from = assetIds.indexOf(dragged);
+                    if (from < 0) return;
+                    assetIds.splice(from, 1);
+                    let target = assetIds.indexOf(asset.id);
+                    if (target < 0) return;
+                    const bounds = card.getBoundingClientRect();
+                    if (event.clientX >= bounds.left + bounds.width / 2) target += 1;
+                    assetIds.splice(target, 0, dragged);
+                    state.selected = dragged;
+                    void reorderAssets(assetIds);
+                });
+                card.addEventListener("dragend", () => {
+                    state.dragging = "";
+                    for (const item of carousel.children) {
+                        item.classList.remove("dragging", "drag-over");
+                    }
+                });
+            }
             carousel.append(card);
         }
     }
