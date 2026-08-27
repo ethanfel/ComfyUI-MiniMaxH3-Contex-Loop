@@ -138,8 +138,8 @@ function injectStyles() {
         .h3pa-button{padding:6px 9px;border:1px solid var(--border-color,#566174);border-radius:6px;
           background:var(--comfy-input-bg,#20242d);color:inherit;cursor:pointer}.h3pa-button:hover{border-color:#79a9ff}
         .h3pa-status{min-height:18px;color:#9eabc0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-        .h3pa-tabs,.h3pa-folders{display:flex;gap:5px;overflow-x:auto;flex:0 0 auto}.h3pa-tab.active,.h3pa-folder.active{background:#284d7e;border-color:#70a9ff}
-        .h3pa-folders{padding-bottom:1px}.h3pa-folder{white-space:nowrap}.h3pa-folder-dot{display:inline-block;width:8px;height:8px;border-radius:50%;margin-right:5px;background:#7793bd}
+        .h3pa-tabs{display:flex;gap:5px;overflow-x:auto;align-items:center;flex:0 0 auto}.h3pa-tab.active{background:#284d7e;border-color:#70a9ff}
+        .h3pa-folder-tools{display:flex;gap:5px;align-items:center;margin-left:auto;padding-left:7px;border-left:1px solid #465064;flex:0 0 auto}.h3pa-folder-tools select{max-width:190px;min-width:110px;padding:6px 8px;border:1px solid var(--border-color,#566174);border-radius:6px;background:var(--comfy-input-bg,#151820);color:inherit}
         .h3pa-stage{flex:1 1 auto;min-height:230px;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;overflow:hidden}
         .h3pa-preview{position:relative;display:grid;place-items:center;min-width:0;min-height:220px;
           overflow:hidden;border:1px solid var(--border-color,#566174);border-radius:9px;background:#090b10}
@@ -149,10 +149,10 @@ function injectStyles() {
         .h3pa-editor{display:flex;flex-direction:column;gap:8px;padding:10px;overflow:auto;border:1px solid
           var(--border-color,#566174);border-radius:9px;background:var(--comfy-input-bg,#151820)}
         .h3pa-editor label{display:flex;flex-direction:column;gap:3px;color:#aeb7c8}.h3pa-editor textarea{min-height:62px;resize:vertical}
-        .h3pa-editor label.h3pa-toggle{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;align-items:start;
+        .h3pa-editor label.h3pa-toggle,.h3pa-crop-controls label.h3pa-toggle{display:grid;grid-template-columns:18px minmax(0,1fr);gap:8px;align-items:start;
           padding:8px;border:1px solid color-mix(in srgb,var(--border-color,#566174) 72%,transparent);border-radius:7px;
           background:color-mix(in srgb,var(--comfy-input-bg,#151820) 78%,#263247);cursor:pointer}
-        .h3pa-editor .h3pa-toggle input{width:16px;height:16px;min-width:16px;margin:2px 0 0;padding:0;cursor:pointer}
+        .h3pa-editor .h3pa-toggle input,.h3pa-crop-controls .h3pa-toggle input{width:16px;height:16px;min-width:16px;margin:2px 0 0;padding:0;cursor:pointer}
         .h3pa-toggle-copy{display:flex;flex-direction:column;gap:2px;min-width:0}.h3pa-toggle-copy strong{color:inherit}
         .h3pa-toggle-copy small{color:#8f9bb0;font-size:11px;line-height:1.3}
         .h3pa-carousel{display:flex;gap:8px;overflow-x:auto;overflow-y:hidden;padding:4px 1px 7px;min-height:126px}
@@ -167,11 +167,14 @@ function injectStyles() {
         .h3pa-badge{position:absolute;top:5px;left:5px;padding:2px 5px!important;border-radius:4px;background:#111c;color:#fff;font-size:10px}
         .h3pa-drag-handle{position:absolute;top:4px;right:4px;width:24px;padding:2px 4px!important;border-radius:4px;
           background:#111c;color:#dce8ff;text-align:center;font-size:14px;line-height:16px}
-        .h3pa-editor-actions{display:flex;flex-wrap:wrap;gap:5px;
-          align-items:center;margin-top:auto;padding-top:8px;border-top:1px solid color-mix(in srgb,var(--border-color,#566174) 55%,transparent)}
-        .h3pa-editor-actions .h3pa-button{height:28px;padding:3px 7px}.h3pa-action-label{color:#8f9bb0;font-size:11px}
+        .h3pa-editor-actions{display:flex;flex-direction:column;gap:6px;margin-top:auto;padding-top:8px;
+          border-top:1px solid color-mix(in srgb,var(--border-color,#566174) 55%,transparent)}
+        .h3pa-editor-actions .h3pa-button{height:30px;padding:3px 7px;min-width:0;white-space:nowrap}
+        .h3pa-action-label{color:#8f9bb0;font-size:11px}.h3pa-action-primary{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:6px}
+        .h3pa-action-primary>.h3pa-button:only-child{grid-column:1/-1}
+        .h3pa-action-manage{display:grid;grid-template-columns:34px 34px minmax(0,1fr);gap:6px}
         .h3pa-editor-actions .h3pa-button:disabled{opacity:.35;cursor:default}
-        .h3pa-button.danger{margin-left:auto;border-color:#9a5151;color:#ffb4b4}.h3pa-button.danger:hover{border-color:#ff7777}
+        .h3pa-button.danger{border-color:#9a5151;color:#ffb4b4}.h3pa-button.danger:hover{border-color:#ff7777}
         .h3pa-modal{position:fixed;z-index:100000;left:50%;top:50%;transform:translate(-50%,-50%);
           width:min(760px,calc(100vw - 32px));height:min(520px,calc(100vh - 48px));
           display:flex;flex-direction:column;gap:8px;padding:14px;
@@ -181,7 +184,7 @@ function injectStyles() {
         .h3pa-crop-modal{width:min(1180px,calc(100vw - 28px));height:min(780px,calc(100vh - 32px))}
         .h3pa-crop-layout{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:12px;min-height:0;flex:1}
         .h3pa-crop-canvas-wrap{min-width:0;min-height:0;display:grid;place-items:center;overflow:hidden;border:1px solid #48556a;border-radius:8px;background:#080a0f}
-        .h3pa-crop-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair;outline:none}
+        .h3pa-crop-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair;outline:none;user-select:none}
         .h3pa-crop-controls{display:flex;flex-direction:column;gap:9px;min-height:0;overflow:auto;padding:10px;border:1px solid #48556a;border-radius:8px;background:#11151d}
         .h3pa-crop-controls label{display:flex;flex-direction:column;gap:3px;color:#aeb7c8}.h3pa-crop-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
         .h3pa-crop-controls input,.h3pa-crop-controls select{width:100%;min-width:0;padding:6px 7px;border:1px solid #566174;border-radius:6px;background:#151820;color:inherit}
@@ -291,13 +294,12 @@ function mount(node) {
     );
     const status = el("div", "h3pa-status", "Loading project assets…");
     const tabs = el("div", "h3pa-tabs");
-    const folders = el("div", "h3pa-folders");
     const stage = el("div", "h3pa-stage");
     const preview = el("div", "h3pa-preview");
     const editor = el("div", "h3pa-editor");
     stage.append(preview, editor);
     const carousel = el("div", "h3pa-carousel");
-    root.append(top, status, tabs, folders, stage, carousel);
+    root.append(top, status, tabs, stage, carousel);
     const dom = node.addDOMWidget("project_asset_carousel", "div", root, {
         serialize: false, hideOnZoom: false, getMinHeight: () => 560,
     });
@@ -387,8 +389,9 @@ function mount(node) {
         } catch (error) { setStatus(error.message, true); return null; }
     }
     function renderFolders() {
-        folders.replaceChildren();
         const assetList = state.catalog.assets ?? [];
+        const folderList = state.catalog.folders ?? [];
+        const tools = el("div", "h3pa-folder-tools");
         const addFolder = button("+ Folder", async () => {
             const name = window.prompt("New asset folder name");
             if (!name?.trim()) return;
@@ -397,33 +400,40 @@ function mount(node) {
             );
             if (result?.folder?.id) { state.folder = result.folder.id; render(); }
         }, "Create a presentation-only folder. Folders never affect prompts, fingerprints, or generation.");
-        addFolder.classList.add("h3pa-folder"); folders.append(addFolder);
-        const choices = [
-            {id: "all", name: "All", count: allItems().length},
-            {id: "unfiled", name: "Unfiled", count: allItems().filter(
-                (asset) => asset._unresolved || !String(asset.folder_id ?? ""),
-            ).length},
-            ...(state.catalog.folders ?? []).map((folder) => ({
+        tools.append(addFolder);
+        if (!folderList.length) {
+            state.folder = "all";
+            tabs.append(tools);
+            return;
+        }
+        const noFolderCount = allItems().filter(
+            (asset) => asset._unresolved || !String(asset.folder_id ?? ""),
+        ).length;
+        const folderSelect = el("select");
+        folderSelect.title = "Presentation folders only organize this Carousel; they never affect prompts or generation. No folder means an asset has not been placed in one.";
+        for (const folder of [
+            {id: "all", name: "All folders", count: allItems().length},
+            {id: "unfiled", name: "No folder", count: noFolderCount},
+            ...folderList.map((folder) => ({
                 ...folder,
                 count: assetList.filter((asset) => asset.folder_id === folder.id).length,
             })),
-        ];
-        for (const folder of choices) {
-            const item = button(`${folder.name} ${folder.count}`, () => {
-                state.folder = folder.id; render();
-            }, folder.id === "all" || folder.id === "unfiled"
-                ? "Filter the Carousel by folder"
-                : "Presentation-only asset folder; generation is unchanged");
-            item.classList.add("h3pa-folder");
-            item.classList.toggle("active", state.folder === folder.id);
-            if (folder.color) item.style.borderColor = folder.color;
-            folders.append(item);
+        ]) {
+            const option = el("option", "", `${folder.name} (${folder.count})`);
+            option.value = folder.id;
+            folderSelect.append(option);
         }
-        const active = (state.catalog.folders ?? []).find(
+        folderSelect.value = state.folder;
+        folderSelect.addEventListener("change", () => {
+            state.folder = folderSelect.value;
+            render();
+        });
+        tools.append(folderSelect);
+        const active = folderList.find(
             (folder) => folder.id === state.folder,
         );
         if (active) {
-            folders.append(
+            tools.append(
                 button("Rename", async () => {
                     const name = window.prompt("Rename asset folder", active.name);
                     if (!name?.trim() || name.trim() === active.name) return;
@@ -434,7 +444,7 @@ function mount(node) {
                 }),
                 button("Remove folder", async () => {
                     if (!window.confirm(
-                        `Remove folder ${active.name}? Its assets will move to Unfiled; no media is deleted.`,
+                        `Remove folder ${active.name}? Its assets will move to No folder; no media is deleted.`,
                     )) return;
                     const result = await folderRequest({
                         action: "delete", folder_id: active.id,
@@ -443,6 +453,7 @@ function mount(node) {
                 }),
             );
         }
+        tabs.append(tools);
     }
     function renderPreview(asset) {
         stopMedia();
@@ -560,7 +571,7 @@ function mount(node) {
         const layout = el("div", "h3pa-crop-layout");
         const canvasWrap = el("div", "h3pa-crop-canvas-wrap");
         const canvas = el("canvas", "h3pa-crop-canvas"); canvas.tabIndex = 0;
-        canvas.setAttribute("aria-label", "Crop selector; drag to move, drag the lower-right handle to resize, arrow keys nudge");
+        canvas.setAttribute("aria-label", "Crop selector; drag outside the crop to draw, drag inside to move, drag any corner to resize, arrow keys nudge");
         canvasWrap.append(canvas);
         const controls = el("div", "h3pa-crop-controls");
         layout.append(canvasWrap, controls); modal.append(heading, layout); document.body.append(modal);
@@ -604,7 +615,7 @@ function mount(node) {
         tagLabel.append(variantTag);
         const cropStatus = el("div", "h3pa-crop-note", "Loading full source image…");
         controls.append(
-            el("div", "h3pa-crop-note", "Coordinates are oriented source-image pixels. Drag the selection to place it; drag its lower-right handle to resize; arrow keys nudge by 1 px (Shift: 10 px)."),
+            el("div", "h3pa-crop-note", "Coordinates are oriented source-image pixels. Drag anywhere to draw a crop; drag inside it to move; drag any corner to resize. Arrow keys nudge by 1 px (Shift: 10 px)."),
             cropGrid, targetGrid, ratioLabel, resampleLabel, tagLabel, cropStatus,
         );
         const actions = el("div", "h3pa-crop-actions");
@@ -614,6 +625,20 @@ function mount(node) {
             cropInputs.targetHeight.value = String(sourceHeight);
             syncInputs(); draw();
         });
+        const startCrop = button("Start centered crop", () => {
+            const ratio = outputRatio();
+            let width = Math.max(1, Math.round(sourceWidth * 0.8));
+            let height = Math.max(1, Math.round(width / ratio));
+            if (height > sourceHeight * 0.8) {
+                height = Math.max(1, Math.round(sourceHeight * 0.8));
+                width = Math.max(1, Math.round(height * ratio));
+            }
+            crop.width = Math.min(sourceWidth, width);
+            crop.height = Math.min(sourceHeight, height);
+            crop.x = Math.round((sourceWidth - crop.width) / 2);
+            crop.y = Math.round((sourceHeight - crop.height) / 2);
+            syncInputs(); draw();
+        }, "Create a visible centered crop using the selected output ratio");
         const save = button("Save crop / resize", async () => {
             const payload = operationPayload("resample"); if (!payload) return;
             try {
@@ -663,7 +688,7 @@ function mount(node) {
         }
         modelButton.disabled = !modelConnected();
         if (!modelConnected()) modelButton.title += " (No UPSCALE_MODEL is connected.)";
-        actions.append(reset, save, modelButton); controls.append(actions);
+        actions.append(startCrop, reset, save, modelButton); controls.append(actions);
 
         function operationPayload(mode) {
             applyNumericInputs();
@@ -680,14 +705,31 @@ function mount(node) {
                 tag: variantTag.value, folder_id: asset.folder_id ?? "",
             };
         }
-        function clampCrop() {
-            crop.width = Math.max(1, Math.min(sourceWidth, Math.round(crop.width)));
-            crop.height = Math.max(1, Math.min(sourceHeight, Math.round(crop.height)));
-            crop.x = Math.max(0, Math.min(sourceWidth - crop.width, Math.round(crop.x)));
-            crop.y = Math.max(0, Math.min(sourceHeight - crop.height, Math.round(crop.y)));
+        function outputRatio() {
+            return Math.max(1, Number(cropInputs.targetWidth.value) || 1)
+                / Math.max(1, Number(cropInputs.targetHeight.value) || 1);
         }
-        function syncInputs() {
-            clampCrop();
+        function isFullCrop() {
+            return crop.x === 0 && crop.y === 0
+                && crop.width === sourceWidth && crop.height === sourceHeight;
+        }
+        function clampCrop(preference = "size") {
+            if (preference === "position") {
+                crop.width = Math.max(1, Math.min(sourceWidth, Math.round(crop.width)));
+                crop.height = Math.max(1, Math.min(sourceHeight, Math.round(crop.height)));
+                crop.x = Math.max(0, Math.min(sourceWidth - crop.width, Math.round(crop.x)));
+                crop.y = Math.max(0, Math.min(sourceHeight - crop.height, Math.round(crop.y)));
+                return;
+            }
+            // Numeric X/Y are authoritative: when a full-width crop is moved,
+            // shorten it to the remaining source area instead of resetting X/Y.
+            crop.x = Math.max(0, Math.min(sourceWidth - 1, Math.round(crop.x)));
+            crop.y = Math.max(0, Math.min(sourceHeight - 1, Math.round(crop.y)));
+            crop.width = Math.max(1, Math.min(sourceWidth - crop.x, Math.round(crop.width)));
+            crop.height = Math.max(1, Math.min(sourceHeight - crop.y, Math.round(crop.height)));
+        }
+        function syncInputs(preference = "size") {
+            clampCrop(preference);
             for (const key of ["x", "y", "width", "height"]) cropInputs[key].value = String(crop[key]);
             cropStatus.textContent = `${sourceWidth}×${sourceHeight} source → ${cropInputs.targetWidth.value}×${cropInputs.targetHeight.value} variant`;
         }
@@ -697,13 +739,13 @@ function mount(node) {
                 if (Number.isFinite(value)) crop[key] = value;
             }
             if (ratioLock.checked && ["width", "height", "targetWidth", "targetHeight"].includes(changed)) {
-                const targetWidth = Math.max(1, Number(cropInputs.targetWidth.value) || 1);
-                const targetHeight = Math.max(1, Number(cropInputs.targetHeight.value) || 1);
-                const ratio = targetWidth / targetHeight;
+                const ratio = outputRatio();
                 if (changed === "height") crop.width = Math.round(crop.height * ratio);
                 else crop.height = Math.round(crop.width / ratio);
             }
-            syncInputs(); draw();
+            syncInputs(["x", "y", "width", "height"].includes(changed)
+                ? "size" : "position");
+            draw();
         }
         for (const [name, input] of Object.entries(cropInputs)) {
             input.addEventListener("change", () => applyNumericInputs(name));
@@ -717,6 +759,61 @@ function mount(node) {
         }
         function sourcePoint(point) {
             return {x: (point.x - drawX) / drawScale, y: (point.y - drawY) / drawScale};
+        }
+        function boundedSourcePoint(point) {
+            return {
+                x: Math.max(0, Math.min(sourceWidth, point.x)),
+                y: Math.max(0, Math.min(sourceHeight, point.y)),
+            };
+        }
+        function cornerPoints() {
+            return {
+                nw: {x: crop.x, y: crop.y},
+                ne: {x: crop.x + crop.width, y: crop.y},
+                se: {x: crop.x + crop.width, y: crop.y + crop.height},
+                sw: {x: crop.x, y: crop.y + crop.height},
+            };
+        }
+        function hitCorner(point) {
+            const threshold = Math.max(14 / drawScale, 7);
+            for (const [name, corner] of Object.entries(cornerPoints())) {
+                if (Math.hypot(point.x - corner.x, point.y - corner.y) <= threshold) return name;
+            }
+            return "";
+        }
+        function oppositeCorner(name) {
+            return ({nw: "se", ne: "sw", se: "nw", sw: "ne"})[name];
+        }
+        function rectangleFromPoints(anchor, moving) {
+            let width = Math.max(1, Math.abs(moving.x - anchor.x));
+            let height = Math.max(1, Math.abs(moving.y - anchor.y));
+            const horizontal = moving.x >= anchor.x ? 1 : -1;
+            const vertical = moving.y >= anchor.y ? 1 : -1;
+            if (ratioLock.checked) {
+                const ratio = outputRatio();
+                if (width / height > ratio) height = width / ratio;
+                else width = height * ratio;
+                const maximumWidth = horizontal > 0 ? sourceWidth - anchor.x : anchor.x;
+                const maximumHeight = vertical > 0 ? sourceHeight - anchor.y : anchor.y;
+                const fit = Math.min(1, maximumWidth / width, maximumHeight / height);
+                width *= fit; height *= fit;
+            }
+            return {
+                x: horizontal > 0 ? anchor.x : anchor.x - width,
+                y: vertical > 0 ? anchor.y : anchor.y - height,
+                width, height,
+            };
+        }
+        function insideCrop(point) {
+            return point.x >= crop.x && point.x <= crop.x + crop.width
+                && point.y >= crop.y && point.y <= crop.y + crop.height;
+        }
+        function updateCanvasCursor(point) {
+            const corner = hitCorner(point);
+            if (corner === "nw" || corner === "se") canvas.style.cursor = "nwse-resize";
+            else if (corner === "ne" || corner === "sw") canvas.style.cursor = "nesw-resize";
+            else if (!isFullCrop() && insideCrop(point)) canvas.style.cursor = "move";
+            else canvas.style.cursor = "crosshair";
         }
         function draw() {
             const bounds = canvasWrap.getBoundingClientRect();
@@ -737,40 +834,60 @@ function mount(node) {
             context.rect(drawX, drawY, sourceWidth * drawScale, sourceHeight * drawScale);
             context.rect(x, y, w, h); context.fill("evenodd");
             context.strokeStyle = "#72a9ff"; context.lineWidth = Math.max(2, density * 1.5);
-            context.strokeRect(x, y, w, h); context.fillStyle = "#72a9ff";
-            const handle = 12 * density; context.fillRect(x + w - handle, y + h - handle, handle, handle);
+            context.strokeRect(x, y, w, h);
+            context.strokeStyle = "#dbe9ff99"; context.lineWidth = Math.max(1, density);
+            for (const fraction of [1 / 3, 2 / 3]) {
+                context.beginPath(); context.moveTo(x + w * fraction, y); context.lineTo(x + w * fraction, y + h); context.stroke();
+                context.beginPath(); context.moveTo(x, y + h * fraction); context.lineTo(x + w, y + h * fraction); context.stroke();
+            }
+            context.fillStyle = "#72a9ff";
+            const handle = 12 * density;
+            for (const corner of [
+                [x, y], [x + w, y], [x + w, y + h], [x, y + h],
+            ]) {
+                context.fillRect(corner[0] - handle / 2, corner[1] - handle / 2, handle, handle);
+            }
             context.restore();
         }
         canvas.addEventListener("pointerdown", (event) => {
             if (!image.naturalWidth) return;
-            const point = sourcePoint(canvasPoint(event));
-            const nearHandle = Math.hypot(
-                point.x - (crop.x + crop.width), point.y - (crop.y + crop.height),
-            ) <= Math.max(12 / drawScale, 8);
-            const inside = point.x >= crop.x && point.x <= crop.x + crop.width && point.y >= crop.y && point.y <= crop.y + crop.height;
-            if (!inside && !nearHandle) {
-                crop.x = point.x - crop.width / 2; crop.y = point.y - crop.height / 2;
-                clampCrop(); syncInputs(); draw();
+            const point = boundedSourcePoint(sourcePoint(canvasPoint(event)));
+            const corner = hitCorner(point);
+            const previous = {...crop};
+            if (corner) {
+                const corners = cornerPoints();
+                drag = {
+                    mode: "resize", anchor: corners[oppositeCorner(corner)],
+                    previous,
+                };
+            } else if (!isFullCrop() && insideCrop(point)) {
+                drag = {mode: "move", point, start: {...crop}, previous};
+            } else {
+                crop.x = point.x; crop.y = point.y; crop.width = 1; crop.height = 1;
+                drag = {mode: "create", anchor: point, previous};
+                syncInputs("position"); draw();
             }
-            drag = {mode: nearHandle ? "resize" : "move", point, start: {...crop}};
             canvas.setPointerCapture(event.pointerId); canvas.focus(); event.preventDefault();
         });
         canvas.addEventListener("pointermove", (event) => {
-            if (!drag) return;
-            const point = sourcePoint(canvasPoint(event));
-            const dx = point.x - drag.point.x; const dy = point.y - drag.point.y;
+            const point = boundedSourcePoint(sourcePoint(canvasPoint(event)));
+            if (!drag) { updateCanvasCursor(point); return; }
             if (drag.mode === "move") {
+                const dx = point.x - drag.point.x;
+                const dy = point.y - drag.point.y;
                 crop.x = drag.start.x + dx; crop.y = drag.start.y + dy;
             } else {
-                crop.width = drag.start.width + dx;
-                if (ratioLock.checked) {
-                    const ratio = Math.max(1, Number(cropInputs.targetWidth.value)) / Math.max(1, Number(cropInputs.targetHeight.value));
-                    crop.height = crop.width / ratio;
-                } else crop.height = drag.start.height + dy;
+                Object.assign(crop, rectangleFromPoints(drag.anchor, point));
             }
-            clampCrop(); syncInputs(); draw(); event.preventDefault();
+            clampCrop("position"); syncInputs("position"); draw(); event.preventDefault();
         });
-        const endDrag = () => { drag = null; };
+        const endDrag = () => {
+            if (drag && drag.mode === "create" && crop.width <= 2 && crop.height <= 2) {
+                Object.assign(crop, drag.previous);
+                syncInputs("position"); draw();
+            }
+            drag = null;
+        };
         canvas.addEventListener("pointerup", endDrag); canvas.addEventListener("pointercancel", endDrag);
         canvas.addEventListener("keydown", (event) => {
             const step = event.shiftKey ? 10 : 1;
@@ -779,7 +896,7 @@ function mount(node) {
             else if (event.key === "ArrowUp") crop.y -= step;
             else if (event.key === "ArrowDown") crop.y += step;
             else return;
-            clampCrop(); syncInputs(); draw(); event.preventDefault();
+            clampCrop("position"); syncInputs("position"); draw(); event.preventDefault();
         });
         image.addEventListener("load", () => {
             sourceWidth = image.naturalWidth; sourceHeight = image.naturalHeight;
@@ -879,8 +996,8 @@ function mount(node) {
         const folderLabel = el("label", "", "Folder");
         folderLabel.title = "Presentation only. Folder membership never changes prompts, references, fingerprints, or generation.";
         const folderSelect = el("select");
-        const unfiled = el("option", "", "Unfiled"); unfiled.value = "";
-        folderSelect.append(unfiled);
+        const noFolder = el("option", "", "No folder"); noFolder.value = "";
+        folderSelect.append(noFolder);
         for (const folder of state.catalog.folders ?? []) {
             const option = el("option", "", folder.name); option.value = folder.id;
             option.selected = folder.id === String(asset.folder_id ?? "");
@@ -978,6 +1095,8 @@ function mount(node) {
         }
         editor.append(el("small", "h3pa-status", `input/${asset.input_path}`));
         const actions = el("div", "h3pa-editor-actions");
+        const primaryActions = el("div", "h3pa-action-primary");
+        const manageActions = el("div", "h3pa-action-manage");
         const assetIndex = (state.catalog.assets ?? []).findIndex(
             (item) => item.id === asset.id,
         );
@@ -993,15 +1112,18 @@ function mount(node) {
             "Permanently remove this project-owned copy and its H3 backup");
         remove.setAttribute("aria-label", "Delete asset");
         remove.classList.add("danger");
-        actions.append(
-            el("span", "h3pa-action-label", "Asset"),
+        primaryActions.append(
             ...(asset.kind === "image" ? [button(
                 "Crop / resize", () => openImageEditor(asset),
                 "Create a nondestructive image variant from exact source pixels",
             )] : []),
             button("Duplicate", () => duplicateAsset(asset),
                 "Create another catalog card that initially shares the same stored media bytes"),
-            earlier, later, remove,
+        );
+        manageActions.append(earlier, later, remove);
+        actions.append(
+            el("span", "h3pa-action-label", "Asset actions"),
+            primaryActions, manageActions,
         );
         editor.append(actions);
     }
