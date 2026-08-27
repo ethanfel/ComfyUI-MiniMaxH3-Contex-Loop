@@ -91,6 +91,18 @@ copying media from the carrier. Bind each card explicitly from ComfyUI input,
 an upload, a backup, or a server path. Unassigned cards never consume H3
 reference slots and never enter the generation fingerprint.
 
+Images can be edited nondestructively from the Carousel. **Crop / resize**
+opens a full-source pixel editor with draggable placement, exact crop and output
+dimensions, aspect locking, and Lanczos/bicubic/bilinear/nearest resampling. It
+always creates a new PNG variant and records its parent and transform; the
+source remains unchanged. Connect ComfyUI core's **Load Upscale Model** output
+to the optional `upscale_model` input to enable **Model upscale**. That button
+queues only the Carousel and its loader dependency, crops before tiled model
+upscaling, and never launches the downstream H3 chain. The input is lazy and is
+not loaded during ordinary generation. Asset cards may also be duplicated
+without copying media bytes and organized into presentation-only folders;
+folder names, membership, and order do not affect prompts or fingerprints.
+
 ## Choose a workflow
 
 | I want to… | Start here |
