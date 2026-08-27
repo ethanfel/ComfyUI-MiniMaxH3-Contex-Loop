@@ -1813,7 +1813,9 @@ function mount(node) {
         const popover = ensureTokenPopover();
         popover.replaceChildren(element("div", "h3sp-popover-title", record.token));
         const mediaKind = record.kind === "picture" ? "image" : record.kind;
-        const media = findMediaPreview(record.source, mediaKind);
+        const media = record.previewUrl
+            ? api.apiURL(record.previewUrl)
+            : findMediaPreview(record.source, mediaKind);
         if (media.url) {
             const mediaElement = element(
                 mediaKind === "image" ? "img" : mediaKind === "video" ? "video" : "audio",
@@ -2001,7 +2003,10 @@ function mount(node) {
             return token;
         }
         const mediaKind = kind === "picture" ? "image" : kind;
-        const media = part.record?.source ? findMediaPreview(part.record.source, mediaKind) : null;
+        const media = part.record?.previewUrl
+            ? api.apiURL(part.record.previewUrl)
+            : part.record?.source
+                ? findMediaPreview(part.record.source, mediaKind) : null;
         if (kind === "picture" && media?.url) {
             const thumbnail = element("img", "h3sp-token-thumb");
             thumbnail.src = media.url;
@@ -2211,7 +2216,9 @@ function mount(node) {
         preview.replaceChildren();
         preview.classList.add("h3sp-visible");
         const mediaKind = record.kind === "picture" ? "image" : record.kind;
-        const media = findMediaPreview(record.source, mediaKind);
+        const media = record.previewUrl
+            ? api.apiURL(record.previewUrl)
+            : findMediaPreview(record.source, mediaKind);
         if (media.url) {
             const mediaElement = element(mediaKind === "image" ? "img"
                 : mediaKind === "video" ? "video" : "audio",

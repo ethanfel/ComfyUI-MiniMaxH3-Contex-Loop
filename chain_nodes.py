@@ -53,9 +53,9 @@ except ImportError:  # NumPy ships with ComfyUI and PyAV.
     np = None
 
 try:
-    from PIL import Image, PngImagePlugin
+    from PIL import Image, ImageOps, PngImagePlugin
 except ImportError:  # Pillow ships with ComfyUI.
-    Image = PngImagePlugin = None
+    Image = ImageOps = PngImagePlugin = None
 
 try:
     from safetensors.torch import load_file as _st_load, save_file as _st_save
@@ -89,6 +89,10 @@ from .prompt_history import PromptHistoryStore
 from .prompt_optimizer import optimize_prompt_payload
 from .run_manager import RunArchiveManager, archive_policy_inputs
 from .asset_store import MAX_DIRECT_ASSET_BINDINGS, RunAssetStore
+from .project_assets import (
+    PROJECT_ASSET_FORMAT,
+    ProjectAssetStore,
+)
 from .av_timing import (
     AUDIO_TRIM_FRAMES_KEY,
     AUDIO_WITH_OVERLAP_FRAMES_KEY,
@@ -212,6 +216,7 @@ SEMANTIC_ANCHOR_DRAFT_TYPE = "H3_SEMANTIC_ANCHOR_DRAFT"
 SEMANTIC_PRESENTATION_TYPE = "H3_SEMANTIC_PRESENTATION"
 LAZY_MOTION_SOURCE_TYPE = "H3_LAZY_MOTION_SOURCE"
 SOURCE_TIMELINE_TYPE = "H3_SOURCE_TIMELINE"
+PROJECT_ASSETS_TYPE = "H3_PROJECT_ASSETS"
 AUDIO_POLICY_TYPE = "H3_AUDIO_POLICY"
 TRANSITION_POLICY_TYPE = "H3_TRANSITION_POLICY"
 CHAIN_POLICY_TYPE = "H3_CHAIN_POLICY"
@@ -1130,6 +1135,119 @@ def _is_lazy_motion_descriptor(value: Any) -> bool:
     return (version == LAZY_MOTION_SOURCE_VERSION
             and value.get("kind") == "lazy_motion_path"
             and isinstance(value.get("path"), str))
+
+
+PROJECT_ASSET_DESCRIPTOR_VERSION = 1
+
+
+def _project_asset_descriptor(entry: dict[str, Any], path: str) -> dict[str, Any]:
+    """Small runtime handle; media bytes never enter workflow serialization."""
+    return {
+        "version": PROJECT_ASSET_DESCRIPTOR_VERSION,
+        "kind": "project_asset_path",
+        "path": os.path.realpath(path),
+        "asset_id": str(entry.get("id") or ""),
+        "media_kind": str(entry.get("kind") or ""),
+        "content_hash": str(entry.get("sha256") or ""),
+    }
+
+
+def _is_project_asset_descriptor(value: Any, media_kind: str = "") -> bool:
+    if not isinstance(value, dict):
+        return False
+    try:
+        version = int(value.get("version", -1))
+    except (TypeError, ValueError):
+        return False
+    return (version == PROJECT_ASSET_DESCRIPTOR_VERSION
+            and value.get("kind") == "project_asset_path"
+            and isinstance(value.get("path"), str)
+            and (not media_kind or value.get("media_kind") == media_kind))
+
+
+def _project_asset_media_path(value: Any, media_kind: str) -> str:
+    if not _is_project_asset_descriptor(value, media_kind):
+        raise ValueError("Invalid H3 project %s asset descriptor." % media_kind)
+    return _resolved_media_path(
+        value["path"], "H3 project %s asset" % media_kind)
+
+
+def _project_asset_image(value: Any) -> Any:
+    if not _is_project_asset_descriptor(value, "image"):
+        return value
+    if Image is None or ImageOps is None or np is None or torch is None:
+        raise RuntimeError(
+            "H3 project picture references require Pillow, NumPy, and torch.")
+    path = _project_asset_media_path(value, "image")
+    with Image.open(path) as source:
+        image = ImageOps.exif_transpose(source).convert("RGB")
+        array = np.asarray(image, dtype=np.float32) / 255.0
+    return torch.from_numpy(array.copy()).unsqueeze(0)
+
+
+def _project_asset_audio(value: Any) -> Any:
+    if not _is_project_asset_descriptor(value, "audio"):
+        return value
+    path = _project_asset_media_path(value, "audio")
+    timeline = _make_source_timeline(
+        audio_path=path, embedded_audio="ignore",
+        source_route="H3 project asset")
+    return _source_timeline_source_audio(timeline)
+
+
+def _project_asset_video_descriptor(
+        entry: dict[str, Any], path: str, *, embedded_audio: bool,
+        short_edge: str) -> dict[str, Any]:
+    metadata = entry.get("metadata")
+    metadata = metadata if isinstance(metadata, dict) else {}
+    source_fps = float(metadata.get("fps") or FPS)
+    numerator = int(metadata.get("source_rate_numerator") or round(source_fps))
+    denominator = int(metadata.get("source_rate_denominator") or 1)
+    duration = float(metadata.get("duration_seconds") or 0.0)
+    descriptor = {
+        "version": LAZY_MOTION_SOURCE_VERSION,
+        "kind": "lazy_motion_path",
+        "path": os.path.realpath(path),
+        "fps": FPS,
+        "source_fps": source_fps,
+        "source_rate_numerator": numerator,
+        "source_rate_denominator": denominator,
+        "width": int(metadata.get("width") or 0),
+        "height": int(metadata.get("height") or 0),
+        "frame_count": int(metadata.get("frame_count") or (
+            math.ceil(duration * FPS - 1e-9) if duration > 0 else 0)),
+        "source_frame_count": int(metadata.get("frame_count") or 0),
+        "duration_seconds": duration,
+        "video_start_seconds": float(metadata.get("video_start_seconds") or 0),
+        "skip_first_frames": 0,
+        "skip_seconds": 0.0,
+        "motion_short_edge": str(short_edge),
+        "file_sha256": str(entry.get("sha256") or ""),
+        "source_route": "H3 project asset",
+        "audio": None,
+    }
+    if (descriptor["width"] < 1 or descriptor["height"] < 1
+            or descriptor["source_fps"] <= 0):
+        descriptor = _probe_lazy_motion_path(path, bool(embedded_audio))
+        descriptor["motion_short_edge"] = str(short_edge)
+        descriptor["file_sha256"] = str(entry.get("sha256") or "")
+        descriptor["source_route"] = "H3 project asset"
+        return descriptor
+    if embedded_audio:
+        sample_rate = int(metadata.get("audio_sample_rate") or 0)
+        channels = int(metadata.get("audio_channels") or 0)
+        if sample_rate < 1 or channels not in (1, 2):
+            descriptor = _probe_lazy_motion_path(path, True)
+            descriptor["motion_short_edge"] = str(short_edge)
+            descriptor["file_sha256"] = str(entry.get("sha256") or "")
+            descriptor["source_route"] = "H3 project asset"
+            return descriptor
+        descriptor["audio"] = {
+            "sample_rate": sample_rate,
+            "channels": channels,
+            "start_seconds": float(metadata.get("audio_start_seconds") or 0),
+        }
+    return descriptor
 
 
 def _parse_reference_selector(
@@ -2905,7 +3023,7 @@ def _tagged_audio_reference_value(
         length: int) -> tuple[Any, str]:
     """Resolve a tagged standalone clip or an exact Plan-timeline slice."""
     timeline_mode = str(entry.get("timeline_mode") or "standalone")
-    audio = entry["value"]
+    audio = _project_asset_audio(entry["value"])
     if timeline_mode == "standalone":
         return audio, ""
     if timeline_mode != "source_timeline":
@@ -10316,6 +10434,20 @@ class MiniMaxH3TaggedReferenceToVideo:
         compiled, summary, bindings = _compile_tagged_reference_prompt(
             references, clip_index, clip_count, prompt, reference_policy,
             semantic_anchor_mode, anchor_bundle)
+        # Project assets remain path-backed until their tag is active in this
+        # scene.  Materialize only the selected pictures/anchors here; videos
+        # and audio retain their existing scene-window lazy decoders.
+        bindings["pictures"] = [
+            {**entry, "value": _project_asset_image(entry["value"])}
+            for entry in bindings["pictures"]
+        ]
+        bindings["semantic_anchors"] = [{
+            **anchor,
+            "entry": {
+                **anchor["entry"],
+                "value": _project_asset_image(anchor["entry"]["value"]),
+            },
+        } for anchor in (bindings.get("semantic_anchors") or [])]
         graph = GraphBuilder()
         ref2va = graph.node("MiniMaxH3ReferenceToVideo", "TaggedRef2VA")
         for key, value in (
@@ -11206,6 +11338,14 @@ class MiniMaxH3ChainPlan:
                                "soundtrack, source-audio reference, generated "
                                "audio continuity, and automatic audio context "
                                "in one connection."}),
+                "project_assets": (PROJECT_ASSETS_TYPE, {
+                    "tooltip": "Optional upstream Project Asset Manager. Its "
+                               "project name becomes run_name and its "
+                               "order-neutral reference lineage is folded "
+                               "into generation_fingerprint automatically. "
+                               "Its Source track is stored on the Plan for "
+                               "Loop Start, Plan Studio, and recovery; no "
+                               "separate Source Timeline wire is needed."}),
             },
         }
 
@@ -11258,7 +11398,13 @@ class MiniMaxH3ChainPlan:
               audio_context_length, default_duration_seconds, default_steps,
               base_seed, segment_crf, video_blend_frames=0,
               continuation_mode="guide",
-              plan_json_input=None, chain_policy=None):
+              plan_json_input=None, chain_policy=None, project_assets=None):
+        project = None
+        if project_assets is not None:
+            project = _validate_project_assets(project_assets)
+            run_name = project["project"]
+            generation_fingerprint = _project_assets_generation_fingerprint(
+                generation_fingerprint, project)
         effective_plan_json = (
             plan_json_input
             if isinstance(plan_json_input, str) and plan_json_input.strip()
@@ -11271,6 +11417,13 @@ class MiniMaxH3ChainPlan:
             default_duration_seconds, default_steps, base_seed, segment_crf,
             generation_fingerprint, video_blend_frames, continuation_mode,
             chain_policy)
+        if project is not None and project.get("source_timeline") is not None:
+            # The project source track travels with the Plan, matching the
+            # established Run Manager contract. Downstream nodes recover it
+            # from the Plan without another workflow wire.
+            plan = dict(plan)
+            plan["source_timeline"] = _source_timeline_recovery_record(
+                project["source_timeline"])
         return (plan, plan["summary"], len(plan["shots"]),
                 plan["compatibility"]["width"],
                 plan["compatibility"]["height"],
@@ -12400,6 +12553,7 @@ class MiniMaxH3ChainPlanStudio:
         optional["generation_fingerprint"] = (
             fingerprint_type, fingerprint_options)
         optional["chain_policy"] = plan_inputs["optional"]["chain_policy"]
+        optional["project_assets"] = plan_inputs["optional"]["project_assets"]
         return {
             "required": {},
             "optional": optional,
@@ -12450,16 +12604,25 @@ class MiniMaxH3ChainPlanStudio:
                     audio_mode="generated_audio", audio_context_length=22,
                     default_duration_seconds=15.0, default_steps=20,
                     base_seed=0, segment_crf=18, video_blend_frames=0,
-                    continuation_mode="guide", chain_policy=None):
+                    continuation_mode="guide", chain_policy=None,
+                    project_assets=None):
+        if project_assets is not None:
+            project = _validate_project_assets(project_assets)
+            if tagged_references is None:
+                tagged_references = project["references"]
+            if source_timeline is None:
+                source_timeline = project.get("source_timeline")
         if plan is None:
-            generation_fingerprint = _plan_studio_generation_fingerprint(
-                generation_fingerprint, tagged_references)
+            if project_assets is None:
+                generation_fingerprint = _plan_studio_generation_fingerprint(
+                    generation_fingerprint, tagged_references)
             plan = MiniMaxH3ChainPlan().build(
                 plan_json, run_name, generation_fingerprint, width, height,
                 context_length, encode_mode, anchor_mode, crop, audio_mode,
                 audio_context_length, default_duration_seconds, default_steps,
                 base_seed, segment_crf, video_blend_frames,
                 continuation_mode, chain_policy=chain_policy,
+                project_assets=project_assets,
             )[0]
         prepared, report = _preflight_chain(
             plan, source_timeline=source_timeline, source_audio=source_audio,
@@ -12522,6 +12685,217 @@ class MiniMaxH3ChainPreflight:
 
     def check(self, plan, **kwargs):
         return MiniMaxH3ChainPlanStudio().passthrough(plan=plan, **kwargs)
+
+
+def _validate_project_assets(value: Any) -> dict[str, Any]:
+    if (not isinstance(value, dict)
+            or value.get("format") != PROJECT_ASSET_FORMAT
+            or int(value.get("version", -1)) != 1
+            or not isinstance(value.get("project"), str)
+            or not isinstance(value.get("catalog"), dict)
+            or not isinstance(value.get("references"), dict)):
+        raise ValueError(
+            "Project assets must come from MiniMax H3 Project Asset Manager.")
+    _tagged_reference_entries(value["references"])
+    if value.get("source_timeline") is not None:
+        _validate_source_timeline(value["source_timeline"])
+    return value
+
+
+def _project_assets_generation_fingerprint(
+        generation_fingerprint: Any, project_assets: Any) -> str:
+    project = _validate_project_assets(project_assets)
+    return _plan_studio_generation_fingerprint(
+        generation_fingerprint, project["references"])
+
+
+class MiniMaxH3ProjectAssetManager:
+    """Project-owned, path-backed references with one compact workflow node."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "project_name": ("STRING", {
+                    "default": "h3_project",
+                    "tooltip": "Project/run name. Media is copied below "
+                               "input/h3_projects/<project> and mirrored in "
+                               "output/h3_chains/<project>/project_assets."}),
+                "catalog_json": ("STRING", {
+                    "default": "", "multiline": False,
+                    "dynamicPrompts": False,
+                    "tooltip": "Compact catalog metadata maintained by the "
+                               "carousel. Media bytes and tensors are never "
+                               "serialized into the workflow."}),
+                "semantic_anchor_size": (list(SEMANTIC_ANCHOR_SIZES), {
+                    "default": "512",
+                    "tooltip": "Qwen presentation size for project assets "
+                               "assigned the Semantic anchor role."}),
+                "semantic_anchor_mode": (list(SEMANTIC_ANCHOR_MODES), {
+                    "default": "timestamped_video",
+                    "tooltip": "Presentation mode for #tag[timestamp] "
+                               "project semantic anchors."}),
+            },
+        }
+
+    RETURN_TYPES = (
+        PROJECT_ASSETS_TYPE, TAGGED_REFERENCE_TYPE, "STRING",
+        SOURCE_TIMELINE_TYPE, "STRING")
+    RETURN_NAMES = (
+        "project_assets", "references", "reference_fingerprint",
+        "source_timeline", "status")
+    OUTPUT_TOOLTIPS = (
+        "Compact project catalog for Plan/Plan Studio synchronization.",
+        "Native tagged references plus separate semantic-anchor metadata.",
+        "Order-neutral incremental reference lineage for Plan compatibility.",
+        "Optional path-backed Source Timeline for specialized direct uses. "
+        "Plan already absorbs this automatically through project_assets.",
+        "Project, enabled reference count, source-track state, and revision.",
+    )
+    FUNCTION = "build"
+    CATEGORY = "conditioning/minimax/contex_loop/project"
+    DESCRIPTION = (
+        "Large project asset carousel for pictures, semantic anchors, video, "
+        "motion, audio references, and one source track. Upload or import "
+        "media in the node; files remain ordinary ComfyUI input assets, a "
+        "recovery copy is kept with the H3 chain, and only prompt-active "
+        "references are decoded during sampling.")
+
+    @classmethod
+    def IS_CHANGED(cls, project_name, catalog_json="", **_kwargs):
+        try:
+            catalog = ProjectAssetStore(
+                _input_root(), _output_root()).load(project_name)
+            return str(catalog.get("revision") or "")
+        except Exception:
+            return str(catalog_json or "")
+
+    def build(self, project_name, catalog_json="", semantic_anchor_size="512",
+              semantic_anchor_mode="timestamped_video"):
+        del catalog_json  # Disk catalog is authoritative; widget is UI state.
+        store = ProjectAssetStore(_input_root(), _output_root())
+        catalog = store.public_catalog(project_name)
+        references = _make_tagged_references([])
+        semantic_entries = []
+        enabled = [
+            entry for entry in catalog["assets"]
+            if bool(entry.get("enabled", True))]
+        tags = [str(entry.get("tag") or "") for entry in enabled]
+        if len(tags) != len(set(tags)):
+            raise ValueError(
+                "Every enabled project asset must have a unique tag.")
+        source_entries = [
+            entry for entry in enabled if entry.get("role") == "source_track"]
+        if len(source_entries) > 1:
+            raise ValueError(
+                "Project Asset Manager permits only one enabled Source track.")
+
+        native_count = 0
+        for entry in enabled:
+            role = str(entry.get("role") or "")
+            if role == "source_track":
+                continue
+            asset, path = store.asset(project_name, entry.get("id"))
+            content_hash = str(asset.get("sha256") or "")
+            options = asset.get("options")
+            options = options if isinstance(options, dict) else {}
+            if role == "semantic_anchor":
+                semantic_entries.append({
+                    "kind": "semantic_anchor",
+                    "tag": _normalize_reference_tag(
+                        asset.get("tag"), "Project semantic anchor tag"),
+                    "activation": "prompt",
+                    "value": _project_asset_descriptor(asset, path),
+                    "content_hash": content_hash,
+                })
+                continue
+            if role == "picture":
+                references = _append_tagged_reference(
+                    references, kind="picture", tag=asset.get("tag"),
+                    value=_project_asset_descriptor(asset, path),
+                    content_hash=content_hash)
+            elif role in ("video", "motion"):
+                use_audio = bool(options.get(
+                    "use_embedded_audio",
+                    bool((asset.get("metadata") or {}).get("has_audio"))))
+                short_edge = str(options.get(
+                    "reference_short_edge", "384" if role == "motion"
+                    else "source"))
+                video = _project_asset_video_descriptor(
+                    asset, path, embedded_audio=use_audio,
+                    short_edge=short_edge)
+                audio_marker = video if use_audio else None
+                references = _append_tagged_reference(
+                    references, kind="video", tag=asset.get("tag"),
+                    value=video, content_hash=content_hash,
+                    audio=audio_marker,
+                    audio_tag=str(options.get("audio_tag") or ""),
+                    audio_hash=content_hash if use_audio else "",
+                    timeline_mode=str(options.get(
+                        "timeline_mode") or "restart_each_scene"),
+                    paired_audio_policy=("embedded" if use_audio else "off"))
+                if role == "motion":
+                    target, description, short_edge = _motion_reference_fields(
+                        options.get("target_subject") or "<Subject 1>",
+                        options.get("motion_description") or
+                        "the supplied pose sequence, action, and motion timing",
+                        short_edge)
+                    references = _decorate_motion_reference(
+                        references, target, description, short_edge)
+            elif role == "audio_reference":
+                references = _append_tagged_reference(
+                    references, kind="audio", tag=asset.get("tag"),
+                    value=_project_asset_descriptor(asset, path),
+                    content_hash=content_hash,
+                    timeline_mode="standalone")
+            else:
+                raise ValueError("Unsupported project asset role %r." % role)
+            native_count += 1
+
+        if semantic_entries:
+            references = dict(references)
+            references["semantic_anchors"] = _make_semantic_anchor_bundle(
+                semantic_entries, semantic_anchor_size, semantic_anchor_mode)
+        combined = _combined_reference_registry(references)
+        fingerprint = _reference_fingerprint_output(combined)
+
+        source_timeline = None
+        if source_entries:
+            source, path = store.asset(project_name, source_entries[0]["id"])
+            if source.get("kind") == "video":
+                source_timeline = _make_source_timeline(
+                    video_path=path, embedded_audio="auto",
+                    source_route="H3 Project Asset Manager")
+            elif source.get("kind") == "audio":
+                source_timeline = _make_source_timeline(
+                    audio_path=path, embedded_audio="ignore",
+                    source_route="H3 Project Asset Manager")
+            else:
+                raise ValueError("A Source track must be video or audio.")
+
+        compact_catalog = {
+            **catalog,
+            "assets": [{
+                key: value for key, value in entry.items()
+                if key not in ("absolute_path",)
+            } for entry in catalog["assets"]],
+        }
+        record = {
+            "format": PROJECT_ASSET_FORMAT,
+            "version": 1,
+            "project": str(catalog["project"]),
+            "catalog": compact_catalog,
+            "references": references,
+            "reference_fingerprint": fingerprint,
+            "source_timeline": source_timeline,
+            "source_timeline_asset_id": (
+                str(source_entries[0]["id"]) if source_entries else ""),
+        }
+        status = "%s: %d native, %d semantic, source track %s; %s" % (
+            catalog["project"], native_count, len(semantic_entries),
+            "on" if source_timeline is not None else "off",
+            str(catalog.get("revision") or "")[:12])
+        return record, references, fingerprint, source_timeline, status
 
 
 class MiniMaxH3ChainRunManager:
@@ -20401,6 +20775,158 @@ async def _optimize_scene_prompt(request):
     return web.json_response(payload)
 
 
+def _project_asset_store() -> ProjectAssetStore:
+    return ProjectAssetStore(_input_root(), _output_root())
+
+
+async def _project_asset_catalog(request):
+    try:
+        project = request.query.get("project", "h3_project")
+        catalog = await asyncio.to_thread(
+            _project_asset_store().public_catalog, project)
+        return web.json_response(catalog)
+    except (OSError, TypeError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+async def _project_asset_sources(request):
+    source = str(request.query.get("source", "input")).strip().lower()
+    query = request.query.get("q", "")
+    store = _project_asset_store()
+    try:
+        if source == "input":
+            items = await asyncio.to_thread(store.input_media, query)
+        elif source == "chains":
+            items = await asyncio.to_thread(store.backups)
+            needle = str(query or "").strip().lower()
+            if needle:
+                filtered = []
+                for run in items:
+                    assets = [
+                        asset for asset in run.get("assets", [])
+                        if needle in " ".join((
+                            str(run.get("run_name") or ""),
+                            str(asset.get("tag") or ""),
+                            str(asset.get("original_name") or ""),
+                            str(asset.get("role") or ""),
+                        )).lower()]
+                    if assets:
+                        filtered.append({**run, "assets": assets})
+                items = filtered
+        else:
+            raise ValueError("Asset source must be input or chains.")
+        return web.json_response({"source": source, "items": items})
+    except (OSError, TypeError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+async def _project_asset_upload(request):
+    temporary = ""
+    try:
+        reader = await request.multipart()
+        fields = {}
+        upload = None
+        async for part in reader:
+            if part.name == "file":
+                upload = part
+                break
+            fields[part.name] = (await part.text()).strip()
+        if upload is None:
+            raise ValueError("Upload request contains no file.")
+        project = fields.get("project", "h3_project")
+        filename = upload.filename or "asset"
+        store = _project_asset_store()
+        temporary = store.upload_path(project, filename)
+        received = 0
+        with open(temporary, "xb") as handle:
+            while True:
+                chunk = await upload.read_chunk(size=1024 * 1024)
+                if not chunk:
+                    break
+                received += len(chunk)
+                if received > 100 * 1024 * 1024 * 1024:
+                    raise ValueError("Project asset upload exceeds 100 GiB.")
+                handle.write(chunk)
+        result = await asyncio.to_thread(
+            store.import_file, project, temporary,
+            role=fields.get("role", ""), tag=fields.get("tag", ""),
+            original_name=filename, source_kind="upload")
+        return web.json_response(result)
+    except (OSError, TypeError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    finally:
+        if temporary:
+            _safe_unlink(temporary)
+
+
+async def _project_asset_import(request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Asset import request must be a JSON object.")
+        store = _project_asset_store()
+        source = str(body.get("source") or "path").strip().lower()
+        if source == "input":
+            path = store.input_path(body.get("path"))
+        elif source == "chains":
+            _entry, path = store.backup_asset_path(
+                body.get("run_name"), body.get("asset_id"))
+        elif source == "path":
+            path = str(body.get("path") or "")
+        else:
+            raise ValueError("Asset import source must be input, chains, or path.")
+        result = await asyncio.to_thread(
+            store.import_file, body.get("project", "h3_project"), path,
+            role=body.get("role", ""), tag=body.get("tag", ""),
+            original_name=body.get("original_name", ""),
+            source_kind=source,
+            options=body.get("options") if isinstance(
+                body.get("options"), dict) else None)
+        return web.json_response(result)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+async def _project_asset_update(request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError("Asset update request must be a JSON object.")
+        result = await asyncio.to_thread(
+            _project_asset_store().update,
+            body.get("project", "h3_project"), body.get("asset_id"),
+            body.get("changes"))
+        return web.json_response(result)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+async def _project_asset_media(request):
+    try:
+        project = request.query.get("project", "h3_project")
+        asset_id = request.query.get("asset", "")
+        variant = str(request.query.get("variant", "original")).lower()
+        store = _project_asset_store()
+        entry, path = await asyncio.to_thread(store.asset, project, asset_id)
+        if variant == "poster":
+            path = await asyncio.to_thread(store.ensure_poster, project, asset_id)
+        elif variant == "preview":
+            path = await asyncio.to_thread(
+                store.ensure_browser_media, project, asset_id)
+        elif variant != "original":
+            raise ValueError("Asset media variant must be original, poster, or preview.")
+        return web.FileResponse(path, headers={
+            "Cache-Control": "private, max-age=3600",
+            "Content-Disposition": "inline; filename=%s" % json.dumps(
+                os.path.basename(path)),
+            "X-H3-Asset-Kind": str(entry.get("kind") or ""),
+        })
+    except FileNotFoundError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
 if (PromptServer is not None and web is not None and
         getattr(PromptServer, "instance", None) is not None):
     PromptServer.instance.routes.post(
@@ -20453,6 +20979,23 @@ if (PromptServer is not None and web is not None and
             _plan_studio_source_waveform)
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/prompt-optimize")(_optimize_scene_prompt)
+    PromptServer.instance.routes.get(
+        "/minimax_h3_context_loop/project-assets")(_project_asset_catalog)
+    PromptServer.instance.routes.get(
+        "/minimax_h3_context_loop/project-assets/sources")(
+            _project_asset_sources)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-assets/upload")(
+            _project_asset_upload)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-assets/import")(
+            _project_asset_import)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-assets/update")(
+            _project_asset_update)
+    PromptServer.instance.routes.get(
+        "/minimax_h3_context_loop/project-assets/media")(
+            _project_asset_media)
 
 
 CHAIN_NODE_CLASS_MAPPINGS = {
@@ -20464,6 +21007,7 @@ CHAIN_NODE_CLASS_MAPPINGS = {
     "MiniMaxH3ChainRichScenePromptEditor": MiniMaxH3ChainRichScenePromptEditor,
     "MiniMaxH3ChainPlanStudio": MiniMaxH3ChainPlanStudio,
     "MiniMaxH3ChainPreflight": MiniMaxH3ChainPreflight,
+    "MiniMaxH3ProjectAssetManager": MiniMaxH3ProjectAssetManager,
     "MiniMaxH3ChainRunManager": MiniMaxH3ChainRunManager,
     "MiniMaxH3ChainCheckpointManager": MiniMaxH3ChainCheckpointManager,
     "MiniMaxH3ChainFirstSceneImage": MiniMaxH3ChainFirstSceneImage,
@@ -20517,6 +21061,7 @@ CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
         "MiniMax H3 Rich Scene Prompt Editor (Experimental)"),
     "MiniMaxH3ChainPlanStudio": "MiniMax H3 Plan Studio (Experimental)",
     "MiniMaxH3ChainPreflight": "MiniMax H3 Chain Preflight",
+    "MiniMaxH3ProjectAssetManager": "MiniMax H3 Project Asset Carousel",
     "MiniMaxH3ChainRunManager": "MiniMax H3 Run Manager",
     "MiniMaxH3ChainCheckpointManager": "MiniMax H3 Checkpoint Manager",
     "MiniMaxH3ChainFirstSceneImage": "MiniMax H3 Frame Gate",

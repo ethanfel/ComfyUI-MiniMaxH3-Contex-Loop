@@ -1390,7 +1390,9 @@ function mount(node) {
         function show(record) {
             preview.replaceChildren();
             const kind = record.kind === "picture" ? "image" : record.kind;
-            const url = findMediaPreview(record.source, kind);
+            const url = record.previewUrl
+                ? api.apiURL(record.previewUrl)
+                : findMediaPreview(record.source, kind);
             if (url) {
                 const media = element(kind === "image" ? "img" : kind);
                 media.src = url;

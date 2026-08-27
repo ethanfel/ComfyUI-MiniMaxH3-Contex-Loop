@@ -676,4 +676,42 @@ assert.deepEqual(
     [{token: "<Picture 1>", role: "last frame"}],
 );
 
+const projectEditor = add(makeNode(270, "MiniMaxH3ChainScenePromptEditor"));
+const projectManager = add(makeNode(271, "MiniMaxH3ProjectAssetManager", {
+    catalog_json: JSON.stringify({
+        project: "episode_1",
+        assets: [
+            {id: "p", kind: "image", role: "picture", tag: "hero",
+                enabled: true, metadata: {}},
+            {id: "s", kind: "image", role: "semantic_anchor", tag: "door",
+                enabled: true, metadata: {}},
+            {id: "v", kind: "video", role: "motion", tag: "walk",
+                enabled: true, metadata: {has_audio: true}, options: {}},
+            {id: "a", kind: "audio", role: "audio_reference", tag: "voice",
+                enabled: true, metadata: {}},
+        ],
+    }),
+    semantic_anchor_mode: "timestamped_video",
+}));
+const projectRef2va = add(makeNode(272, "MiniMaxH3TaggedReferenceToVideo"));
+connect(projectEditor, projectRef2va, "prompt");
+connect(projectManager, projectRef2va, "references", 1);
+const projectRecords = taggedReferenceRecords(
+    projectEditor, "Use @hero and @walk with #door[2.00s] and @voice.",
+).records;
+assert.deepEqual(
+    projectRecords.map(({tag, active, semanticOnly}) => ({
+        tag, active, semanticOnly: Boolean(semanticOnly),
+    })),
+    [
+        {tag: "hero", active: true, semanticOnly: false},
+        {tag: "door", active: true, semanticOnly: true},
+        {tag: "walk", active: true, semanticOnly: false},
+        {tag: "walk_audio", active: true, semanticOnly: false},
+        {tag: "voice", active: true, semanticOnly: false},
+    ],
+);
+assert.ok(projectRecords.every((record) => record.previewUrl?.includes(
+    "project=episode_1")));
+
 console.log("H3 reference preview: tagged/scheduled Ref2VA, core Ref2VA, and core I2V/FL2V discovery pass");

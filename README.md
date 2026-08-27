@@ -73,6 +73,19 @@ assembly when FFmpeg is unavailable.
 Some examples need bundled media copied into `ComfyUI/input/`. See the
 [asset guide](example_workflows/assets/README.md).
 
+### Project Asset Carousel (nightly)
+
+**MiniMax H3 Project Asset Carousel** replaces a wall of loader and tag nodes
+with one path-backed project library. Put it before Plan through its
+`project_assets` output and connect its `references` output to Tagged Ref2VA.
+When the project has a Source track, Plan stores its path-backed Source Timeline
+automatically; Loop Start, Plan Studio, recovery, and assembly read it from the
+Plan without another wire. Uploads and imports are copied to
+`ComfyUI/input/h3_projects/<project>/` for use by ordinary loaders and mirrored
+to `output/h3_chains/<project>/project_assets/` for recovery. Only compact
+catalog metadata is saved in the workflow; only tags used by the current scene
+are decoded during sampling.
+
 ## Choose a workflow
 
 | I want to… | Start here |

@@ -17,6 +17,7 @@ export const TAGGED_MOTION_TIMELINE_REF_TYPE =
 export const TAGGED_AUDIO_REF_TYPE = "MiniMaxH3TaggedAudioReference";
 export const SEMANTIC_ANCHOR_BUNDLE_TYPE = "MiniMaxH3SemanticAnchorBundle";
 export const SEMANTIC_PICTURE_ANCHOR_TYPE = "MiniMaxH3SemanticPictureAnchor";
+export const PROJECT_ASSET_MANAGER_TYPE = "MiniMaxH3ProjectAssetManager";
 
 const SCHEDULE_TYPES = new Set([
     PICTURE_REF_TYPE,
@@ -534,9 +535,149 @@ function semanticPromptTagSet(prompt) {
     )].map((match) => match[1]));
 }
 
+function projectCatalog(node) {
+    if (nodeType(node) !== PROJECT_ASSET_MANAGER_TYPE) return null;
+    try {
+        const value = JSON.parse(String(widgetValue(node, "catalog_json", "")));
+        return value && Array.isArray(value.assets) ? value : null;
+    } catch (_error) {
+        return null;
+    }
+}
+
+function projectPreviewUrl(catalog, asset, variant = "poster") {
+    const query = new URLSearchParams({
+        project: String(catalog?.project ?? ""),
+        asset: String(asset?.id ?? ""),
+        variant,
+    });
+    return `/minimax_h3_context_loop/project-assets/media?${query}`;
+}
+
+export function projectAssetReferenceRecords(manager, prompt = "") {
+    const catalog = projectCatalog(manager);
+    if (!catalog) return [];
+    const used = promptTagSet(prompt);
+    const semanticUsed = semanticPromptTagSet(prompt);
+    const pictures = [];
+    const semanticPictures = [];
+    const videos = [];
+    const pairedAudios = [];
+    const audios = [];
+    for (const asset of catalog.assets) {
+        if (!asset?.enabled || asset.role === "source_track") continue;
+        const tag = referenceTag(asset.tag);
+        if (!tag) continue;
+        const common = {
+            node: manager,
+            tag,
+            selector: asset.role === "semantic_anchor"
+                ? "semantic prompt tag" : "prompt tag",
+            source: manager,
+            assetId: String(asset.id ?? ""),
+            asset,
+        };
+        if (asset.role === "picture") {
+            pictures.push({
+                ...common, kind: "picture",
+                nativeActive: used.has(tag),
+                semanticActive: semanticUsed.has(tag),
+                active: used.has(tag) || semanticUsed.has(tag),
+                previewUrl: projectPreviewUrl(catalog, asset, "poster"),
+            });
+        } else if (asset.role === "semantic_anchor") {
+            semanticPictures.push({
+                ...common, kind: "picture", semanticOnly: true,
+                nativeActive: false, semanticActive: semanticUsed.has(tag),
+                active: semanticUsed.has(tag),
+                previewUrl: projectPreviewUrl(catalog, asset, "poster"),
+            });
+        } else if (["video", "motion"].includes(asset.role)) {
+            const options = asset.options ?? {};
+            const hasAudio = Boolean(
+                options.use_embedded_audio ?? asset.metadata?.has_audio);
+            const audioTag = referenceTag(options.audio_tag) || `${tag}_audio`;
+            const video = {
+                ...common, kind: "video",
+                semanticRole: asset.role === "motion" ? "motion" : "video",
+                tagActive: used.has(tag),
+                active: used.has(tag) || (hasAudio && used.has(audioTag)),
+                previewUrl: projectPreviewUrl(catalog, asset, "preview"),
+            };
+            videos.push(video);
+            if (hasAudio) pairedAudios.push({
+                ...common, kind: "audio", tag: audioTag,
+                active: video.active, pairedWith: video,
+                previewUrl: projectPreviewUrl(catalog, asset, "original"),
+            });
+        } else if (asset.role === "audio_reference") {
+            audios.push({
+                ...common, kind: "audio", active: used.has(tag),
+                previewUrl: projectPreviewUrl(catalog, asset, "original"),
+            });
+        }
+    }
+    let ordinal = 0;
+    for (const item of pictures) {
+        if (item.nativeActive) item.label = `<Picture ${++ordinal}>`;
+    }
+    ordinal = 0;
+    for (const item of videos) {
+        if (item.active) {
+            item.sourceLabel = `<Video ${++ordinal}>`;
+            item.label = item.sourceLabel;
+        }
+    }
+    const usedSubjects = [...String(prompt ?? "").matchAll(
+        /<Subject\s+(\d+)>/gi,
+    )].map((match) => Number(match[1]));
+    let subjectOrdinal = Math.max(0, ...usedSubjects) + 1;
+    for (const item of videos) {
+        if (item.active && item.semanticRole === "motion" && item.tagActive) {
+            item.label = `<Subject ${subjectOrdinal++}>`;
+        }
+    }
+    ordinal = 0;
+    for (const item of pairedAudios) {
+        if (item.active) item.label = `<Audio ${++ordinal}>`;
+    }
+    for (const item of audios) {
+        if (item.active) item.label = `<Audio ${++ordinal}>`;
+    }
+    const anchorMode = String(widgetValue(
+        manager, "semantic_anchor_mode", "timestamped_video"));
+    ordinal = anchorMode === "picture_storyboard"
+        ? pictures.filter((item) => item.nativeActive).length
+        : videos.filter((item) => item.active).length;
+    for (const item of semanticPictures) {
+        if (!item.active) continue;
+        item.label = anchorMode === "picture_storyboard"
+            ? `<Picture ${++ordinal}>` : `<Video ${++ordinal}>`;
+    }
+    return [...pictures, ...semanticPictures, ...videos, ...pairedAudios, ...audios]
+        .map((item) => ({
+            ...item,
+            token: item.semanticOnly
+                ? taggedPictureReferenceToken(item.tag, "semantic")
+                : `@${item.tag}`,
+            nativeToken: item.semanticOnly ? null : `@${item.tag}`,
+            semanticToken: item.kind === "picture"
+                ? taggedPictureReferenceToken(item.tag, "semantic") : null,
+            supportsSemantic: item.kind === "picture" && !item.semanticOnly,
+        }));
+}
+
 export function taggedReferenceRecords(editorNode, prompt = "") {
     const wrapper = findTaggedRef2VA(editorNode);
     if (!wrapper) return {wrapper: null, mode: null, records: []};
+    const referenceSource = inputSource(wrapper, "references");
+    if (nodeType(referenceSource) === PROJECT_ASSET_MANAGER_TYPE) {
+        return {
+            wrapper,
+            mode: "tagged",
+            records: projectAssetReferenceRecords(referenceSource, prompt),
+        };
+    }
     const nodes = collectTaggedNodes(wrapper);
     const dedicated = collectSemanticAnchorNodes(wrapper);
     const used = promptTagSet(prompt);
