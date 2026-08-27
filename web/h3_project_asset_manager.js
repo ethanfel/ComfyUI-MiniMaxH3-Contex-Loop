@@ -1,5 +1,11 @@
 import {app} from "/scripts/app.js";
 import {api} from "/scripts/api.js";
+import {
+    coupledOutputDimensions,
+    dimensionsForMegapixels,
+    formatMegapixels,
+    imageMegapixels,
+} from "./h3_project_asset_editor_core.mjs?v=0.6.47";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -188,6 +194,8 @@ function injectStyles() {
         .h3pa-crop-controls{display:flex;flex-direction:column;gap:9px;min-height:0;overflow:auto;padding:10px;border:1px solid #48556a;border-radius:8px;background:#11151d}
         .h3pa-crop-controls label{display:flex;flex-direction:column;gap:3px;color:#aeb7c8}.h3pa-crop-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
         .h3pa-crop-controls input,.h3pa-crop-controls select{width:100%;min-width:0;padding:6px 7px;border:1px solid #566174;border-radius:6px;background:#151820;color:inherit}
+        .h3pa-mp-presets{display:flex;gap:4px;flex-wrap:wrap}.h3pa-mp-presets .h3pa-button{flex:1 1 40px;padding:4px 5px}
+        .h3pa-size-summary{padding:8px;border:1px solid #46536a;border-radius:7px;background:#0d1119;color:#b8c7de;line-height:1.4}
         .h3pa-crop-actions{display:flex;flex-wrap:wrap;gap:6px;margin-top:auto}.h3pa-crop-note{color:#8f9bb0;font-size:11px}
         @media(max-width:850px){.h3pa-crop-layout{grid-template-columns:1fr}.h3pa-crop-controls{max-height:320px}}
         @media(max-width:800px){.h3pa-stage{grid-template-columns:1fr}.h3pa-editor{max-height:190px}}
@@ -565,7 +573,7 @@ function mount(node) {
         const modal = el("div", "h3pa-modal h3pa-crop-modal");
         const heading = el("div", "h3pa-row");
         heading.append(
-            el("strong", "h3pa-project", `Crop / resize variant · ${promptTag(asset)}`),
+            el("strong", "h3pa-project", `Edit / upscale image variant · ${promptTag(asset)}`),
             button("Close", () => modal.remove()),
         );
         const layout = el("div", "h3pa-crop-layout");
@@ -581,6 +589,7 @@ function mount(node) {
         let sourceWidth = 1; let sourceHeight = 1;
         let drawScale = 1; let drawX = 0; let drawY = 0;
         let drag = null;
+        let lockedRatio = 1;
         const cropInputs = {};
         function numberField(name, label, value, minimum = 0) {
             const wrapper = el("label", "", label);
@@ -599,10 +608,25 @@ function mount(node) {
             numberField("targetWidth", "Output width", 1, 1),
             numberField("targetHeight", "Output height", 1, 1),
         );
+        const megapixelLabel = el("label", "", "Target megapixels");
+        megapixelLabel.title = "Set the final asset size by megapixels. This works with the full image or a crop, and with ordinary resampling or the connected upscale model.";
+        const megapixelInput = el("input"); megapixelInput.type = "number";
+        megapixelInput.min = "0.01"; megapixelInput.step = "0.05";
+        megapixelInput.value = "0.01"; megapixelLabel.append(megapixelInput);
+        const megapixelPresets = el("div", "h3pa-mp-presets");
+        for (const value of [0.25, 0.5, 1, 2, 4, 8]) {
+            megapixelPresets.append(button(`${value} MP`, () => {
+                megapixelInput.value = String(value);
+                applyMegapixelTarget();
+            }, `Set the final image near ${value} megapixels while preserving the current output ratio`));
+        }
         const ratioLabel = el("label", "h3pa-toggle");
         const ratioLock = el("input"); ratioLock.type = "checkbox"; ratioLock.checked = true;
         const ratioCopy = el("span", "h3pa-toggle-copy");
-        ratioCopy.append(el("strong", "", "Lock output ratio"), el("small", "", "Resizing the crop keeps the output aspect ratio."));
+        ratioCopy.append(
+            el("strong", "", "Lock output aspect ratio"),
+            el("small", "", "Changing output width updates height (and vice versa); crop resizing uses the same ratio."),
+        );
         ratioLabel.append(ratioLock, ratioCopy);
         const resampleLabel = el("label", "", "Resampling");
         const resample = el("select");
@@ -613,18 +637,24 @@ function mount(node) {
         const tagLabel = el("label", "", "Variant prompt tag");
         const variantTag = el("input"); variantTag.value = `${asset.tag}_variant`;
         tagLabel.append(variantTag);
-        const cropStatus = el("div", "h3pa-crop-note", "Loading full source image…");
+        const sizeStatus = el("div", "h3pa-size-summary", "Loading full source image…");
+        const cropStatus = el("div", "h3pa-crop-note", "");
         controls.append(
             el("div", "h3pa-crop-note", "Coordinates are oriented source-image pixels. Drag anywhere to draw a crop; drag inside it to move; drag any corner to resize. Arrow keys nudge by 1 px (Shift: 10 px)."),
-            cropGrid, targetGrid, ratioLabel, resampleLabel, tagLabel, cropStatus,
+            cropGrid, targetGrid, ratioLabel, megapixelLabel, megapixelPresets,
+            resampleLabel, tagLabel, sizeStatus, cropStatus,
         );
         const actions = el("div", "h3pa-crop-actions");
         const reset = button("Use full image", () => {
+            const targetMegapixels = imageMegapixels(
+                cropInputs.targetWidth.value, cropInputs.targetHeight.value);
             crop.x = 0; crop.y = 0; crop.width = sourceWidth; crop.height = sourceHeight;
-            cropInputs.targetWidth.value = String(sourceWidth);
-            cropInputs.targetHeight.value = String(sourceHeight);
+            if (ratioLock.checked) {
+                lockedRatio = sourceWidth / sourceHeight;
+                setTargetSize(dimensionsForMegapixels(targetMegapixels, lockedRatio));
+            }
             syncInputs(); draw();
-        });
+        }, "Remove the crop while keeping the current megapixel target; with ratio lock enabled, the target follows the full image ratio");
         const startCrop = button("Start centered crop", () => {
             const ratio = outputRatio();
             let width = Math.max(1, Math.round(sourceWidth * 0.8));
@@ -639,7 +669,7 @@ function mount(node) {
             crop.y = Math.round((sourceHeight - crop.height) / 2);
             syncInputs(); draw();
         }, "Create a visible centered crop using the selected output ratio");
-        const save = button("Save crop / resize", async () => {
+        const save = button("Save resize / crop", async () => {
             const payload = operationPayload("resample"); if (!payload) return;
             try {
                 save.disabled = true; modelButton.disabled = true;
@@ -687,7 +717,6 @@ function mount(node) {
             ));
         }
         modelButton.disabled = !modelConnected();
-        if (!modelConnected()) modelButton.title += " (No UPSCALE_MODEL is connected.)";
         actions.append(startCrop, reset, save, modelButton); controls.append(actions);
 
         function operationPayload(mode) {
@@ -705,9 +734,22 @@ function mount(node) {
                 tag: variantTag.value, folder_id: asset.folder_id ?? "",
             };
         }
+        function currentTargetSize() {
+            return {
+                width: Math.max(1, Math.round(Number(
+                    cropInputs.targetWidth.value) || 1)),
+                height: Math.max(1, Math.round(Number(
+                    cropInputs.targetHeight.value) || 1)),
+            };
+        }
+        function setTargetSize(size) {
+            cropInputs.targetWidth.value = String(Math.max(1, Math.round(size.width)));
+            cropInputs.targetHeight.value = String(Math.max(1, Math.round(size.height)));
+        }
         function outputRatio() {
-            return Math.max(1, Number(cropInputs.targetWidth.value) || 1)
-                / Math.max(1, Number(cropInputs.targetHeight.value) || 1);
+            if (ratioLock.checked) return lockedRatio;
+            const target = currentTargetSize();
+            return target.width / target.height;
         }
         function isFullCrop() {
             return crop.x === 0 && crop.y === 0
@@ -725,24 +767,73 @@ function mount(node) {
             // shorten it to the remaining source area instead of resetting X/Y.
             crop.x = Math.max(0, Math.min(sourceWidth - 1, Math.round(crop.x)));
             crop.y = Math.max(0, Math.min(sourceHeight - 1, Math.round(crop.y)));
+            if (ratioLock.checked) {
+                let width = Math.max(1, Math.round(crop.width));
+                let height = Math.max(1, width / lockedRatio);
+                const fit = Math.min(
+                    1,
+                    (sourceWidth - crop.x) / width,
+                    (sourceHeight - crop.y) / height,
+                );
+                width *= fit; height *= fit;
+                crop.width = Math.max(1, Math.round(width));
+                crop.height = Math.max(1, Math.round(height));
+                return;
+            }
             crop.width = Math.max(1, Math.min(sourceWidth - crop.x, Math.round(crop.width)));
             crop.height = Math.max(1, Math.min(sourceHeight - crop.y, Math.round(crop.height)));
+        }
+        function updateSizeSummary() {
+            const target = currentTargetSize();
+            const inputMp = formatMegapixels(imageMegapixels(crop.width, crop.height));
+            const targetMp = formatMegapixels(imageMegapixels(
+                target.width, target.height));
+            megapixelInput.value = targetMp;
+            const inputName = isFullCrop() ? "full image" : "selected crop";
+            if (modelConnected()) {
+                sizeStatus.textContent = `Connected model input (${inputName}): ${crop.width}×${crop.height} (${inputMp} MP). Final saved asset: ${target.width}×${target.height} (${targetMp} MP). The model runs at its native scale before the final fit.`;
+                modelButton.title = `Run only this Carousel. The connected model receives ${crop.width}×${crop.height}; its result is fitted to ${target.width}×${target.height}.`;
+            } else {
+                sizeStatus.textContent = `${inputName[0].toUpperCase()}${inputName.slice(1)}: ${crop.width}×${crop.height} (${inputMp} MP) → final saved asset ${target.width}×${target.height} (${targetMp} MP). Connect UPSCALE_MODEL to enable model upscale.`;
+                modelButton.title = "Connect a core UPSCALE_MODEL to enable asset-only model upscale.";
+            }
         }
         function syncInputs(preference = "size") {
             clampCrop(preference);
             for (const key of ["x", "y", "width", "height"]) cropInputs[key].value = String(crop[key]);
-            cropStatus.textContent = `${sourceWidth}×${sourceHeight} source → ${cropInputs.targetWidth.value}×${cropInputs.targetHeight.value} variant`;
+            updateSizeSummary();
+        }
+        function fitCropToLockedRatio() {
+            const centerX = crop.x + crop.width / 2;
+            const centerY = crop.y + crop.height / 2;
+            let width = crop.width;
+            let height = width / lockedRatio;
+            if (height > crop.height) {
+                height = crop.height;
+                width = height * lockedRatio;
+            }
+            crop.width = width; crop.height = height;
+            crop.x = centerX - width / 2; crop.y = centerY - height / 2;
+            clampCrop("position");
         }
         function applyNumericInputs(changed = "") {
             for (const key of ["x", "y", "width", "height"]) {
                 const value = Math.round(Number(cropInputs[key].value));
                 if (Number.isFinite(value)) crop[key] = value;
             }
-            if (ratioLock.checked && ["width", "height", "targetWidth", "targetHeight"].includes(changed)) {
-                const ratio = outputRatio();
-                if (changed === "height") crop.width = Math.round(crop.height * ratio);
-                else crop.height = Math.round(crop.width / ratio);
+            let target = currentTargetSize();
+            if (ratioLock.checked && ["targetWidth", "targetHeight"].includes(changed)) {
+                target = coupledOutputDimensions(
+                    target.width, target.height,
+                    changed === "targetHeight" ? "height" : "width",
+                    lockedRatio, true,
+                );
             }
+            if (ratioLock.checked && ["width", "height"].includes(changed)) {
+                if (changed === "height") crop.width = Math.round(crop.height * lockedRatio);
+                else crop.height = Math.round(crop.width / lockedRatio);
+            }
+            setTargetSize(target);
             syncInputs(["x", "y", "width", "height"].includes(changed)
                 ? "size" : "position");
             draw();
@@ -750,6 +841,25 @@ function mount(node) {
         for (const [name, input] of Object.entries(cropInputs)) {
             input.addEventListener("change", () => applyNumericInputs(name));
         }
+        function applyMegapixelTarget() {
+            const value = Number(megapixelInput.value);
+            if (!Number.isFinite(value) || value <= 0) {
+                cropStatus.textContent = "Target megapixels must be positive.";
+                return;
+            }
+            setTargetSize(dimensionsForMegapixels(value, outputRatio()));
+            cropStatus.textContent = "";
+            syncInputs("position"); draw();
+        }
+        megapixelInput.addEventListener("change", applyMegapixelTarget);
+        ratioLock.addEventListener("change", () => {
+            if (ratioLock.checked) {
+                const target = currentTargetSize();
+                lockedRatio = target.width / target.height;
+                fitCropToLockedRatio();
+            }
+            syncInputs("position"); draw();
+        });
         function canvasPoint(event) {
             const bounds = canvas.getBoundingClientRect();
             return {
@@ -900,9 +1010,11 @@ function mount(node) {
         });
         image.addEventListener("load", () => {
             sourceWidth = image.naturalWidth; sourceHeight = image.naturalHeight;
+            lockedRatio = sourceWidth / sourceHeight;
             crop.x = 0; crop.y = 0; crop.width = sourceWidth; crop.height = sourceHeight;
             cropInputs.targetWidth.value = String(sourceWidth);
             cropInputs.targetHeight.value = String(sourceHeight);
+            cropStatus.textContent = "";
             syncInputs(); draw();
         });
         image.addEventListener("error", () => { cropStatus.textContent = "Could not load the full stored source image."; });
@@ -1114,8 +1226,8 @@ function mount(node) {
         remove.classList.add("danger");
         primaryActions.append(
             ...(asset.kind === "image" ? [button(
-                "Crop / resize", () => openImageEditor(asset),
-                "Create a nondestructive image variant from exact source pixels",
+                "Edit / upscale", () => openImageEditor(asset),
+                "Resize, crop, or model-upscale a nondestructive image variant from exact source pixels",
             )] : []),
             button("Duplicate", () => duplicateAsset(asset),
                 "Create another catalog card that initially shares the same stored media bytes"),
