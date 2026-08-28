@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.61";
+} from "./h3_chain_plan_core.mjs?v=0.6.62";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.61";
+} from "./h3_prompt_history_core.mjs?v=0.6.62";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.61";
+} from "./h3_reference_preview_core.mjs?v=0.6.62";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.61";
+} from "./h3_policy_core.mjs?v=0.6.62";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.61";
+} from "./h3_socket_presentation_core.mjs?v=0.6.62";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -82,13 +82,15 @@ import {
     studioSourceAudioSecond,
     studioSourceSecond,
     studioTimelineLayout,
+    studioTimelineScrollAnchorSeconds,
+    studioTimelineScrollLeftForAnchor,
     studioTimelineSegments,
     studioTimelineTotalSeconds,
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.61";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.61";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.62";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.62";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -209,11 +211,18 @@ function injectStyles() {
         .h3studio-drag-handle { position:absolute; z-index:3; left:4px; top:4px; padding:1px 4px;
             border-radius:3px; color:#fff; background:rgba(5,7,12,.72); cursor:grab; user-select:none; }
         .h3studio-drag-handle:active { cursor:grabbing; }
-        .h3studio-lock-handle { position:absolute; z-index:4; left:43px; top:4px; padding:1px 4px;
-            border:1px solid rgba(255,255,255,.24) !important; border-radius:3px; color:#fff;
-            background:rgba(5,7,12,.72) !important; cursor:pointer; user-select:none; font-size:9px; }
+        .h3studio-lock-handle { position:absolute; z-index:4; left:29px; top:4px; width:22px; height:19px;
+            padding:0 !important; border:1px solid rgba(255,255,255,.24) !important; border-radius:3px; color:#fff;
+            background:rgba(5,7,12,.72) !important; cursor:pointer; user-select:none; }
         .h3studio-lock-handle.h3studio-is-locked { color:#ffd995;
             border-color:#c59745 !important; }
+        .h3studio-lock-icon { position:relative; display:block; width:12px; height:13px; margin:auto; }
+        .h3studio-lock-icon::after { content:""; position:absolute; left:2px; bottom:1px; width:8px; height:7px;
+            box-sizing:border-box; border:1.5px solid currentColor; border-radius:2px; }
+        .h3studio-lock-icon::before { content:""; position:absolute; left:3.5px; top:0; width:5px; height:7px;
+            box-sizing:border-box; border:1.5px solid currentColor; border-bottom:0; border-radius:5px 5px 0 0; }
+        .h3studio-lock-handle:not(.h3studio-is-locked) .h3studio-lock-icon::before {
+            left:7px; transform:rotate(24deg); transform-origin:left bottom; }
         .h3studio-resize-handle { position:absolute; z-index:5; top:0; right:0; width:8px; height:100%;
             border-right:2px solid color-mix(in srgb,var(--scene) 78%,#fff); cursor:ew-resize;
             touch-action:none; opacity:.72; }
@@ -560,6 +569,7 @@ function mount(node) {
         timelineViewport:null, timelineContent:null, timelineRuler:null,
         timelineZoomInput:null, timelineZoomLabel:null,
         timelineResizeObserver:null, timelineWidths:[], timelineSegments:[],
+        timelineRenderedActive:null,
         timelineWorkspaceEndFrame:0, timelineSceneEndFrame:0,
         timelineExtending:false, timelineDragging:false,
         subtitleTimelineHost:null,
@@ -1400,8 +1410,30 @@ function mount(node) {
         }
     }
 
+    function timelineScrollSnapshot(anchorRatio = .5) {
+        const viewport = state.timelineViewport;
+        const content = state.timelineContent;
+        const totalSeconds = studioTimelineTotalSeconds(state.timelineSegments);
+        const contentWidth = Math.max(
+            0, Number(content?.dataset.timelineWidth) || content?.scrollWidth || 0,
+        );
+        if (!viewport || !content || !(contentWidth > 0) || !(totalSeconds > 0)) {
+            return null;
+        }
+        const boundedAnchor = Math.max(0, Math.min(
+            1, Number(anchorRatio) || 0,
+        ));
+        return {
+            seconds:studioTimelineScrollAnchorSeconds(
+                viewport.scrollLeft, viewport.clientWidth,
+                contentWidth, totalSeconds, boundedAnchor,
+            ),
+            anchorRatio:boundedAnchor,
+        };
+    }
+
     function layoutTimeline({preserveScroll = true, revealActive = false,
-        anchorRatio = .5} = {}) {
+        anchorRatio = .5, restoreScroll = null} = {}) {
         const viewport = state.timelineViewport;
         const content = state.timelineContent;
         if (!viewport || !content || !state.plan) return;
@@ -1410,7 +1442,10 @@ function mount(node) {
             Number(content.dataset.timelineWidth) ||
                 content.scrollWidth || viewport.clientWidth,
         );
-        const boundedAnchor = Math.max(0, Math.min(1, Number(anchorRatio) || 0));
+        const boundedAnchor = Math.max(0, Math.min(
+            1, Number(restoreScroll?.anchorRatio ?? anchorRatio) || 0,
+        ));
+        const restoredSeconds = Number(restoreScroll?.seconds);
         const anchor = preserveScroll
             ? (viewport.scrollLeft + viewport.clientWidth * boundedAnchor) /
                 oldWidth
@@ -1454,7 +1489,12 @@ function mount(node) {
         );
         requestAnimationFrame(() => {
             if (!viewport.isConnected) return;
-            if (preserveScroll) {
+            if (Number.isFinite(restoredSeconds)) {
+                viewport.scrollLeft = studioTimelineScrollLeftForAnchor(
+                    restoredSeconds, viewport.clientWidth,
+                    layout.pixelsPerSecond, boundedAnchor,
+                );
+            } else if (preserveScroll) {
                 viewport.scrollLeft = Math.max(
                     0,
                     anchor * layout.contentWidth -
@@ -1810,7 +1850,7 @@ function mount(node) {
     function enableScenePlacementDrag(card, handle, index) {
         handle.title = sceneLocked(index)
             ? "Scene locked · unlock it before moving"
-            : "Drag the clip or this Move handle to set its editorial start. Empty track space becomes black.";
+            : "Drag the clip or its grip to set the editorial start. Empty track space becomes black.";
         const startDrag = (event) => {
             if (event.button !== 0 || sceneLocked(index)) return;
             if (event.target?.closest?.(
@@ -1876,7 +1916,7 @@ function mount(node) {
                 card.classList.remove("h3studio-moving");
                 card.style.removeProperty("transform");
                 card.style.removeProperty("opacity");
-                handle.textContent = "Move";
+                handle.textContent = "⋮⋮";
                 card._h3SuppressClick = moved;
                 if (moved && upEvent.type === "pointerup") {
                     setScenePlacement(index, targetFrame);
@@ -1954,7 +1994,7 @@ function mount(node) {
         });
     }
 
-    function renderTimeline({revealActive = true} = {}) {
+    function renderTimeline({revealActive = false, restoreScroll = null} = {}) {
         const host = state.timelineHost;
         if (!host || !state.plan) return;
         host.replaceChildren();
@@ -2005,13 +2045,13 @@ function mount(node) {
             const copy = element("span", "h3studio-card-copy");
             copy.append(element("span", "h3studio-card-title", `${index + 1}. ${row.id}`),
                 element("span", "h3studio-card-meta", `${formatClock(sceneSegment?.startSeconds ?? 0)} → ${formatClock(sceneSegment?.endSeconds ?? row.deliveredSeconds)} · ${row.rawFrames || "—"}f raw${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
-            const dragHandle = element("span", "h3studio-drag-handle", "Move");
+            const dragHandle = element("span", "h3studio-drag-handle", "⋮⋮");
             dragHandle.title = locked
                 ? "Scene locked · unlock it before moving"
                 : "Move scene on the editorial timeline";
             enableScenePlacementDrag(card, dragHandle, index);
             const lockHandle = button(
-                locked ? "Locked" : "Lock",
+                "",
                 locked
                 ? "Unlock scene movement and duration editing"
                 : "Lock scene movement and duration editing",
@@ -2021,6 +2061,10 @@ function mount(node) {
                 },
             );
             lockHandle.className = `h3studio-lock-handle${locked ? " h3studio-is-locked" : ""}`;
+            lockHandle.setAttribute("aria-label", locked ? "Unlock scene" : "Lock scene");
+            const lockIcon = element("span", "h3studio-lock-icon");
+            lockIcon.setAttribute("aria-hidden", "true");
+            lockHandle.append(lockIcon);
             lockHandle.addEventListener("pointerdown", (event) => event.stopPropagation());
             const resizeHandle = element("span", "h3studio-resize-handle");
             resizeHandle.title = locked
@@ -2053,9 +2097,12 @@ function mount(node) {
         renderSourceAudioTimeline();
         renderSubtitleTimeline();
         layoutTimeline({
-            preserveScroll:Boolean(state.timelineContent?.dataset.timelineWidth),
+            preserveScroll:restoreScroll == null
+                && Boolean(state.timelineContent?.dataset.timelineWidth),
             revealActive,
+            restoreScroll,
         });
+        state.timelineRenderedActive = state.active;
     }
 
     function renderSourceTimeline() {
@@ -4527,6 +4574,10 @@ function mount(node) {
     }
 
     function renderShell() {
+        const timelineScroll = timelineScrollSnapshot();
+        const revealTimelineActive = timelineScroll == null
+            || (state.timelineRenderedActive != null
+                && state.timelineRenderedActive !== state.active);
         disposePlayer();
         state.timelineResizeObserver?.disconnect();
         state.timelineResizeObserver = null;
@@ -4730,7 +4781,13 @@ function mount(node) {
         }
         const panelHost = element("div", "h3studio-panel"); state.panelHost = panelHost;
         root.append(head, toolbar, status, shell, panelHost);
-        renderRuler(ruler, timelineModel().totalSeconds); renderToolbarState(); renderStatus(); renderTimeline(); renderPanel();
+        renderRuler(ruler, timelineModel().totalSeconds);
+        renderToolbarState(); renderStatus();
+        renderTimeline({
+            revealActive:revealTimelineActive,
+            restoreScroll:timelineScroll,
+        });
+        renderPanel();
     }
 
     function showFailure(message) {
@@ -4784,6 +4841,9 @@ function mount(node) {
                 }};
                 state.timelineWorkspaceEndFrame = 0;
                 state.timelineSceneEndFrame = 0;
+                state.timelineRenderedActive = null;
+                state.timelineViewport = null;
+                state.timelineContent = null;
                 state.lastEditorialSignature = "";
                 state.subtitleAssets = []; state.subtitleAssetsRun = "";
                 state.subtitleAssetsToken += 1;

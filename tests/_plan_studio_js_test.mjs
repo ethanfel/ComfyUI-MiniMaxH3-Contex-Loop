@@ -21,6 +21,8 @@ import {
     studioSourceAudioSecond,
     studioSourceSecond,
     studioTimelineLayout,
+    studioTimelineScrollAnchorSeconds,
+    studioTimelineScrollLeftForAnchor,
     studioTimelineSegments,
     studioTimelineTotalSeconds,
     studioWaveformIntervalSamples,
@@ -104,6 +106,12 @@ assert.ok(Math.abs(
 assert.equal(locateStudioTimelineSegment(
     openTimeline.segments, 70,
 ).key, "gap:tail");
+assert.equal(studioTimelineScrollAnchorSeconds(
+    1200, 600, 2400, 120, .5,
+), 75);
+assert.equal(studioTimelineScrollLeftForAnchor(
+    75, 600, 20, .5,
+), 1200);
 assert.equal(studioNearestH3FrameLength(345), 345);
 assert.equal(studioNearestH3FrameLength(354), 362);
 assert.equal(studioNearestH3FrameLength(6, 23), 39);
@@ -319,7 +327,12 @@ assert.match(source, /requestedStart > previousEnd/);
 assert.match(source, /meaningfulPlacements/);
 assert.match(source, /card\.addEventListener\("pointerdown", startDrag\)/);
 assert.match(source, /window\.addEventListener\("pointermove", onMove, true\)/);
-assert.match(source, /Drag the clip or this Move handle/);
+assert.match(source, /Drag the clip or its grip/);
+assert.match(source, /timelineScrollSnapshot/);
+assert.match(source, /restoreScroll:timelineScroll/);
+assert.match(source, /renderTimeline\(\{revealActive = false/);
+assert.match(source, /h3studio-lock-icon/);
+assert.match(source, /"⋮⋮"/);
 assert.doesNotMatch(source, /locked \? "🔒" : "🔓"/);
 assert.match(source, /SUBTITLES/);
 assert.match(source, /Source Timeline connected · no audio/);

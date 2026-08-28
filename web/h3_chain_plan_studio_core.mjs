@@ -156,6 +156,33 @@ export function studioTimelineTotalSeconds(segments) {
     return values.length ? Math.max(0, Number(values.at(-1)?.endSeconds) || 0) : 0;
 }
 
+export function studioTimelineScrollAnchorSeconds(
+    scrollLeft, viewportWidth, contentWidth, totalSeconds, anchorRatio = .5,
+) {
+    const width = Math.max(0, Number(contentWidth) || 0);
+    const duration = Math.max(0, Number(totalSeconds) || 0);
+    if (!(width > 0) || !(duration > 0)) return null;
+    const ratio = Math.max(0, Math.min(1, Number(anchorRatio) || 0));
+    return Math.max(0, Math.min(
+        duration,
+        (Math.max(0, Number(scrollLeft) || 0)
+            + Math.max(0, Number(viewportWidth) || 0) * ratio)
+            / width * duration,
+    ));
+}
+
+export function studioTimelineScrollLeftForAnchor(
+    seconds, viewportWidth, pixelsPerSecond, anchorRatio = .5,
+) {
+    const ratio = Math.max(0, Math.min(1, Number(anchorRatio) || 0));
+    return Math.max(
+        0,
+        Math.max(0, Number(seconds) || 0)
+            * Math.max(0, Number(pixelsPerSecond) || 0)
+            - Math.max(0, Number(viewportWidth) || 0) * ratio,
+    );
+}
+
 export function studioEditorialSceneStartSeconds(segments, sceneIndex) {
     const wanted = Number(sceneIndex);
     const segment = (Array.isArray(segments) ? segments : []).find(
