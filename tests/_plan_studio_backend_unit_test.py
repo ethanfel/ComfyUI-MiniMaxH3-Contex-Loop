@@ -152,6 +152,56 @@ async def check():
                 "index": 1, "id": "intro", "delivered_frames": 340,
             }],
         }
+        editorial = chain._save_run_editorial_document({
+            "run_name": "studio",
+            "scene_order": [
+                {"scene": 1, "scene_id": "intro"},
+                {"scene": 2, "scene_id": "outro"},
+            ],
+            "chapters": [],
+            "placements": [{
+                "scene": 2, "scene_id": "outro", "start_frame": 500,
+            }],
+            "subtitles": {"mode": "off"},
+        })
+        editorial_loaded, timeline_records, editorial_frames = (
+            chain._editorial_timeline_records("studio", [
+                {"index": 1, "id": "intro", "delivered_frames": 340},
+                {"index": 2, "id": "outro", "delivered_frames": 340},
+            ]))
+        assert editorial_loaded["placements"] == editorial["placements"]
+        assert [item["kind"] for item in timeline_records] == [
+            "scene", "gap", "scene"]
+        assert timeline_records[1]["frame_count"] == 160
+        assert editorial_frames == 840
+
+        lrc = chain._parse_timed_lyrics(
+            "[00:01.5]First line\n[00:03.25]Second line")
+        assert lrc[0] == {"start": 1.5, "end": 3.25,
+                          "text": "First line"}
+        srt = chain._parse_timed_lyrics(
+            "1\n00:00:02,000 --> 00:00:04,500\nA subtitle\n")
+        assert srt == [{"start": 2.0, "end": 4.5,
+                        "text": "A subtitle"}]
+
+        sample_rate = 240
+        samples_per_frame = sample_rate // chain.FPS
+        waveform = chain.torch.cat((
+            chain.torch.ones(1, 2, 340 * samples_per_frame),
+            chain.torch.full(
+                (1, 2, 340 * samples_per_frame), 2.0),
+        ), dim=-1)
+        spaced = chain._audio_with_editorial_timeline(
+            {"waveform": waveform, "sample_rate": sample_rate},
+            timeline_records, 680, editorial_frames,
+            "editorial unit audio")
+        spaced_waveform = spaced["waveform"]
+        assert tuple(spaced_waveform.shape) == (
+            1, 2, editorial_frames * samples_per_frame)
+        assert chain.torch.all(spaced_waveform[
+            ..., 340 * samples_per_frame:500 * samples_per_frame] == 0)
+        assert chain.torch.all(spaced_waveform[
+            ..., 500 * samples_per_frame:] == 2)
         report = {"scenes": [{
             "index": 1, "id": "intro", "references": [{
                 "tag": "motion", "kind": "video",
@@ -216,6 +266,28 @@ async def check():
         assert audio_payload["source_audio"]["seek_seconds"] == 1.25
         assert chain._PLAN_STUDIO_SOURCE_PREVIEWS[
             audio_payload["token"]]["source_audio"] == source_audio_record
+
+        captured_waveform_record = {}
+        original_waveform = chain._ensure_plan_studio_source_waveform
+        try:
+            async def fake_waveform(record):
+                captured_waveform_record.update(record)
+                return str(source_audio_file)
+
+            chain._ensure_plan_studio_source_waveform = fake_waveform
+            waveform_request = types.SimpleNamespace(query={
+                "token": audio_payload["token"],
+                "frame_count": "840",
+            })
+            waveform_response = await chain._plan_studio_source_waveform(
+                waveform_request)
+        finally:
+            chain._ensure_plan_studio_source_waveform = original_waveform
+        assert waveform_response.status == 200
+        assert captured_waveform_record["frame_count"] == 840
+        # Extending editor-only waveform coverage must not mutate the stored
+        # presentation identity used to match the generated Plan.
+        assert source_audio_record["frame_count"] == 340
 
         try:
             chain._plan_studio_runtime_source_timeline = (

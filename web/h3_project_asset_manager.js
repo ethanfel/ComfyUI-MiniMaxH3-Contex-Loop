@@ -5,7 +5,7 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.56";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.57";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -100,6 +100,15 @@ function formatBytes(value) {
     return `${number.toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
+function formatLyricsTimestamp(seconds) {
+    const centiseconds = Math.max(0, Math.round((Number(seconds) || 0) * 100));
+    const minutes = Math.floor(centiseconds / 6000);
+    const remainder = centiseconds - minutes * 6000;
+    return `[${String(minutes).padStart(2, "0")}:${String(
+        Math.floor(remainder / 100),
+    ).padStart(2, "0")}.${String(remainder % 100).padStart(2, "0")}]`;
+}
+
 function assetDetail(asset) {
     const meta = asset.metadata ?? {};
     const pieces = [asset.kind, formatBytes(asset.size)];
@@ -162,6 +171,8 @@ function injectStyles() {
           border-radius:9px;background:#10141c;text-align:left}
         .h3pa-lyrics-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:8px}
         .h3pa-lyrics-head strong{font-size:14px}.h3pa-lyrics-head small{color:#8794a9;text-align:right}
+        .h3pa-lyrics-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px}
+        .h3pa-lyrics-time{color:#9fb0ca;font-variant-numeric:tabular-nums}
         .h3pa-lyrics textarea{flex:1;min-width:0;min-height:150px;width:100%;padding:10px 11px;resize:none;
           border:1px solid #4b576b;border-radius:7px;background:#0b0e14;color:inherit;font:13px/1.55 system-ui;
           white-space:pre-wrap}.h3pa-lyrics textarea:focus{outline:1px solid #70a9ff;border-color:#70a9ff}
@@ -560,8 +571,8 @@ function mount(node) {
             );
             const lyrics = el("textarea");
             lyrics.value = String(asset.lyrics ?? "");
-            lyrics.placeholder = "Paste or write the lyrics here…";
-            lyrics.title = "Lyrics are project notes stored with this audio asset. They do not enter prompts, generation, or the reference fingerprint. Changes save when you leave the field; Ctrl/Cmd+Enter saves immediately.";
+            lyrics.placeholder = "Paste lyrics, then stamp each line while the song plays…";
+            lyrics.title = "Lyrics are project notes stored with this audio asset. Add [MM:SS.xx] timestamps or paste SRT to show them in sync in Plan Studio. They do not enter prompts, generation, or the reference fingerprint. Changes save when you leave the field; Ctrl/Cmd+Enter saves immediately.";
             lyrics.setAttribute("aria-label", `Lyrics for ${asset.original_name || promptTag(asset)}`);
             let savedLyrics = lyrics.value;
             lyrics.addEventListener("change", async () => {
@@ -581,7 +592,39 @@ function mount(node) {
                 if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) return;
                 event.preventDefault(); lyrics.blur();
             });
-            lyricsPanel.append(lyricsHead, lyrics);
+            const lyricsActions = el("div", "h3pa-lyrics-actions");
+            const currentTime = el(
+                "span", "h3pa-lyrics-time", formatLyricsTimestamp(0),
+            );
+            audio.addEventListener("timeupdate", () => {
+                currentTime.textContent = formatLyricsTimestamp(audio.currentTime);
+            });
+            const stamp = button(
+                "Stamp selected line",
+                () => {
+                    const caret = lyrics.selectionStart ?? 0;
+                    const start = lyrics.value.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
+                    const nextBreak = lyrics.value.indexOf("\n", caret);
+                    const end = nextBreak < 0 ? lyrics.value.length : nextBreak;
+                    const line = lyrics.value.slice(start, end)
+                        .replace(/^(?:\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\])+\s*/, "");
+                    const stamped = `${formatLyricsTimestamp(audio.currentTime)}${line}`;
+                    lyrics.setRangeText(stamped, start, end, "end");
+                    const nextStart = Math.min(
+                        lyrics.value.length,
+                        start + stamped.length + (nextBreak < 0 ? 0 : 1),
+                    );
+                    const followingBreak = lyrics.value.indexOf("\n", nextStart);
+                    lyrics.setSelectionRange(
+                        nextStart,
+                        followingBreak < 0 ? lyrics.value.length : followingBreak,
+                    );
+                    lyrics.focus();
+                },
+                "Insert the player's current [MM:SS.xx] time at the beginning of the selected lyric line, then select the next line.",
+            );
+            lyricsActions.append(stamp, currentTime);
+            lyricsPanel.append(lyricsHead, lyricsActions, lyrics);
             preview.append(player, lyricsPanel); state.media = audio;
         }
     }

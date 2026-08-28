@@ -7001,10 +7001,14 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         raise ValueError("A non-empty H3 chain run_name is required.")
     raw_order = value.get("scene_order", [])
     raw_chapters = value.get("chapters", [])
+    raw_placements = value.get("placements", [])
     if not isinstance(raw_order, list) or len(raw_order) > MAX_SHOTS:
         raise ValueError("scene_order must contain at most %d scenes." % MAX_SHOTS)
     if not isinstance(raw_chapters, list) or len(raw_chapters) > MAX_SHOTS:
         raise ValueError("chapters must contain at most %d entries." % MAX_SHOTS)
+    if not isinstance(raw_placements, list) or len(raw_placements) > MAX_SHOTS:
+        raise ValueError(
+            "placements must contain at most %d entries." % MAX_SHOTS)
     scene_order: list[dict[str, Any]] = []
     scene_by_id: dict[str, int] = {}
     for offset, item in enumerate(raw_order):
@@ -7051,6 +7055,50 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
             "text": text,
         })
     chapters.sort(key=lambda item: int(item["start_scene"]))
+
+    placements: list[dict[str, Any]] = []
+    placed_ids: set[str] = set()
+    for offset, item in enumerate(raw_placements):
+        if not isinstance(item, dict):
+            raise ValueError(
+                "Editorial placement %d must be an object." % (offset + 1))
+        scene_id = _safe_name(item.get("scene_id"), "")
+        if not scene_id or (scene_by_id and scene_id not in scene_by_id):
+            raise ValueError(
+                "Editorial placement %d must target a scene in scene_order."
+                % (offset + 1))
+        if scene_id in placed_ids:
+            raise ValueError(
+                "Scene %s has more than one editorial placement." % scene_id)
+        placed_ids.add(scene_id)
+        start_frame = int(item.get("start_frame", 0))
+        if start_frame < 0 or start_frame > 864000:
+            raise ValueError(
+                "Editorial scene start frames must be between 0 and 864000.")
+        placements.append({
+            "scene_id": scene_id,
+            "scene": int(scene_by_id.get(
+                scene_id, item.get("scene", offset + 1))),
+            "start_frame": start_frame,
+        })
+    placements.sort(key=lambda item: int(item["scene"]))
+
+    raw_subtitles = value.get("subtitles", {})
+    if raw_subtitles is None:
+        raw_subtitles = {}
+    if not isinstance(raw_subtitles, dict):
+        raise ValueError("subtitles must be a JSON object.")
+    subtitle_mode = str(raw_subtitles.get("mode") or "off").strip().lower()
+    if subtitle_mode not in ("off", "preview_srt"):
+        raise ValueError("subtitles mode must be off or preview_srt.")
+    subtitle_offset = float(raw_subtitles.get("offset_seconds", 0.0))
+    if not math.isfinite(subtitle_offset) or abs(subtitle_offset) > 3600.0:
+        raise ValueError("Subtitle offset must be between -3600 and 3600 seconds.")
+    subtitles = {
+        "mode": subtitle_mode,
+        "asset_id": _safe_name(raw_subtitles.get("asset_id"), "")[:160],
+        "offset_seconds": subtitle_offset,
+    }
     return {
         "format": "h3_chain_editorial_v1",
         "run_name": normalized_run,
@@ -7059,6 +7107,8 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
                               timespec="seconds").replace("+00:00", "Z")),
         "chapters": chapters,
         "scene_order": scene_order,
+        "placements": placements,
+        "subtitles": subtitles,
     }
 
 
@@ -7066,7 +7116,8 @@ def _load_run_editorial(run_name: Any) -> dict[str, Any]:
     normalized = _safe_name(run_name, "")
     empty = {
         "format": "h3_chain_editorial_v1", "run_name": normalized,
-        "chapters": [], "scene_order": [],
+        "chapters": [], "scene_order": [], "placements": [],
+        "subtitles": {"mode": "off", "asset_id": "", "offset_seconds": 0.0},
     }
     if not normalized:
         return empty
@@ -7079,6 +7130,150 @@ def _load_run_editorial(run_name: Any) -> dict[str, Any]:
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         _LOG.warning("Ignoring invalid H3 run editorial sidecar %s: %s", path, exc)
         return empty
+
+
+def _editorial_timeline_records(
+        run_name: Any, segments: list[dict[str, Any]]) -> tuple[
+            dict[str, Any], list[dict[str, Any]], int]:
+    """Resolve editorial clip positions without changing the chain manifest."""
+    editorial = _load_run_editorial(run_name)
+    requested = {
+        str(item.get("scene_id") or ""): int(item.get("start_frame", 0))
+        for item in editorial.get("placements", [])
+        if isinstance(item, dict)
+    }
+    records: list[dict[str, Any]] = []
+    cursor = 0
+    for offset, segment in enumerate(segments, start=1):
+        scene_id = str(segment.get("id") or "clip_%04d" % offset)
+        delivered = int(segment["delivered_frames"])
+        start = max(cursor, int(requested.get(scene_id, cursor)))
+        if start > cursor:
+            records.append({
+                "kind": "gap",
+                "before_scene": int(segment.get("index", offset)),
+                "before_scene_id": scene_id,
+                "start_frame": cursor,
+                "frame_count": start - cursor,
+            })
+        records.append({
+            "kind": "scene",
+            "scene": int(segment.get("index", offset)),
+            "scene_id": scene_id,
+            "start_frame": start,
+            "frame_count": delivered,
+            "segment": segment,
+        })
+        cursor = start + delivered
+    return editorial, records, cursor
+
+
+def _parse_timed_lyrics(value: Any) -> list[dict[str, Any]]:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+
+    def srt_seconds(groups: tuple[str, str, str, str]) -> float:
+        hours, minutes, seconds, fraction = groups
+        milliseconds = int((fraction + "00")[:3])
+        return (int(hours) * 3600 + int(minutes) * 60 + int(seconds) +
+                milliseconds / 1000.0)
+
+    pattern = re.compile(
+        r"(?:^|\n)(?:\d+\s*\n)?\s*"
+        r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*"
+        r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})[^\n]*\n"
+        r"([\s\S]*?)(?=\n{2,}|$)")
+    cues: list[dict[str, Any]] = []
+    for match in pattern.finditer(text):
+        start = srt_seconds(match.groups()[0:4])
+        end = srt_seconds(match.groups()[4:8])
+        cue_text = match.group(9).strip()
+        if cue_text and end > start:
+            cues.append({"start": start, "end": end, "text": cue_text})
+    if cues:
+        return sorted(cues, key=lambda item: float(item["start"]))
+
+    offset = 0.0
+    starts: list[dict[str, Any]] = []
+    for line in text.split("\n"):
+        offset_match = re.fullmatch(
+            r"\s*\[offset:([+-]?\d+)\]\s*", line, re.IGNORECASE)
+        if offset_match:
+            offset = int(offset_match.group(1)) / 1000.0
+            continue
+        timestamps = list(re.finditer(
+            r"\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]", line))
+        if not timestamps:
+            continue
+        cue_text = re.sub(r"\[[^\]]+\]", "", line).strip()
+        if not cue_text:
+            continue
+        for timestamp in timestamps:
+            fraction = str(timestamp.group(3) or "0")
+            scale = 1000.0 if len(fraction) == 3 else (
+                100.0 if len(fraction) == 2 else 10.0)
+            start = (int(timestamp.group(1)) * 60 +
+                     int(timestamp.group(2)) + int(fraction) / scale + offset)
+            starts.append({"start": max(0.0, start), "text": cue_text})
+    starts.sort(key=lambda item: float(item["start"]))
+    for index, cue in enumerate(starts):
+        following = (float(starts[index + 1]["start"])
+                     if index + 1 < len(starts) else float(cue["start"]) + 4.0)
+        cues.append({
+            **cue,
+            "end": max(float(cue["start"]) + 0.1, following),
+        })
+    return cues
+
+
+def _editorial_subtitle_cues(
+        run_name: str, editorial: dict[str, Any], total_frames: int
+        ) -> list[dict[str, Any]]:
+    settings = editorial.get("subtitles") or {}
+    if settings.get("mode") != "preview_srt":
+        return []
+    asset_id = str(settings.get("asset_id") or "")
+    if not asset_id:
+        raise ValueError(
+            "Editorial subtitles are enabled but no lyrics asset is selected.")
+    catalog = ProjectAssetStore(_input_root(), _output_root()).load(run_name)
+    asset = next((item for item in catalog.get("assets", [])
+                  if str(item.get("id") or "") == asset_id), None)
+    if asset is None or asset.get("kind") != "audio":
+        raise ValueError(
+            "Editorial subtitle audio asset %s is missing." % asset_id)
+    cues = _parse_timed_lyrics(asset.get("lyrics"))
+    if not cues:
+        raise ValueError(
+            "Editorial subtitle asset @%s has no LRC or SRT timestamps."
+            % str(asset.get("tag") or "audio"))
+    shift = float(settings.get("offset_seconds", 0.0))
+    duration = int(total_frames) / float(FPS)
+    result = []
+    for cue in cues:
+        start = max(0.0, float(cue["start"]) + shift)
+        end = min(duration, float(cue["end"]) + shift)
+        if end > start:
+            result.append({"start": start, "end": end,
+                           "text": str(cue["text"])})
+    return result
+
+
+def _srt_timestamp(seconds: float) -> str:
+    milliseconds = max(0, int(round(float(seconds) * 1000.0)))
+    hours, remainder = divmod(milliseconds, 3600000)
+    minutes, remainder = divmod(remainder, 60000)
+    whole_seconds, milliseconds = divmod(remainder, 1000)
+    return "%02d:%02d:%02d,%03d" % (
+        hours, minutes, whole_seconds, milliseconds)
+
+
+def _write_editorial_srt(path: str, cues: list[dict[str, Any]]) -> None:
+    blocks = []
+    for index, cue in enumerate(cues, start=1):
+        blocks.append("%d\n%s --> %s\n%s" % (
+            index, _srt_timestamp(float(cue["start"])),
+            _srt_timestamp(float(cue["end"])), str(cue["text"])))
+    _atomic_text(path, "\n\n".join(blocks) + "\n")
 
 
 def _effective_editor_plan(plan: dict[str, Any]) -> dict[str, Any]:
@@ -17679,6 +17874,64 @@ def _generated_audio(manifest: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _audio_with_editorial_timeline(
+    audio: dict[str, Any],
+    timeline_records: list[dict[str, Any]],
+    generated_frames: int,
+    editorial_frames: int,
+    label: str,
+) -> dict[str, Any]:
+    """Insert silence where the editorial video track contains empty time."""
+    if int(editorial_frames) == int(generated_frames):
+        return audio
+    waveform, sample_rate = _audio_waveform_3d(audio, label)
+    expected_input = sample_boundary_from_frames(
+        int(generated_frames), sample_rate, FPS)
+    if int(waveform.shape[-1]) < expected_input:
+        raise ValueError(
+            "%s contains %d samples; %d are required before editorial spacing."
+            % (label, int(waveform.shape[-1]), expected_input))
+    total_samples = sample_boundary_from_frames(
+        int(editorial_frames), sample_rate, FPS)
+    output = torch.zeros(
+        (*tuple(waveform.shape[:-1]), total_samples),
+        dtype=waveform.dtype, device=waveform.device)
+    source_frame = 0
+    for record in timeline_records:
+        if record["kind"] != "scene":
+            continue
+        frames = int(record["frame_count"])
+        source_start = sample_boundary_from_frames(
+            source_frame, sample_rate, FPS)
+        source_end = sample_boundary_from_frames(
+            source_frame + frames, sample_rate, FPS)
+        target_start = sample_boundary_from_frames(
+            int(record["start_frame"]), sample_rate, FPS)
+        target_end = sample_boundary_from_frames(
+            int(record["start_frame"]) + frames, sample_rate, FPS)
+        source = waveform[..., source_start:source_end]
+        budget = target_end - target_start
+        if int(source.shape[-1]) > budget:
+            source = source[..., :budget]
+        elif int(source.shape[-1]) < budget:
+            source = torch.nn.functional.pad(
+                source, (0, budget - int(source.shape[-1])))
+        output[..., target_start:target_end] = source
+        source_frame += frames
+    if source_frame != int(generated_frames):
+        raise ValueError(
+            "Editorial audio placed %d generated frames; expected %d."
+            % (source_frame, int(generated_frames)))
+    result = {"waveform": output, "sample_rate": sample_rate}
+    for key in (
+            AUDIO_WITH_OVERLAP_WAVEFORM_KEY,
+            AUDIO_WITH_OVERLAP_FRAMES_KEY,
+            AUDIO_TRIM_FRAMES_KEY):
+        if key in audio:
+            result[key] = audio[key]
+    return result
+
+
 def _validate_prelude(manifest: dict[str, Any]) -> dict[str, Any] | None:
     value = manifest.get("prelude")
     if value is None:
@@ -18242,6 +18495,73 @@ def _blend_video_records(
         int(item["blend_frames"]) for item in records) else [])
 
 
+def _insert_editorial_gap_records(
+    records: list[dict[str, Any]],
+    timeline_records: list[dict[str, Any]],
+    segments: list[dict[str, Any]],
+    compatibility: dict[str, Any],
+) -> list[dict[str, Any]]:
+    gaps = {
+        int(item["before_scene"]): int(item["frame_count"])
+        for item in timeline_records if item.get("kind") == "gap"
+    }
+    if not gaps:
+        return records
+    width = int(compatibility.get("width", 0))
+    height = int(compatibility.get("height", 0))
+    if (width < 1 or height < 1) and av is not None:
+        first_path = next((
+            str(item.get("path") or "") for item in records
+            if item.get("kind") != "gap" and item.get("path")
+        ), "")
+        if first_path:
+            with av.open(first_path, mode="r") as container:
+                streams = list(container.streams.video)
+                if len(streams) == 1:
+                    width = int(streams[0].codec_context.width or 0)
+                    height = int(streams[0].codec_context.height or 0)
+    if width < 1 or height < 1:
+        raise ValueError(
+            "Editorial black-gap assembly could not resolve video dimensions.")
+    segment_by_scene = {
+        int(item.get("index", offset)): item
+        for offset, item in enumerate(segments, start=1)
+    }
+    result: list[dict[str, Any]] = []
+    for record in records:
+        scene = int(record.get("scene_index", 0))
+        gap_frames = gaps.get(scene, 0)
+        if gap_frames:
+            # Empty track space is a hard black interval. It deliberately ends
+            # any incoming xfade/tone boundary before this scene.
+            source = segment_by_scene.get(scene)
+            if source is None:
+                raise ValueError(
+                    "Editorial gap targets missing scene %d." % scene)
+            record = dict(record)
+            record.update({
+                "path": _absolute_output_path(source["segment"]),
+                "input_frames": int(source["delivered_frames"]),
+                "delivered_frames": int(source["delivered_frames"]),
+                "blend_frames": 0,
+                "skip_frames": 0,
+            })
+            record.pop("tone_match", None)
+            record.pop("tone_match_prefix", None)
+            result.append({
+                "kind": "gap",
+                "before_scene": scene,
+                "input_frames": gap_frames,
+                "delivered_frames": gap_frames,
+                "blend_frames": 0,
+                "skip_frames": 0,
+                "width": width,
+                "height": height,
+            })
+        result.append(record)
+    return result
+
+
 def _boundary_luma(array: Any, stride: int = 1) -> Any:
     """Return gamma-domain Rec.709 luma for inexpensive boundary analysis."""
     if np is None:
@@ -18750,7 +19070,14 @@ def _ffmpeg_blend_video(
     """Cumulatively xfade overlap-bearing segments without changing duration."""
     command = [ffmpeg, "-y"]
     for record in records:
-        command.extend(["-i", record["path"]])
+        if record.get("kind") == "gap":
+            command.extend([
+                "-f", "lavfi", "-i",
+                "color=c=black:s=%dx%d:r=%d" % (
+                    int(record["width"]), int(record["height"]), FPS),
+            ])
+        else:
+            command.extend(["-i", record["path"]])
     command.extend(["-f", "ffmetadata", "-i", metadata_path])
 
     filters = []
@@ -18836,7 +19163,12 @@ def _pyav_blend_video(
 
     output = None
     try:
-        with av.open(records[0]["path"], mode="r") as first:
+        first_record = next(
+            (record for record in records if record.get("kind") != "gap"),
+            None)
+        if first_record is None:
+            raise ValueError("H3 editorial assembly requires at least one scene.")
+        with av.open(first_record["path"], mode="r") as first:
             streams = list(first.streams.video)
             if len(streams) != 1:
                 raise ValueError("The first H3 blend input must have one video stream.")
@@ -18867,8 +19199,12 @@ def _pyav_blend_video(
             written += 1
 
         for record_index, record in enumerate(records):
-            iterator = iter(_decode_rgb_frames(record["path"]))
             expected_input = int(record["input_frames"])
+            if record.get("kind") == "gap":
+                black = np.zeros((height, width, 3), dtype=np.uint8)
+                iterator = (black for _offset in range(expected_input))
+            else:
+                iterator = iter(_decode_rgb_frames(record["path"]))
             blend = int(record["blend_frames"])
             tone_prefix_luts = [
                 _boundary_tone_lut(match)
@@ -20063,6 +20399,12 @@ class MiniMaxH3ChainAssemble:
                 upscale_manifest, upscale_segments)
         segments = _validate_manifest(manifest)
         prelude = _validate_prelude(manifest)
+        run_name = _safe_name(manifest.get("run_name"), "h3_chain")
+        editorial, editorial_records, editorial_extension_frames = (
+            _editorial_timeline_records(run_name, segments))
+        generated_extension_frames = int(manifest["total_delivered_frames"])
+        editorial_gap_frames = (
+            editorial_extension_frames - generated_extension_frames)
         tone_match_mode = str(
             boundary_tone_match if boundary_tone_match is not None
             else "off").strip().lower()
@@ -20092,6 +20434,11 @@ class MiniMaxH3ChainAssemble:
                 generated_warning = (
                     "generated audio sidecar unavailable: %s" % exc)
                 _LOG.warning("H3 Chain %s", generated_warning)
+        if generated_track is not None and editorial_gap_frames:
+            generated_track = _audio_with_editorial_timeline(
+                generated_track, editorial_records,
+                generated_extension_frames, editorial_extension_frames,
+                "H3 generated editorial audio")
         audio = None
         if selected == "source":
             if source_timeline is None:
@@ -20113,7 +20460,7 @@ class MiniMaxH3ChainAssemble:
                     "H3 Chain Assemble")
                 source_audio = _source_timeline_scene_audio(
                     source_timeline, 0,
-                    int(manifest["total_delivered_frames"]))
+                    editorial_extension_frames)
             else:
                 _validate_source_audio_hash(
                     manifest["compatibility"], source_audio,
@@ -20121,7 +20468,7 @@ class MiniMaxH3ChainAssemble:
             waveform, sample_rate = _validate_audio(
                 source_audio, "H3 Chain Assemble source audio")
             required_samples = int(round(
-                int(manifest["total_delivered_frames"]) /
+                editorial_extension_frames /
                 float(FPS) * sample_rate))
             if int(waveform.shape[-1]) < required_samples:
                 if manifest["compatibility"].get(
@@ -20134,7 +20481,7 @@ class MiniMaxH3ChainAssemble:
                         "H3 Chain Assemble source audio has %d samples; at least "
                         "%d are required for %d video frames." %
                         (int(waveform.shape[-1]), required_samples,
-                         int(manifest["total_delivered_frames"])))
+                         editorial_extension_frames))
             else:
                 audio = source_audio
         elif selected == "generated":
@@ -20142,7 +20489,7 @@ class MiniMaxH3ChainAssemble:
         elif selected != "none":
             raise ValueError("Unknown H3 chain assembly audio source %r."
                              % selected)
-        extension_frames = int(manifest["total_delivered_frames"])
+        extension_frames = editorial_extension_frames
         prelude_frames = int(prelude["frame_count"]) if prelude is not None else 0
         total_output_frames = prelude_frames + extension_frames
         if audio is not None and prelude is not None:
@@ -20151,8 +20498,16 @@ class MiniMaxH3ChainAssemble:
         if generated_sidecar_audio is not None and prelude is not None:
             generated_sidecar_audio = _audio_with_prelude(
                 generated_sidecar_audio, extension_frames, prelude)
+        subtitle_cues = _editorial_subtitle_cues(
+            run_name, editorial, editorial_extension_frames)
+        if prelude_frames and subtitle_cues:
+            subtitle_shift = prelude_frames / float(FPS)
+            subtitle_cues = [{
+                **cue,
+                "start": float(cue["start"]) + subtitle_shift,
+                "end": float(cue["end"]) + subtitle_shift,
+            } for cue in subtitle_cues]
 
-        run_name = _safe_name(manifest.get("run_name"), "h3_chain")
         run_dir = os.path.join(_output_root(), "h3_chains", run_name)
         if upscale_manifest is not None:
             final_dir = upscale_support._profile_paths(
@@ -20168,6 +20523,8 @@ class MiniMaxH3ChainAssemble:
         generated_sidecar_path = (
             os.path.splitext(final_path)[0] + ".generated.wav"
             if generated_sidecar_audio is not None else None)
+        subtitle_path = (os.path.splitext(final_path)[0] + ".srt"
+                         if subtitle_cues else None)
         concat_path = os.path.join(final_dir, ".concat.txt")
         video_tmp = os.path.join(final_dir, ".video.tmp.mp4")
         final_tmp = os.path.join(final_dir, ".final.tmp.mp4")
@@ -20203,7 +20560,8 @@ class MiniMaxH3ChainAssemble:
                 blend_schedule=blend_schedule,
                 video_vae=blend_video_vae,
                 temporary_paths=scheduled_blend_temps,
-                force_records=color_stabilization_mode != "off")
+                force_records=(color_stabilization_mode != "off"
+                               or editorial_gap_frames > 0))
             if tone_match_mode == "auto" and blend_records:
                 blend_records = _auto_boundary_tone_match_records(
                     blend_records)
@@ -20211,6 +20569,10 @@ class MiniMaxH3ChainAssemble:
                     blend_records):
                 blend_records = _auto_scene_color_stabilization_records(
                     blend_records)
+            if editorial_gap_frames:
+                blend_records = _insert_editorial_gap_records(
+                    blend_records, editorial_records, segments,
+                    manifest.get("compatibility") or {})
             blend_enabled = bool(blend_records)
             has_visual_blends = any(
                 int(record.get("blend_frames", 0))
@@ -20297,6 +20659,8 @@ class MiniMaxH3ChainAssemble:
             if generated_sidecar_path is not None:
                 _atomic_wav(generated_sidecar_audio, generated_sidecar_path)
             os.replace(final_tmp, final_path)
+            if subtitle_path is not None:
+                _write_editorial_srt(subtitle_path, subtitle_cues)
         finally:
             for temporary in (concat_path, video_tmp, final_tmp, wav_tmp,
                               metadata_tmp, *scheduled_blend_temps):
@@ -20309,12 +20673,22 @@ class MiniMaxH3ChainAssemble:
 
         output_copy = (_copy_final_to_output(final_path, output_subfolder)
                        if copy_to_output else None)
+        subtitle_copy = None
+        if output_copy is not None and subtitle_path is not None:
+            subtitle_copy = os.path.splitext(output_copy)[0] + ".srt"
+            shutil.copy2(subtitle_path, subtitle_copy)
         sidecar_status = (
             "; generated audio -> %s" % generated_sidecar_path
             if generated_sidecar_path is not None else
             ("; %s" % generated_warning if generated_warning else ""))
         copy_status = ("; output copy -> %s" % output_copy
                        if output_copy is not None else "")
+        subtitle_status = ("; subtitles -> %s" % subtitle_path
+                           if subtitle_path is not None else "")
+        if subtitle_copy is not None:
+            subtitle_status += " + %s" % subtitle_copy
+        gap_status = ("; %d black editorial frames" % editorial_gap_frames
+                      if editorial_gap_frames else "")
         resolved_blends = [
             int(record["blend_frames"])
             for record in blend_records[1:]
@@ -20338,11 +20712,11 @@ class MiniMaxH3ChainAssemble:
             if color_stabilization_mode == "scene_1_anchor" else "")
         clip_kind = ("HQ clips" if upscale_manifest is not None
                      else "generated clips")
-        status = "assembled %d %s%s with %s%s%s%s -> %s%s%s" % (
+        status = "assembled %d %s%s with %s%s%s%s%s -> %s%s%s%s" % (
             len(segments), clip_kind,
             " + existing-video prelude" if prelude else "",
-            backend, blend_status, tone_status, color_status, final_path,
-            sidecar_status, copy_status)
+            backend, blend_status, tone_status, color_status, gap_status,
+            final_path, sidecar_status, copy_status, subtitle_status)
         _LOG.info("H3 Chain %s", status)
         published_video = output_copy or final_path
         _publish_final_review_preview(manifest, published_video, status)
@@ -22121,6 +22495,25 @@ async def _plan_studio_source_waveform(request):
     if record is None:
         return web.json_response(
             {"error": error}, status=400 if "invalid" in str(error) else 410)
+    requested = request.query.get("frame_count")
+    if requested not in (None, ""):
+        try:
+            requested_frames = int(requested)
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"error": "Source waveform frame_count must be an integer."},
+                status=400)
+        if requested_frames < 1 or requested_frames > 864000:
+            return web.json_response({
+                "error": (
+                    "Source waveform frame_count must be between 1 and "
+                    "864000.")}, status=400)
+        # The registered source file is served whole. Let the editor request
+        # waveform coverage for its longer editorial arrangement without
+        # requiring Plan Studio to be queued again after every clip move.
+        record = dict(record)
+        record["frame_count"] = max(
+            int(record.get("frame_count", 0)), requested_frames)
     try:
         path = await _ensure_plan_studio_source_waveform(record)
     except asyncio.CancelledError:

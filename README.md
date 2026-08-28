@@ -179,6 +179,16 @@ metadata remain on disk.
 Repository-native references remain available under [`docs/`](docs/) and in
 the [complete Plan format guide](H3_CHAIN_FORMAT_GUIDE.md).
 
+Plan Studio's timeline is an editorial track, not only a contiguous scene
+list. Drag a scene by its timeline handle or enter an exact start time in the
+Scene panel. Scene starts snap to the 24 fps frame clock; scenes cannot overlap,
+and every uncovered interval is previewed and assembled as black video.
+Generation order, checkpoints, context dependencies, and branch ancestry stay
+unchanged. Generated audio is silent during an editorial gap, while a selected
+Source Timeline soundtrack continues on the absolute project clock. Audio-asset
+lyrics can be stamped as LRC (or pasted as SRT), previewed on the subtitle row,
+and exported as an optional `.srt` beside the assembled movie.
+
 Checkpoint Manager identifies saved takes by scene and inferred branch, previews
 saved media and exact video/audio dependencies, and safely deletes inactive
 leaves one revision at a time. When an independent saved take can safely fill

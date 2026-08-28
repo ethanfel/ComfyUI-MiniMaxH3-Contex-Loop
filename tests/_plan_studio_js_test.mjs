@@ -3,19 +3,28 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
+    locateStudioTimelineSegment,
     locateStudioTimelineSecond,
     h3StudioGridMarkers,
     matchingStudioCheckpoint,
     matchingStudioSourceAudio,
     matchingStudioSourceScene,
+    parseStudioTimecode,
+    parseTimedLyrics,
     studioCheckpointSignature,
     studioContextWindowLayout,
     studioContextWindowStartAtRatio,
+    studioEditorialSceneStartSeconds,
+    studioRulerTicks,
     studioSceneStartSeconds,
     studioSourceAudioSecond,
     studioSourceSecond,
     studioTimelineLayout,
+    studioTimelineSegments,
+    studioTimelineTotalSeconds,
+    studioWaveformIntervalSamples,
     studioWaveformSceneSamples,
+    timedLyricAtSecond,
 } from "../web/h3_chain_plan_studio_core.mjs";
 import {
     applySceneTransitionPreset,
@@ -46,7 +55,7 @@ assert.ok(Math.abs(
 const fittedTimeline = studioTimelineLayout(rows, 600, 1);
 assert.equal(fittedTimeline.zoom, 1);
 assert.ok(Math.abs(
-    fittedTimeline.widths.reduce((total, value) => total + value, 0) + 6 - 600,
+    fittedTimeline.widths.reduce((total, value) => total + value, 0) - 600,
 ) < 1e-9);
 assert.ok(fittedTimeline.widths[0] > fittedTimeline.widths[1]);
 const expandedTimeline = studioTimelineLayout(rows, 600, 2);
@@ -56,6 +65,51 @@ assert.ok(expandedTimeline.widths.every(
 ));
 assert.equal(studioTimelineLayout(rows, 600, .25).zoom, 1);
 assert.equal(studioTimelineLayout(rows, 600, 20).zoom, 6);
+
+const placedTimeline = studioTimelineSegments(rows, [
+    {scene_id:"two", start_frame:480},
+]);
+assert.deepEqual(placedTimeline.map((segment) => segment.kind), [
+    "scene", "gap", "scene", "scene",
+]);
+assert.equal(placedTimeline[1].startFrame, 362);
+assert.equal(placedTimeline[1].durationFrames, 118);
+assert.equal(placedTimeline[2].startFrame, 480);
+assert.equal(studioEditorialSceneStartSeconds(placedTimeline, 1), 20);
+assert.equal(studioTimelineTotalSeconds(placedTimeline), 1160 / 24);
+assert.equal(locateStudioTimelineSegment(
+    placedTimeline, 18,
+).kind, "gap");
+assert.equal(locateStudioTimelineSegment(
+    placedTimeline, 20,
+).sceneIndex, 1);
+const placedLayout = studioTimelineLayout(
+    rows, 600, 1, [{scene_id:"two", start_frame:480}],
+);
+assert.equal(placedLayout.segments.length, 4);
+assert.ok(Math.abs(
+    placedLayout.widths.reduce((total, value) => total + value, 0) - 600,
+) < 1e-9);
+assert.equal(parseStudioTimecode("90.5"), 90.5);
+assert.equal(parseStudioTimecode("15.000s"), 15);
+assert.equal(parseStudioTimecode("1:30.5"), 90.5);
+assert.equal(parseStudioTimecode("1:02:03"), 3723);
+assert.throws(() => parseStudioTimecode("1:bad"));
+assert.ok(studioRulerTicks(90, 900).some((tick) => tick.major));
+
+const lrcCues = parseTimedLyrics(
+    "[00:01.5]First line\n[00:03.25]Second line",
+);
+assert.equal(lrcCues[0].startSeconds, 1.5);
+assert.equal(lrcCues[0].endSeconds, 3.25);
+assert.equal(timedLyricAtSecond(lrcCues, 2)?.text, "First line");
+assert.equal(timedLyricAtSecond(lrcCues, 4)?.text, "Second line");
+const srtCues = parseTimedLyrics(
+    "1\n00:00:02,000 --> 00:00:04,500\nA subtitle\n",
+);
+assert.deepEqual(srtCues, [{
+    startSeconds:2, endSeconds:4.5, text:"A subtitle",
+}]);
 
 const contextWindow = studioContextWindowLayout(340, 39, 100);
 assert.deepEqual(contextWindow, {
@@ -121,6 +175,13 @@ assert.deepEqual(
         rows, 1,
     ).slice(0, 2),
     [30, 31],
+);
+assert.deepEqual(
+    studioWaveformIntervalSamples(
+        {points_per_second:2, samples:Array.from({length:90}, (_value, index) => index)},
+        2.5, 1.5,
+    ),
+    [5, 6, 7],
 );
 
 const exactGrid = h3StudioGridMarkers(345, 39, "masked_av");
@@ -226,7 +287,10 @@ assert.doesNotMatch(
 assert.match(source, /SOURCE AUDIO/);
 assert.match(source, /SOURCE_AUDIO_MUTES_PROPERTY/);
 assert.match(source, /studioSourceAudioSecond/);
-assert.match(source, /studioWaveformSceneSamples/);
+assert.match(source, /studioWaveformIntervalSamples/);
+assert.match(source, /Editorial start/);
+assert.match(source, /Black editorial gap/);
+assert.match(source, /SUBTITLES/);
 assert.match(source, /Source Timeline connected · no audio/);
 assert.match(source, /No active path-backed motion reference in this Plan/);
 assert.match(source, /state\.sourceLayer\.hidden = !hasMotion/);
