@@ -214,6 +214,8 @@ EXTERNAL_CONTEXT_TYPE = "H3_CHAIN_EXTERNAL_CONTEXT"
 REFERENCE_SCHEDULE_TYPE = "H3_REFERENCE_SCHEDULE"
 TAGGED_REFERENCE_TYPE = "H3_TAGGED_REFERENCES"
 REFMOD_SOURCE_LIST_TYPE = "H3_REF_LIST"
+TAGGED_SCENE_OPTIONS_TYPE = "H3_TAGGED_SCENE_OPTIONS"
+SCENE_DATA_TYPE = "H3_SCENE_DATA"
 SEMANTIC_ANCHOR_DRAFT_TYPE = "H3_SEMANTIC_ANCHOR_DRAFT"
 SEMANTIC_PRESENTATION_TYPE = "H3_SEMANTIC_PRESENTATION"
 LAZY_MOTION_SOURCE_TYPE = "H3_LAZY_MOTION_SOURCE"
@@ -227,6 +229,8 @@ BOUNDARY_ANCHOR_PREPASS_TYPE = "H3_BOUNDARY_ANCHOR_PREPASS"
 BOUNDARY_ANCHORS_TYPE = "H3_BOUNDARY_ANCHORS"
 REFERENCE_SCHEDULE_VERSION = 1
 REFERENCE_FINGERPRINT_LINEAGE_VERSION = 1
+TAGGED_SCENE_OPTIONS_VERSION = 1
+SCENE_DATA_VERSION = 1
 SEMANTIC_ANCHOR_REGISTRY_VERSION = 1
 LAZY_MOTION_SOURCE_VERSION = 3
 SEMANTIC_PRESENTATION_VERSION = 1
@@ -11935,6 +11939,416 @@ class MiniMaxH3TaggedReferenceToVideo:
         }
 
 
+_TAGGED_SCENE_OPTION_DEFAULTS = {
+    "ref_image_size": "match",
+    "reference_policy": "strict",
+    "semantic_anchor_size": "512",
+    "semantic_anchor_mode": "timestamped_video",
+    "cache_for_upscale": True,
+    "conditioning_backend": "native_ref2va",
+    "align_audio_reference": False,
+}
+
+
+def _tagged_scene_options(value: Any = None) -> dict[str, Any]:
+    """Validate the strict, versioned settings carrier for the merged node."""
+    if value is None:
+        options = dict(_TAGGED_SCENE_OPTION_DEFAULTS)
+    elif not isinstance(value, dict):
+        raise ValueError(
+            "Tagged Scene Options must come from MiniMax H3 Tagged Scene "
+            "Options.")
+    else:
+        if int(value.get("version", -1)) != TAGGED_SCENE_OPTIONS_VERSION:
+            raise ValueError(
+                "Tagged Scene Options uses an unsupported contract version.")
+        options = {
+            key: value.get(key, default)
+            for key, default in _TAGGED_SCENE_OPTION_DEFAULTS.items()
+        }
+    ref_image_size = str(options["ref_image_size"]).strip().lower()
+    if ref_image_size not in ("match", "max"):
+        raise ValueError("Reference image size must be match or max.")
+    reference_policy = _reference_compliance_mode(
+        options["reference_policy"])
+    semantic_anchor_size = str(options["semantic_anchor_size"])
+    if semantic_anchor_size not in SEMANTIC_ANCHOR_SIZES:
+        raise ValueError(
+            "Semantic anchor size must be one of %s." %
+            (SEMANTIC_ANCHOR_SIZES,))
+    semantic_anchor_mode = _semantic_anchor_mode(
+        options["semantic_anchor_mode"])
+    conditioning_backend = _tagged_conditioning_backend(
+        options["conditioning_backend"])
+    for key in ("cache_for_upscale", "align_audio_reference"):
+        if not isinstance(options[key], bool):
+            raise ValueError(
+                "%s must be a boolean." % key.replace("_", " ").capitalize())
+    return {
+        "version": TAGGED_SCENE_OPTIONS_VERSION,
+        "ref_image_size": ref_image_size,
+        "reference_policy": reference_policy,
+        "semantic_anchor_size": semantic_anchor_size,
+        "semantic_anchor_mode": semantic_anchor_mode,
+        "cache_for_upscale": options["cache_for_upscale"],
+        "conditioning_backend": conditioning_backend,
+        "align_audio_reference": options["align_audio_reference"],
+    }
+
+
+def _modern_current_scene(state: Any) -> tuple[dict[str, Any], int, dict[str, Any]]:
+    """Return one current v0.5+ scene and reject legacy public contracts."""
+    if not isinstance(state, dict) or not isinstance(state.get("plan"), dict):
+        raise ValueError(
+            "Current Tagged Ref2VA Scene requires state from the current H3 "
+            "Chain Loop Start.")
+    plan = state["plan"]
+    if int(plan.get("version", -1)) != PLAN_VERSION:
+        raise ValueError(
+            "Current Tagged Ref2VA Scene does not expose the legacy 0.4 "
+            "contract. Keep the separate Current Shot and Tagged Ref2VA "
+            "nodes for that workflow.")
+    shots = plan.get("shots")
+    try:
+        index = int(state["index"])
+    except (KeyError, TypeError, ValueError) as exc:
+        raise ValueError(
+            "Current Tagged Ref2VA Scene received a state without a valid "
+            "scene index.") from exc
+    if (not isinstance(shots, list) or index < 1 or index > len(shots)
+            or not isinstance(shots[index - 1], dict)):
+        raise ValueError(
+            "Current Tagged Ref2VA Scene received a state outside its Plan.")
+    return plan, index, shots[index - 1]
+
+
+class MiniMaxH3TaggedSceneOptions:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "ref_image_size": (["match", "max"], {
+                    "default": "match",
+                    "tooltip": "Native Ref2VA reference-image sizing. This "
+                               "is separate from semantic-anchor resolution."}),
+                "reference_policy": (list(REFERENCE_COMPLIANCE_MODES), {
+                    "default": "strict",
+                    "tooltip": "Validation policy for prompt-driven @tags."}),
+                "semantic_anchor_size": (list(SEMANTIC_ANCHOR_SIZES), {
+                    "default": "512",
+                    "tooltip": "Qwen presentation size for #tag[timestamp] "
+                               "semantic anchors only."}),
+                "semantic_anchor_mode": (list(SEMANTIC_ANCHOR_MODES), {
+                    "default": "timestamped_video",
+                    "tooltip": "Present semantic anchors as timed video "
+                               "checkpoints or as a Picture storyboard."}),
+                "cache_for_upscale": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "Save native Ref2VA reference data for a "
+                               "later target-resolution pass."}),
+                "conditioning_backend": (list(TAGGED_CONDITIONING_BACKENDS), {
+                    "default": "native_ref2va",
+                    "tooltip": "Use native Ref2VA, or emit active visuals for "
+                               "the external MiniMaxH3Mod RefMod path."}),
+                "align_audio_reference": ("BOOLEAN", {
+                    "default": False,
+                    "tooltip": "Experimental: align only the current tagged "
+                               "source-audio reference to H3's target grid."}),
+            },
+        }
+
+    @classmethod
+    def VALIDATE_INPUTS(cls, **kwargs):
+        try:
+            _tagged_scene_options({
+                "version": TAGGED_SCENE_OPTIONS_VERSION,
+                **kwargs,
+            })
+        except ValueError as exc:
+            return str(exc)
+        return True
+
+    RETURN_TYPES = (TAGGED_SCENE_OPTIONS_TYPE,)
+    RETURN_NAMES = ("options",)
+    OUTPUT_TOOLTIPS = (
+        "Validated modern settings for Current Tagged Ref2VA Scene.",)
+    FUNCTION = "options"
+    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    DESCRIPTION = (
+        "Reusable modern settings for Current Tagged Ref2VA Scene. The "
+        "versioned carrier deliberately has no legacy 0.4 audio socket.")
+
+    def options(self, ref_image_size="match", reference_policy="strict",
+                semantic_anchor_size="512",
+                semantic_anchor_mode="timestamped_video",
+                cache_for_upscale=True,
+                conditioning_backend="native_ref2va",
+                align_audio_reference=False):
+        return (_tagged_scene_options({
+            "version": TAGGED_SCENE_OPTIONS_VERSION,
+            "ref_image_size": ref_image_size,
+            "reference_policy": reference_policy,
+            "semantic_anchor_size": semantic_anchor_size,
+            "semantic_anchor_mode": semantic_anchor_mode,
+            "cache_for_upscale": cache_for_upscale,
+            "conditioning_backend": conditioning_backend,
+            "align_audio_reference": align_audio_reference,
+        }),)
+
+
+_SCENE_DATA_FIELD_SPECS = {
+    "RefMod sources": ("refmod_sources", REFMOD_SOURCE_LIST_TYPE),
+    "Compiled prompt": ("compiled_prompt", "STRING"),
+    "Active references": ("active_references", "STRING"),
+    "Reference fingerprint": ("reference_fingerprint", "STRING"),
+    "Scene prompt": ("prompt", "STRING"),
+    "Scene number": ("clip_index", "INT"),
+    "Scene count": ("clip_count", "INT"),
+    "Shot ID": ("shot_id", "STRING"),
+    "Noise seed": ("noise_seed", "INT"),
+    "Raw length": ("length", "INT"),
+    "Steps": ("steps", "INT"),
+    "Width": ("width", "INT"),
+    "Height": ("height", "INT"),
+    "Audio start": ("audio_start", "FLOAT"),
+    "Audio duration": ("audio_duration", "FLOAT"),
+    "Source audio slice": ("source_audio_slice", "AUDIO"),
+    "Status": ("status", "STRING"),
+    "Reference image size": ("ref_image_size", "STRING"),
+    "Reference policy": ("reference_policy", "STRING"),
+    "Semantic anchor size": ("semantic_anchor_size", "STRING"),
+    "Semantic anchor mode": ("semantic_anchor_mode", "STRING"),
+    "Cache for upscale": ("cache_for_upscale", "BOOLEAN"),
+    "Conditioning backend": ("conditioning_backend", "STRING"),
+    "Align audio reference": ("align_audio_reference", "BOOLEAN"),
+}
+
+
+class MiniMaxH3CurrentTaggedScenePack:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "state": (STATE_TYPE, {
+                    "tooltip": "Resolved Current Shot state."}),
+                "clip_index": ("INT", {
+                    "tooltip": "Resolved one-based scene number."}),
+                "clip_count": ("INT", {
+                    "tooltip": "Total scene count."}),
+                "shot_id": ("STRING", {
+                    "tooltip": "Stable current scene ID."}),
+                "prompt": ("STRING", {
+                    "tooltip": "Resolved current scene prompt."}),
+                "noise_seed": ("INT", {
+                    "tooltip": "Resolved current scene seed."}),
+                "length": ("INT", {
+                    "tooltip": "Resolved H3 raw frame length."}),
+                "steps": ("INT", {
+                    "tooltip": "Resolved sampler step count."}),
+                "width": ("INT", {
+                    "tooltip": "Resolved generation width."}),
+                "height": ("INT", {
+                    "tooltip": "Resolved generation height."}),
+                "audio_start": ("FLOAT", {
+                    "tooltip": "Current scene source-audio start time."}),
+                "audio_duration": ("FLOAT", {
+                    "tooltip": "Current scene source-audio duration."}),
+                "source_audio_slice": ("AUDIO", {
+                    "tooltip": "Optional current source-audio reference."}),
+                "status": ("STRING", {
+                    "tooltip": "Current Shot diagnostic status."}),
+                "compiled_prompt": ("STRING", {
+                    "tooltip": "Tagged Ref2VA compiled prompt."}),
+                "active_references": ("STRING", {
+                    "tooltip": "Tagged Ref2VA scene reference summary."}),
+                "reference_fingerprint": ("STRING", {
+                    "tooltip": "Complete tagged reference lineage."}),
+                "refmod_sources": (REFMOD_SOURCE_LIST_TYPE, {
+                    "tooltip": "Active visual sources for external RefMod."}),
+                "options": (TAGGED_SCENE_OPTIONS_TYPE, {
+                    "tooltip": "Validated options used for this scene."}),
+            },
+        }
+
+    RETURN_TYPES = (SCENE_DATA_TYPE,)
+    RETURN_NAMES = ("scene_data",)
+    OUTPUT_TOOLTIPS = (
+        "Packed modern Current Shot and Tagged Ref2VA secondary values.",)
+    FUNCTION = "pack"
+    CATEGORY = "conditioning/minimax/contex_loop/internal"
+    DESCRIPTION = (
+        "Internal packer for the modern Current Tagged Ref2VA Scene node.")
+
+    def pack(self, state, clip_index, clip_count, shot_id, prompt, noise_seed,
+             length, steps, width, height, audio_start, audio_duration,
+             source_audio_slice, status, compiled_prompt, active_references,
+             reference_fingerprint, refmod_sources, options):
+        _modern_current_scene(state)
+        settings = _tagged_scene_options(options)
+        return ({
+            "version": SCENE_DATA_VERSION,
+            "clip_index": int(clip_index),
+            "clip_count": int(clip_count),
+            "shot_id": str(shot_id),
+            "prompt": str(prompt),
+            "noise_seed": int(noise_seed),
+            "length": int(length),
+            "steps": int(steps),
+            "width": int(width),
+            "height": int(height),
+            "audio_start": float(audio_start),
+            "audio_duration": float(audio_duration),
+            "source_audio_slice": source_audio_slice,
+            "status": str(status),
+            "compiled_prompt": str(compiled_prompt),
+            "active_references": str(active_references),
+            "reference_fingerprint": str(reference_fingerprint),
+            "refmod_sources": refmod_sources,
+            **{
+                key: settings[key]
+                for key in _TAGGED_SCENE_OPTION_DEFAULTS
+            },
+        },)
+
+
+class MiniMaxH3CurrentTaggedReferenceScene:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "state": (STATE_TYPE, {
+                    "tooltip": "Current state from H3 Chain Loop Start. "
+                               "Legacy 0.4 states must keep using the two "
+                               "separate nodes."}),
+                "clip": ("CLIP", {
+                    "tooltip": "H3 CLIP/text encoder used by Tagged Ref2VA."}),
+                "vae": ("VAE", {
+                    "tooltip": "H3 video VAE used by Tagged Ref2VA."}),
+                "audio_vae": ("VAE", {
+                    "tooltip": "H3 audio VAE used by tagged audio or video."}),
+                "references": (TAGGED_REFERENCE_TYPE, {
+                    "tooltip": "Final Tagged reference line, including any "
+                               "Semantic Anchor Bundle."}),
+            },
+            "optional": {
+                "options": (TAGGED_SCENE_OPTIONS_TYPE, {
+                    "tooltip": "Optional modern settings bundle. Leave "
+                               "disconnected for native Ref2VA defaults."}),
+            },
+        }
+
+    RETURN_TYPES = (STATE_TYPE, "CONDITIONING", "LATENT", SCENE_DATA_TYPE)
+    RETURN_NAMES = ("state", "positive", "latent", "scene_data")
+    OUTPUT_TOOLTIPS = (
+        "Current Shot state with resolved source-audio dependencies.",
+        "Scene conditioning from native Ref2VA or the external RefMod base.",
+        "Matching empty H3 AV latent.",
+        "Typed scene metadata. Use Scene Data Extract only for the values "
+        "your workflow actually needs.",
+    )
+    FUNCTION = "expand"
+    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    DESCRIPTION = (
+        "Modern compact replacement for Current Shot plus Tagged Ref2VA. It "
+        "keeps those established internals but removes their legacy 0.4 "
+        "public sockets and moves secondary outputs into scene_data.")
+
+    def expand(self, state, clip, vae, audio_vae, references, options=None):
+        _modern_current_scene(state)
+        if GraphBuilder is None:
+            raise RuntimeError(
+                "Current Tagged Ref2VA Scene requires ComfyUI GraphBuilder.")
+        settings = _tagged_scene_options(options)
+        graph = GraphBuilder()
+
+        current = graph.node("MiniMaxH3ChainCurrent", "CurrentScene")
+        current.set_input("state", state)
+        current.set_input(
+            "align_audio_reference", settings["align_audio_reference"])
+
+        tagged = graph.node(
+            "MiniMaxH3TaggedReferenceToVideo", "TaggedRef2VA")
+        for key, value in (
+                ("clip", clip), ("vae", vae), ("audio_vae", audio_vae),
+                ("references", references), ("state", current.out(0)),
+                ("clip_index", current.out(1)),
+                ("clip_count", current.out(2)), ("prompt", current.out(4)),
+                ("width", current.out(8)), ("height", current.out(9)),
+                ("length", current.out(6)),
+                ("ref_image_size", settings["ref_image_size"]),
+                ("reference_policy", settings["reference_policy"]),
+                ("semantic_anchor_size", settings["semantic_anchor_size"]),
+                ("semantic_anchor_mode", settings["semantic_anchor_mode"]),
+                ("cache_for_upscale", settings["cache_for_upscale"]),
+                ("conditioning_backend", settings["conditioning_backend"])):
+            tagged.set_input(key, value)
+
+        pack = graph.node(
+            "MiniMaxH3CurrentTaggedScenePack", "SceneData")
+        for key, value in (
+                ("state", current.out(0)),
+                ("clip_index", current.out(1)),
+                ("clip_count", current.out(2)), ("shot_id", current.out(3)),
+                ("prompt", current.out(4)), ("noise_seed", current.out(5)),
+                ("length", current.out(6)), ("steps", current.out(7)),
+                ("width", current.out(8)), ("height", current.out(9)),
+                ("audio_start", current.out(10)),
+                ("audio_duration", current.out(11)),
+                ("source_audio_slice", current.out(12)),
+                ("status", current.out(13)),
+                ("compiled_prompt", tagged.out(2)),
+                ("active_references", tagged.out(3)),
+                ("reference_fingerprint", tagged.out(4)),
+                ("refmod_sources", tagged.out(5)), ("options", settings)):
+            pack.set_input(key, value)
+
+        return {
+            "result": (
+                current.out(0), tagged.out(0), tagged.out(1), pack.out(0)),
+            "expand": graph.finalize(),
+        }
+
+
+class MiniMaxH3SceneDataExtract:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "scene_data": (SCENE_DATA_TYPE, {
+                    "tooltip": "scene_data from Current Tagged Ref2VA Scene."}),
+                "field": (list(_SCENE_DATA_FIELD_SPECS), {
+                    "default": "RefMod sources",
+                    "tooltip": "Select one former Current Shot or Tagged "
+                               "Ref2VA secondary output."}),
+            },
+        }
+
+    RETURN_TYPES = ("*",)
+    RETURN_NAMES = ("value",)
+    OUTPUT_TOOLTIPS = (
+        "Selected value; its visible socket type follows the field dropdown.",)
+    FUNCTION = "extract"
+    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    DESCRIPTION = (
+        "Extract one labeled value from modern scene_data. The frontend "
+        "updates this node's output socket to the selected concrete type.")
+
+    def extract(self, scene_data, field="RefMod sources"):
+        if (not isinstance(scene_data, dict)
+                or int(scene_data.get("version", -1)) != SCENE_DATA_VERSION):
+            raise ValueError(
+                "Scene Data Extract requires current scene_data from Current "
+                "Tagged Ref2VA Scene.")
+        spec = _SCENE_DATA_FIELD_SPECS.get(str(field))
+        if spec is None:
+            raise ValueError("Unknown scene_data field %r." % field)
+        key, _output_type = spec
+        if key not in scene_data:
+            raise ValueError(
+                "scene_data does not contain the selected %s value." % field)
+        return (scene_data[key],)
+
+
 def _external_prelude_paths(plan: dict[str, Any], fingerprint: str) -> dict[str, str]:
     directory = os.path.join(_run_dir(plan), "source")
     stem = "existing_video_%s" % str(fingerprint)[:20]
@@ -23297,6 +23711,11 @@ CHAIN_NODE_CLASS_MAPPINGS = {
     "MiniMaxH3SemanticAnchorConditioning": (
         MiniMaxH3SemanticAnchorConditioning),
     "MiniMaxH3TaggedReferenceToVideo": MiniMaxH3TaggedReferenceToVideo,
+    "MiniMaxH3TaggedSceneOptions": MiniMaxH3TaggedSceneOptions,
+    "MiniMaxH3CurrentTaggedScenePack": MiniMaxH3CurrentTaggedScenePack,
+    "MiniMaxH3CurrentTaggedReferenceScene": (
+        MiniMaxH3CurrentTaggedReferenceScene),
+    "MiniMaxH3SceneDataExtract": MiniMaxH3SceneDataExtract,
     "MiniMaxH3ChainExternalVideo": MiniMaxH3ChainExternalVideo,
     "MiniMaxH3ChainLoopStart": MiniMaxH3ChainLoopStart,
     "MiniMaxH3ChainCurrent": MiniMaxH3ChainCurrent,
@@ -23357,6 +23776,12 @@ CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3SemanticAnchorConditioning": (
         "MiniMax H3 Semantic Anchors (Internal)"),
     "MiniMaxH3TaggedReferenceToVideo": "MiniMax H3 Tagged Ref2VA",
+    "MiniMaxH3TaggedSceneOptions": "MiniMax H3 Tagged Scene Options",
+    "MiniMaxH3CurrentTaggedScenePack": (
+        "MiniMax H3 Current Tagged Scene Pack (Internal)"),
+    "MiniMaxH3CurrentTaggedReferenceScene": (
+        "MiniMax H3 Current Tagged Ref2VA Scene"),
+    "MiniMaxH3SceneDataExtract": "MiniMax H3 Scene Data Extract",
     "MiniMaxH3ChainExternalVideo": "MiniMax H3 Existing Video Context",
     "MiniMaxH3ChainLoopStart": "MiniMax H3 Contex Loop Start",
     "MiniMaxH3ChainCurrent": "MiniMax H3 Contex Loop Current Shot",

@@ -2,7 +2,7 @@ import {app} from "/scripts/app.js";
 import {
     createLegacyWidgetWidthController,
     graphNodes,
-} from "./h3_legacy_widget_width_fix_core.mjs?v=0.6.66";
+} from "./h3_legacy_widget_width_fix_core.mjs?v=0.6.67";
 
 const SETTING_ID = "MiniMaxH3ContexLoop.legacyWidgetWidthFix";
 const LEGACY_FIX_NODE = "LegacyWidgetWidthFix";

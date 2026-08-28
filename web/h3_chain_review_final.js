@@ -4,12 +4,12 @@ import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.6.66";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.66";
+} from "./h3_chain_plan_core.mjs?v=0.6.67";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.67";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.66";
+} from "./h3_plan_restore_core.mjs?v=0.6.67";
 import {
     acceptedPreviewDisposition,
     applyCheckpointRevisionSet,
@@ -22,7 +22,7 @@ import {
     reviewLocalDeadline,
     reviewPlanScenePrompt,
     reviewSeed,
-} from "./h3_chain_review_core.mjs?v=0.6.66";
+} from "./h3_chain_review_core.mjs?v=0.6.67";
 
 const NODE_NAME = "MiniMaxH3ChainReview";
 const PLAN_NAME = "MiniMaxH3ChainPlan";

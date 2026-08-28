@@ -224,6 +224,10 @@ def main():
         "MiniMaxH3ScheduledVideoReference",
         "MiniMaxH3ScheduledAudioReference",
         "MiniMaxH3ScheduledReferenceToVideo",
+        "MiniMaxH3TaggedSceneOptions",
+        "MiniMaxH3CurrentTaggedScenePack",
+        "MiniMaxH3CurrentTaggedReferenceScene",
+        "MiniMaxH3SceneDataExtract",
         "MiniMaxH3ChainExternalVideo",
         "MiniMaxH3ChainLoopStart",
         "MiniMaxH3ChainCurrent", "MiniMaxH3ChainContext",
@@ -273,6 +277,8 @@ def main():
     assert (ROOT / "web" / "h3_chain_scene_prompt_editor.js").is_file()
     assert (ROOT / "web" / "h3_reference_autoconnect.js").is_file()
     assert (ROOT / "web" / "h3_reference_autoconnect_core.mjs").is_file()
+    assert (ROOT / "web" / "h3_scene_data_extract.js").is_file()
+    assert (ROOT / "web" / "h3_scene_data_core.mjs").is_file()
     workflow_path = (ROOT / "example_workflows" / "Archive" /
                      "Looping Seamless Chain Global Refs Example - MiniMax H3.json")
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))

@@ -4,6 +4,15 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added a modern **Current Tagged Ref2VA Scene** composite that replaces the
+  visible Current Shot plus Tagged Ref2VA pair while reusing both established
+  execution paths internally. Its public outputs are only state, conditioning,
+  latent, and typed scene data. A separate versioned options node carries
+  reference/semantic/backend settings, and **Scene Data Extract** selects former
+  secondary outputs—including `refmod_sources`—with a concrete UI socket type.
+  The new route deliberately rejects the legacy 0.4 state contract and exposes
+  no legacy source-audio or blend socket; both original nodes remain unchanged.
+
 - Tagged Ref2VA now has an opt-in `external_refmod` conditioning backend for
   testing ComfyUI-MiniMaxH3Mod without duplicating native references. It keeps
   scene-local `@tag` selection and video slicing, emits text-only H3

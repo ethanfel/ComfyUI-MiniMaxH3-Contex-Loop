@@ -852,6 +852,46 @@ try:
     assert dedicated_inputs["presentation"]["semantic_anchor_mode"] == (
         "picture_storyboard")
     assert dedicated_expansion["result"][4] == combined_token
+
+    modern_state = {
+        "index": 1,
+        "plan": {
+            "version": chain.PLAN_VERSION,
+            "shots": [{"id": "scene_01"}],
+        },
+    }
+    modern_options = chain.MiniMaxH3TaggedSceneOptions().options(
+        "max", "soft", "768", "picture_storyboard", False,
+        "external_refmod", True)[0]
+    merged = chain.MiniMaxH3CurrentTaggedReferenceScene().expand(
+        modern_state, "clip", "video-vae", "audio-vae", tagged,
+        modern_options)
+    merged_graph = merged["expand"]
+    assert set(merged_graph) == {"CurrentScene", "TaggedRef2VA", "SceneData"}
+    assert merged_graph["CurrentScene"]["class_type"] == (
+        "MiniMaxH3ChainCurrent")
+    assert merged_graph["CurrentScene"]["inputs"] == {
+        "state": modern_state,
+        "align_audio_reference": True,
+    }
+    assert "source_audio" not in merged_graph["CurrentScene"]["inputs"]
+    merged_tagged = merged_graph["TaggedRef2VA"]["inputs"]
+    assert merged_tagged["state"] == ["CurrentScene", 0]
+    assert merged_tagged["clip_index"] == ["CurrentScene", 1]
+    assert merged_tagged["prompt"] == ["CurrentScene", 4]
+    assert merged_tagged["length"] == ["CurrentScene", 6]
+    assert merged_tagged["ref_image_size"] == "max"
+    assert merged_tagged["reference_policy"] == "soft"
+    assert merged_tagged["semantic_anchor_size"] == "768"
+    assert merged_tagged["semantic_anchor_mode"] == "picture_storyboard"
+    assert merged_tagged["cache_for_upscale"] is False
+    assert merged_tagged["conditioning_backend"] == "external_refmod"
+    merged_pack = merged_graph["SceneData"]["inputs"]
+    assert merged_pack["source_audio_slice"] == ["CurrentScene", 12]
+    assert merged_pack["refmod_sources"] == ["TaggedRef2VA", 5]
+    assert merged["result"] == (
+        ["CurrentScene", 0], ["TaggedRef2VA", 0],
+        ["TaggedRef2VA", 1], ["SceneData", 0])
 finally:
     chain.GraphBuilder = original_graph_builder
 
@@ -1042,6 +1082,56 @@ assert chain.MiniMaxH3TaggedReferenceToVideo.VALIDATE_INPUTS(
         "external_refmod; got 'unknown'.")
 assert "reference_schedule" not in (
     chain.MiniMaxH3TaggedReferenceToVideo.INPUT_TYPES()["required"])
+merged_schema = chain.MiniMaxH3CurrentTaggedReferenceScene.INPUT_TYPES()
+assert list(merged_schema["required"]) == [
+    "state", "clip", "vae", "audio_vae", "references"]
+assert list(merged_schema["optional"]) == ["options"]
+assert "source_audio" not in merged_schema["required"]
+assert "source_audio" not in merged_schema["optional"]
+assert chain.MiniMaxH3CurrentTaggedReferenceScene.RETURN_NAMES == (
+    "state", "positive", "latent", "scene_data")
+assert chain.MiniMaxH3CurrentTaggedReferenceScene.RETURN_TYPES[-1] == (
+    "H3_SCENE_DATA")
+assert chain.MiniMaxH3SceneDataExtract.RETURN_TYPES == ("*",)
+assert chain.MiniMaxH3SceneDataExtract.INPUT_TYPES()["required"]["field"][0][
+    0] == "RefMod sources"
+for modern_class in (
+        chain.MiniMaxH3TaggedSceneOptions,
+        chain.MiniMaxH3CurrentTaggedScenePack,
+        chain.MiniMaxH3CurrentTaggedReferenceScene,
+        chain.MiniMaxH3SceneDataExtract):
+    for section in ("required", "optional"):
+        for input_spec in modern_class.INPUT_TYPES().get(section, {}).values():
+            assert str(input_spec[1].get("tooltip") or "").strip()
+    assert len(modern_class.OUTPUT_TOOLTIPS) == len(modern_class.RETURN_TYPES)
+
+scene_data_state = {
+    "index": 1,
+    "plan": {
+        "version": chain.PLAN_VERSION,
+        "shots": [{"id": "scene_01"}],
+    },
+}
+scene_data = chain.MiniMaxH3CurrentTaggedScenePack().pack(
+    scene_data_state, 1, 2, "scene_01", "Scene prompt", 42, 124, 20,
+    1344, 768, 0.0, 5.0, None, "ready", "Compiled prompt",
+    "@look -> <Picture 1>", "fingerprint", ["visual"],
+    chain.MiniMaxH3TaggedSceneOptions().options()[0])[0]
+assert scene_data["version"] == chain.SCENE_DATA_VERSION
+assert scene_data["refmod_sources"] == ["visual"]
+assert scene_data["conditioning_backend"] == "native_ref2va"
+assert chain.MiniMaxH3SceneDataExtract().extract(
+    scene_data, "RefMod sources") == (["visual"],)
+assert chain.MiniMaxH3SceneDataExtract().extract(
+    scene_data, "Noise seed") == (42,)
+try:
+    chain.MiniMaxH3CurrentTaggedReferenceScene().expand(
+        {"index": 1, "plan": {"version": 1, "shots": [{}]}},
+        "clip", "video-vae", "audio-vae", tagged)
+except ValueError as exc:
+    assert "legacy 0.4" in str(exc)
+else:
+    raise AssertionError("merged scene node accepted a legacy Plan contract")
 conditioning = object()
 priority_result = chain.MiniMaxH3PatchPriority().claim(conditioning)
 assert priority_result == (conditioning, "test patch owner")

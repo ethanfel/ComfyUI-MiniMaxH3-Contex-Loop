@@ -4,7 +4,7 @@ import {
     PRIMARY_TRANSITION_PRESETS,
     transitionPreset,
     transitionPresetName,
-} from "./h3_policy_core.mjs?v=0.6.66";
+} from "./h3_policy_core.mjs?v=0.6.67";
 
 const CHAIN_POLICY_NODE = "MiniMaxH3ChainPolicy";
 const ADVANCED_POLICY_NODE = "MiniMaxH3AdvancedPolicy";

@@ -162,6 +162,15 @@ Only one scene passes through the sampling body at a time. The accepted
 predecessor supplies continuity to the next scene; completed media and recovery
 metadata remain on disk.
 
+For new prompt-driven reference workflows, **Current Tagged Ref2VA Scene** can
+replace the separate **Current Shot** and **Tagged Ref2VA** nodes. It exposes
+only `state`, `positive`, `latent`, and typed `scene_data`; connect **Tagged
+Scene Options** when non-default reference settings are needed, and use **Scene
+Data Extract** to recover one secondary value such as `refmod_sources`, the
+resolved seed, or the source-audio slice. This compact route accepts the current
+Plan contract only. The original two nodes remain available unchanged for
+existing and legacy 0.4 workflows.
+
 ## Find help by task
 
 | Task | Guide |
