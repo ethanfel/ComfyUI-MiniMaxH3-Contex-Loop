@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Chapter sections in Checkpoint Manager's **All scenes** view can now be
+  collapsed from their headers. Expanded/collapsed state is remembered per
+  run and chapter in workflow presentation state, and collapsed chapters skip
+  rendering their branch cards until reopened.
+
 - Checkpoint Manager now treats editorial chapters as independent revision
   scopes. **All scenes** renders a separate branch graph per chapter, and
   making a branch active rewrites or retires pointers only inside that
