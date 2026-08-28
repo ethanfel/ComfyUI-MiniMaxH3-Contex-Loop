@@ -1,5 +1,7 @@
 export const SCHEDULED_REF2VA_TYPE = "MiniMaxH3ScheduledReferenceToVideo";
 export const TAGGED_REF2VA_TYPE = "MiniMaxH3TaggedReferenceToVideo";
+export const CURRENT_TAGGED_REF2VA_TYPE =
+    "MiniMaxH3CurrentTaggedReferenceScene";
 export const CORE_REF2VA_TYPE = "MiniMaxH3ReferenceToVideo";
 export const IMAGE_TO_VIDEO_TYPE = "MiniMaxH3ImageToVideo";
 export const FIRST_SCENE_IMAGE_TYPE = "MiniMaxH3ChainFirstSceneImage";
@@ -31,6 +33,10 @@ const TAGGED_TYPES = new Set([
     TAGGED_MOTION_PATH_REF_TYPE,
     TAGGED_MOTION_TIMELINE_REF_TYPE,
     TAGGED_AUDIO_REF_TYPE,
+]);
+const TAGGED_REF2VA_TYPES = new Set([
+    TAGGED_REF2VA_TYPE,
+    CURRENT_TAGGED_REF2VA_TYPE,
 ]);
 
 export function nodeType(node) {
@@ -356,17 +362,21 @@ function outputTargets(node) {
     return targets;
 }
 
-function findDownstreamType(start, wantedType) {
+function findDownstreamTypes(start, wantedTypes) {
     const queue = [start];
     const seen = new Set();
     while (queue.length) {
         const node = queue.shift();
         if (!node || seen.has(node)) continue;
         seen.add(node);
-        if (node !== start && nodeType(node) === wantedType) return node;
+        if (node !== start && wantedTypes.has(nodeType(node))) return node;
         queue.push(...outputTargets(node));
     }
     return null;
+}
+
+function findDownstreamType(start, wantedType) {
+    return findDownstreamTypes(start, new Set([wantedType]));
 }
 
 export function findScheduledRef2VA(start) {
@@ -374,7 +384,7 @@ export function findScheduledRef2VA(start) {
 }
 
 export function findTaggedRef2VA(start) {
-    return findDownstreamType(start, TAGGED_REF2VA_TYPE);
+    return findDownstreamTypes(start, TAGGED_REF2VA_TYPES);
 }
 
 export function findCoreRef2VA(start) {

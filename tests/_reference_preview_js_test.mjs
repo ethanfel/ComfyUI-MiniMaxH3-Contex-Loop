@@ -714,4 +714,20 @@ assert.deepEqual(
 assert.ok(projectRecords.every((record) => record.previewUrl?.includes(
     "project=episode_1")));
 
+const compactEditor = add(makeNode(273, "MiniMaxH3ChainScenePromptEditor"));
+const compactLoopStart = add(makeNode(274, "MiniMaxH3ChainLoopStart"));
+const compactRef2va = add(makeNode(
+    275, "MiniMaxH3CurrentTaggedReferenceScene",
+));
+connect(compactEditor, compactLoopStart, "plan");
+connect(compactLoopStart, compactRef2va, "state");
+connect(projectManager, compactRef2va, "references", 1);
+assert.equal(findTaggedRef2VA(compactEditor), compactRef2va);
+assert.deepEqual(
+    availableReferenceRecords(compactEditor, 1, {
+        prompt: "Use @hero with #door[2.00s].",
+    }).records.map(({tag}) => tag),
+    ["hero", "door"],
+);
+
 console.log("H3 reference preview: tagged/scheduled Ref2VA, core Ref2VA, and core I2V/FL2V discovery pass");

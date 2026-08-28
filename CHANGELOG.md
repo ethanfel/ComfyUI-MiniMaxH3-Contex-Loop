@@ -4,6 +4,10 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Both prompt editors now discover tagged and Project Asset references through
+  the compact **Current Tagged Ref2VA Scene** node, just as they already did
+  through the original standalone Tagged Ref2VA wrapper.
+
 - Added a modern **Current Tagged Ref2VA Scene** composite that replaces the
   visible Current Shot plus Tagged Ref2VA pair while reusing both established
   execution paths internally. Its public outputs are only state, conditioning,
