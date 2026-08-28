@@ -90,9 +90,22 @@ const placedLayout = studioTimelineLayout(
     rows, 600, 1, [{scene_id:"two", start_frame:480}],
 );
 assert.equal(placedLayout.segments.length, 4);
+assert.equal(placedLayout.packedSceneSeconds, 1042 / 24);
+assert.equal(placedLayout.sceneEndSeconds, 1160 / 24);
+assert.ok(placedLayout.contentWidth > 600);
 assert.ok(Math.abs(
-    placedLayout.widths.reduce((total, value) => total + value, 0) - 600,
+    placedLayout.widths.reduce((total, value) => total + value, 0)
+        - placedLayout.contentWidth,
 ) < 1e-9);
+const terminalPlacementLayout = studioTimelineLayout(
+    rows, 600, 1, [{scene_id:"three", start_frame:1500}],
+);
+const terminalSceneIndex = terminalPlacementLayout.segments.findIndex(
+    (segment) => segment.kind === "scene" && segment.sceneId === "three",
+);
+assert.ok(terminalPlacementLayout.widths.slice(
+    0, terminalSceneIndex,
+).reduce((total, value) => total + value, 0) > 600);
 const openTimeline = studioTimelineLayout(rows, 600, 1, [], 2042);
 assert.equal(openTimeline.sceneEndSeconds, 1042 / 24);
 assert.equal(openTimeline.totalSeconds, 2042 / 24);

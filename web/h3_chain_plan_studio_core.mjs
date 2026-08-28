@@ -194,6 +194,9 @@ export function studioEditorialSceneStartSeconds(segments, sceneIndex) {
 export function studioTimelineLayout(
     rows, viewportWidth, zoom = 1, placements = [], workspaceEndFrame = null,
 ) {
+    const packedSceneSeconds = studioTimelineTotalSeconds(
+        studioTimelineSegments(rows),
+    );
     const sceneSegments = studioTimelineSegments(rows, placements);
     const sceneEndSeconds = studioTimelineTotalSeconds(sceneSegments);
     const segments = studioTimelineSegments(
@@ -202,9 +205,14 @@ export function studioTimelineLayout(
     const width = Math.max(1, Number(viewportWidth) || 1);
     const scale = Math.max(1, Math.min(6, Number(zoom) || 1));
     const totalSeconds = studioTimelineTotalSeconds(segments);
-    // Fit/100% always maps the placed scene span to one viewport. A longer
-    // workspace therefore adds horizontal scroll instead of compressing clips.
-    const fitSeconds = Math.max(1 / 24, sceneEndSeconds || totalSeconds);
+    // Keep the time scale stable while clips are positioned. At 100%, the
+    // naturally packed generated duration fills one viewport; editorial gaps
+    // and the open workspace extend horizontally instead of re-fitting the
+    // terminal clip back onto the viewport's right edge after every move.
+    const fitSeconds = Math.max(
+        1 / 24,
+        packedSceneSeconds || sceneEndSeconds || totalSeconds,
+    );
     const pixelsPerSecond = width * scale / fitSeconds;
     const contentWidth = Math.max(
         width * scale, totalSeconds * pixelsPerSecond,
@@ -214,7 +222,7 @@ export function studioTimelineLayout(
     );
     return {
         zoom:scale, contentWidth, widths, segments, totalSeconds,
-        sceneEndSeconds, pixelsPerSecond,
+        sceneEndSeconds, packedSceneSeconds, pixelsPerSecond,
     };
 }
 
