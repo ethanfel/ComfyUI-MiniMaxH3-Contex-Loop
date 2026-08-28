@@ -5,7 +5,7 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.52";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.54";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -172,6 +172,18 @@ function injectStyles() {
           overflow:hidden;background:#11141a;color:inherit;text-align:left;cursor:pointer}.h3pa-card.selected{border:2px solid #76aaff}
         .h3pa-card[draggable="true"]{cursor:grab}.h3pa-card.dragging{opacity:.42;cursor:grabbing}
         .h3pa-card.drag-over{border-color:#82d7a0;box-shadow:0 0 0 2px #82d7a066}
+        .h3pa-folder-group{flex:0 0 auto;display:flex;gap:8px;align-items:stretch;padding:0;border-radius:10px}
+        .h3pa-folder-group.expanded{padding:4px;background:color-mix(in srgb,#486da8 22%,transparent);box-shadow:inset 0 0 0 1px #6c91c955}
+        .h3pa-folder-card{position:relative;flex:0 0 112px;height:112px;padding:7px;border:1px solid #5a6680;border-radius:10px;
+          overflow:hidden;background:#171d29;color:inherit;text-align:left;cursor:pointer}
+        .h3pa-folder-card:hover,.h3pa-folder-card.selected{border-color:#79a9ff}.h3pa-folder-card.expanded{background:#223451;border-color:#79a9ff}
+        .h3pa-folder-card.drag-over{border-color:#82d7a0;box-shadow:0 0 0 2px #82d7a066}
+        .h3pa-folder-mosaic{display:grid;grid-template-columns:1fr 1fr;grid-template-rows:1fr 1fr;gap:3px;height:70px;padding:3px;
+          overflow:hidden;border-radius:7px;background:#0c1018}
+        .h3pa-folder-tile{display:grid;place-items:center;min-width:0;min-height:0;overflow:hidden;border-radius:4px;background:#252d3d;color:#9db7dc;font-size:15px}
+        .h3pa-folder-tile img{display:block;width:100%;height:100%;object-fit:cover}.h3pa-folder-name{display:block;margin-top:5px;padding-right:22px;
+          white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-weight:650}.h3pa-folder-count{position:absolute;right:7px;bottom:7px;color:#9fb0c9;font-size:10px}
+        .h3pa-folder-member{border-color:#607aa5}
         .h3pa-card.unresolved{border-style:dashed;background:#171922}.h3pa-card.unresolved.stale{opacity:.58}
         .h3pa-card.unresolved .fallback{color:#d7a95c}.h3pa-unassigned{color:#e6b76a;font-weight:650}
         .h3pa-card img{width:100%;height:78px;object-fit:cover;background:#090b10}.h3pa-card .fallback{height:78px;display:grid;
@@ -326,8 +338,11 @@ function mount(node) {
 
     const state = {
         catalog: {assets: [], reference_slots: [], folders: []}, selected: "",
-        filter: "all", folder: "all", media: null, bindingSlot: null,
+        filter: "all", folder: "", media: null, bindingSlot: null,
         dragging: "", uploading: false,
+        expandedFolders: new Set(Array.isArray(
+            node.properties?.h3_project_asset_expanded_folders,
+        ) ? node.properties.h3_project_asset_expanded_folders.map(String) : []),
         previewMode: previewSelect.value === "full" ? "full" : "light",
     };
     const project = () => String(runNameInput.value || "").trim();
@@ -369,15 +384,22 @@ function mount(node) {
             asset.id === state.selected && asset._unresolved
         )) ?? null;
     }
+    function saveExpandedFolders() {
+        node.properties ??= {};
+        node.properties.h3_project_asset_expanded_folders = [
+            ...state.expandedFolders,
+        ];
+        node.graph?.setDirtyCanvas?.(true, true);
+    }
+    function setFolderExpanded(folderId, expanded) {
+        const id = String(folderId ?? "");
+        if (!id) return;
+        if (expanded) state.expandedFolders.add(id);
+        else state.expandedFolders.delete(id);
+        saveExpandedFolders();
+    }
     function filteredAssets() {
-        return allItems().filter((asset) => {
-            if (!matchesTab(asset, state.filter)) return false;
-            if (state.folder === "all") return true;
-            if (state.folder === "unfiled") {
-                return asset._unresolved || !String(asset.folder_id ?? "");
-            }
-            return !asset._unresolved && asset.folder_id === state.folder;
-        });
+        return allItems().filter((asset) => matchesTab(asset, state.filter));
     }
     function renderTabs() {
         tabs.replaceChildren();
@@ -416,27 +438,26 @@ function mount(node) {
             const result = await folderRequest(
                 {action: "create", name}, `Created folder ${name.trim()}.`,
             );
-            if (result?.folder?.id) { state.folder = result.folder.id; render(); }
+            if (result?.folder?.id) {
+                state.folder = result.folder.id;
+                setFolderExpanded(result.folder.id, true);
+                render();
+            }
         }, "Create a presentation-only folder. Folders never affect prompts, fingerprints, or generation.");
         tools.append(addFolder);
         if (!folderList.length) {
-            state.folder = "all";
+            state.folder = "";
             tabs.append(tools);
             return;
         }
-        const noFolderCount = allItems().filter(
-            (asset) => asset._unresolved || !String(asset.folder_id ?? ""),
-        ).length;
         const folderSelect = el("select");
-        folderSelect.title = "Presentation folders only organize this Carousel; they never affect prompts or generation. No folder means an asset has not been placed in one.";
-        for (const folder of [
-            {id: "all", name: "All folders", count: allItems().length},
-            {id: "unfiled", name: "No folder", count: noFolderCount},
-            ...folderList.map((folder) => ({
-                ...folder,
-                count: assetList.filter((asset) => asset.folder_id === folder.id).length,
-            })),
-        ]) {
+        folderSelect.title = "Choose a folder to rename or remove. Folder cards in the Carousel expand and collapse their assets.";
+        const placeholder = el("option", "", "Manage folders…");
+        placeholder.value = ""; folderSelect.append(placeholder);
+        for (const folder of folderList.map((folder) => ({
+            ...folder,
+            count: assetList.filter((asset) => asset.folder_id === folder.id).length,
+        }))) {
             const option = el("option", "", `${folder.name} (${folder.count})`);
             option.value = folder.id;
             folderSelect.append(option);
@@ -444,6 +465,7 @@ function mount(node) {
         folderSelect.value = state.folder;
         folderSelect.addEventListener("change", () => {
             state.folder = folderSelect.value;
+            if (state.folder) setFolderExpanded(state.folder, true);
             render();
         });
         tools.append(folderSelect);
@@ -467,7 +489,12 @@ function mount(node) {
                     const result = await folderRequest({
                         action: "delete", folder_id: active.id,
                     }, `Removed folder ${active.name}.`);
-                    if (result) { state.folder = "unfiled"; render(); }
+                    if (result) {
+                        state.expandedFolders.delete(active.id);
+                        saveExpandedFolders();
+                        state.folder = "";
+                        render();
+                    }
                 }),
             );
         }
@@ -1167,9 +1194,13 @@ function mount(node) {
             option.selected = folder.id === String(asset.folder_id ?? "");
             folderSelect.append(option);
         }
-        folderSelect.addEventListener("change", () => updateAsset(
-            asset, {folder_id: folderSelect.value},
-        ));
+        folderSelect.addEventListener("change", () => {
+            if (folderSelect.value) {
+                state.folder = folderSelect.value;
+                setFolderExpanded(folderSelect.value, true);
+            }
+            void updateAsset(asset, {folder_id: folderSelect.value});
+        });
         folderLabel.append(folderSelect); editor.append(folderLabel);
         const enabledTitle = isSourceTrack ? "Selected timeline source" : "Available to prompts";
         const enabledSummary = isSourceTrack
@@ -1291,96 +1322,215 @@ function mount(node) {
         );
         editor.append(actions);
     }
+    function assetCard(asset, folderMember = false) {
+        const card = el("button", "h3pa-card"); card.type = "button";
+        card.classList.toggle("selected", asset.id === state.selected);
+        card.classList.toggle("unresolved", Boolean(asset._unresolved));
+        card.classList.toggle("stale", asset._unresolved && asset.available === false);
+        card.classList.toggle("h3pa-folder-member", folderMember);
+        if (!asset._unresolved) {
+            card.draggable = true;
+            card.title = folderMember
+                ? "Drag to reorder this asset, or drop it onto another folder."
+                : "Drag to reorder this project asset.";
+        }
+        if (!asset._unresolved && ["image", "video"].includes(asset.kind)) {
+            const image = el("img"); image.loading = "lazy";
+            image.draggable = false;
+            image.src = mediaUrl(project(), asset, "thumbnail"); card.append(image);
+        } else card.append(el(
+            "div", "fallback", asset._unresolved ? "?" : "♫",
+        ));
+        card.append(el(
+            "span", "h3pa-badge",
+            `${displayRole(asset.role)}${asset._unresolved ? " · unassigned" : ""}`,
+        ));
+        if (!asset._unresolved) card.append(el(
+            "span", "h3pa-drag-handle", "↔",
+        ));
+        card.append(el(
+            "span", "",
+            `${asset.available === false || asset.enabled === false ? "○ " : ""}${promptTag(asset)}`,
+        ));
+        card.addEventListener("click", () => { state.selected = asset.id; render(); });
+        if (!asset._unresolved) {
+            card.addEventListener("dragstart", (event) => {
+                state.dragging = asset.id;
+                clearFileDropState();
+                card.classList.add("dragging");
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", asset.id);
+            });
+            card.addEventListener("dragover", (event) => {
+                if (!state.dragging || state.dragging === asset.id) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                card.classList.add("drag-over");
+            });
+            card.addEventListener("dragleave", () => {
+                card.classList.remove("drag-over");
+            });
+            card.addEventListener("drop", (event) => {
+                event.preventDefault();
+                card.classList.remove("drag-over");
+                const dragged = state.dragging || event.dataTransfer.getData("text/plain");
+                if (!dragged || dragged === asset.id) return;
+                const assetIds = (state.catalog.assets ?? []).map((item) => item.id);
+                const from = assetIds.indexOf(dragged);
+                if (from < 0) return;
+                assetIds.splice(from, 1);
+                let target = assetIds.indexOf(asset.id);
+                if (target < 0) return;
+                const bounds = card.getBoundingClientRect();
+                if (event.clientX >= bounds.left + bounds.width / 2) target += 1;
+                assetIds.splice(target, 0, dragged);
+                state.selected = dragged;
+                void reorderAssets(assetIds);
+            });
+            card.addEventListener("dragend", () => {
+                state.dragging = "";
+                clearFileDropState();
+                for (const item of carousel.querySelectorAll(
+                    ".h3pa-card,.h3pa-folder-card",
+                )) item.classList.remove("dragging", "drag-over");
+            });
+        }
+        return card;
+    }
+    function folderCard(folder, previewAssets, totalCount) {
+        const folderId = String(folder.id);
+        const expanded = state.expandedFolders.has(folderId);
+        const card = el("button", "h3pa-folder-card"); card.type = "button";
+        card.classList.toggle("expanded", expanded);
+        card.classList.toggle("selected", state.folder === folderId);
+        card.title = `${expanded ? "Collapse" : "Expand"} ${folder.name}. Drag an asset here to move it into this folder.`;
+        const mosaic = el("span", "h3pa-folder-mosaic");
+        const tiles = previewAssets.slice(0, 4);
+        if (!tiles.length) tiles.push(null);
+        for (const asset of tiles) {
+            const tile = el("span", "h3pa-folder-tile");
+            if (asset && ["image", "video"].includes(asset.kind)) {
+                const image = el("img"); image.loading = "lazy";
+                image.draggable = false;
+                image.src = mediaUrl(project(), asset, "thumbnail");
+                tile.append(image);
+            } else {
+                tile.textContent = asset?.kind === "audio" ? "♫" : "▦";
+            }
+            mosaic.append(tile);
+        }
+        card.append(
+            mosaic,
+            el("span", "h3pa-folder-name", `${expanded ? "▾" : "▸"} ${folder.name}`),
+            el("span", "h3pa-folder-count", String(totalCount)),
+        );
+        card.addEventListener("click", () => {
+            state.folder = folderId;
+            setFolderExpanded(folderId, !expanded);
+            render();
+        });
+        card.addEventListener("dragover", (event) => {
+            if (!state.dragging) return;
+            event.preventDefault();
+            event.dataTransfer.dropEffect = "move";
+            card.classList.add("drag-over");
+        });
+        card.addEventListener("dragleave", () => card.classList.remove("drag-over"));
+        card.addEventListener("drop", (event) => {
+            if (!state.dragging) return;
+            event.preventDefault();
+            event.stopPropagation();
+            card.classList.remove("drag-over");
+            const asset = (state.catalog.assets ?? []).find(
+                (item) => item.id === state.dragging,
+            );
+            if (!asset) return;
+            state.folder = folderId;
+            setFolderExpanded(folderId, true);
+            if (String(asset.folder_id ?? "") !== folderId) {
+                void updateAsset(asset, {folder_id: folderId});
+            }
+        });
+        return card;
+    }
     function renderCarousel() {
         carousel.replaceChildren();
         const assets = filteredAssets();
         if (!assets.some((asset) => asset.id === state.selected)) {
             state.selected = assets[0]?.id ?? "";
         }
-        if (!assets.length) {
+        const folders = state.catalog.folders ?? [];
+        const folderById = new Map(folders.map(
+            (folder) => [String(folder.id), folder],
+        ));
+        const allMembers = new Map(folders.map(
+            (folder) => [String(folder.id), []],
+        ));
+        for (const asset of state.catalog.assets ?? []) {
+            const members = allMembers.get(String(asset.folder_id ?? ""));
+            if (members) members.push(asset);
+        }
+        const visibleMembers = new Map(folders.map(
+            (folder) => [String(folder.id), []],
+        ));
+        for (const asset of assets) {
+            const members = visibleMembers.get(String(asset.folder_id ?? ""));
+            if (members && !asset._unresolved) members.push(asset);
+        }
+        const renderedFolders = new Set();
+        let renderedItems = 0;
+        for (const asset of assets) {
+            const folder = !asset._unresolved
+                ? folderById.get(String(asset.folder_id ?? "")) : null;
+            if (!folder) {
+                carousel.append(assetCard(asset));
+                renderedItems += 1;
+                continue;
+            }
+            const folderId = String(folder.id);
+            if (renderedFolders.has(folderId)) continue;
+            renderedFolders.add(folderId);
+            const members = visibleMembers.get(folderId) ?? [];
+            const group = el("div", "h3pa-folder-group");
+            const expanded = state.expandedFolders.has(folderId);
+            group.classList.toggle("expanded", expanded);
+            group.append(folderCard(
+                folder, members, (allMembers.get(folderId) ?? []).length,
+            ));
+            if (expanded) {
+                for (const member of members) group.append(assetCard(member, true));
+            }
+            carousel.append(group);
+            renderedItems += 1;
+        }
+        if (state.filter === "all") {
+            for (const folder of folders) {
+                if (renderedFolders.has(String(folder.id))) continue;
+                const group = el("div", "h3pa-folder-group");
+                group.append(folderCard(folder, [], 0));
+                carousel.append(group);
+                renderedItems += 1;
+            }
+        }
+        if (!renderedItems) {
             carousel.append(el(
                 "div", "h3pa-carousel-empty",
                 "Drop image, video, or audio files here, or use Upload / Import.",
             ));
         }
-        for (const asset of assets) {
-            const card = el("button", "h3pa-card"); card.type = "button";
-            card.classList.toggle("selected", asset.id === state.selected);
-            card.classList.toggle("unresolved", Boolean(asset._unresolved));
-            card.classList.toggle("stale", asset._unresolved && asset.available === false);
-            if (!asset._unresolved) {
-                card.draggable = true;
-                card.title = "Drag to reorder this project asset.";
-            }
-            if (!asset._unresolved && ["image", "video"].includes(asset.kind)) {
-                const image = el("img"); image.loading = "lazy";
-                image.draggable = false;
-                image.src = mediaUrl(project(), asset, "thumbnail"); card.append(image);
-            } else card.append(el(
-                "div", "fallback", asset._unresolved ? "?" : "♫",
-            ));
-            card.append(el(
-                "span", "h3pa-badge",
-                `${displayRole(asset.role)}${asset._unresolved ? " · unassigned" : ""}`,
-            ));
-            if (!asset._unresolved) card.append(el(
-                "span", "h3pa-drag-handle", "↔",
-            ));
-            card.append(el(
-                "span", "",
-                `${asset.available === false || asset.enabled === false ? "○ " : ""}${promptTag(asset)}`,
-            ));
-            card.addEventListener("click", () => { state.selected = asset.id; render(); });
-            if (!asset._unresolved) {
-                card.addEventListener("dragstart", (event) => {
-                    state.dragging = asset.id;
-                    clearFileDropState();
-                    card.classList.add("dragging");
-                    event.dataTransfer.effectAllowed = "move";
-                    event.dataTransfer.setData("text/plain", asset.id);
-                });
-                card.addEventListener("dragover", (event) => {
-                    if (!state.dragging || state.dragging === asset.id) return;
-                    event.preventDefault();
-                    event.dataTransfer.dropEffect = "move";
-                    card.classList.add("drag-over");
-                });
-                card.addEventListener("dragleave", () => {
-                    card.classList.remove("drag-over");
-                });
-                card.addEventListener("drop", (event) => {
-                    event.preventDefault();
-                    card.classList.remove("drag-over");
-                    const dragged = state.dragging || event.dataTransfer.getData("text/plain");
-                    if (!dragged || dragged === asset.id) return;
-                    const assetIds = (state.catalog.assets ?? []).map((item) => item.id);
-                    const from = assetIds.indexOf(dragged);
-                    if (from < 0) return;
-                    assetIds.splice(from, 1);
-                    let target = assetIds.indexOf(asset.id);
-                    if (target < 0) return;
-                    const bounds = card.getBoundingClientRect();
-                    if (event.clientX >= bounds.left + bounds.width / 2) target += 1;
-                    assetIds.splice(target, 0, dragged);
-                    state.selected = dragged;
-                    void reorderAssets(assetIds);
-                });
-                card.addEventListener("dragend", () => {
-                    state.dragging = "";
-                    clearFileDropState();
-                    for (const item of carousel.children) {
-                        item.classList.remove("dragging", "drag-over");
-                    }
-                });
-            }
-            carousel.append(card);
-        }
     }
     function render() {
-        if (state.folder !== "all" && state.folder !== "unfiled"
-                && !(state.catalog.folders ?? []).some((folder) => folder.id === state.folder)) {
-            state.folder = "all";
+        const folderIds = new Set((state.catalog.folders ?? []).map(
+            (folder) => String(folder.id),
+        ));
+        let changed = false;
+        for (const folderId of state.expandedFolders) {
+            if (folderIds.has(folderId)) continue;
+            state.expandedFolders.delete(folderId);
+            changed = true;
         }
+        if (changed) saveExpandedFolders();
+        if (state.folder && !folderIds.has(state.folder)) state.folder = "";
         renderTabs(); renderFolders(); renderCarousel();
         const selected = allItems().find((asset) => asset.id === state.selected);
         renderPreview(selected); renderEditor(selected);

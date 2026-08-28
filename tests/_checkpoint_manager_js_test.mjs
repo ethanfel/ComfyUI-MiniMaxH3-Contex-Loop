@@ -4,8 +4,10 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
     checkpointBranchRows,
+    checkpointChapterBranchRows,
     checkpointDeletionTitle,
     checkpointDependencyText,
+    checkpointProjectLineage,
     checkpointRevisionKey,
     checkpointRevisionLineage,
     checkpointSelectionJson,
@@ -17,6 +19,7 @@ const a = "a".repeat(32);
 const b = "b".repeat(32);
 const c = "c".repeat(32);
 const d = "d".repeat(32);
+const e = "e".repeat(32);
 const payload = {
     revisions: [
         {scene:1, scene_id:"arrival", revision:a, active:true,
@@ -33,6 +36,10 @@ const payload = {
             created_at:"2026-08-20T10:30:00Z", context_length:0,
             audio_context_length:0, continuation_mode:"guide", ready:true,
             parent:{scene:2, revision:b}},
+        {scene:3, scene_id:"room_alt", revision:e, active:true,
+            created_at:"2026-08-20T10:40:00Z", context_length:0,
+            audio_context_length:0, continuation_mode:"guide", ready:true,
+            parent:{scene:2, revision:c}},
     ],
     branches: [
         {id:"active", label:"Active branch", active:true,
@@ -41,6 +48,9 @@ const payload = {
             path:[{scene:1, revision:a}, {scene:2, revision:c}],
             attribution_slot:{scene:3, parent_scene:2,
                 parent_revision:c, candidates:[{scene:3, revision:d}]}},
+        {id:"chapter_alt", label:"Branch chapter alternate", active:false,
+            path:[{scene:1, revision:a}, {scene:2, revision:c},
+                {scene:3, revision:e}]},
     ],
 };
 
@@ -50,7 +60,7 @@ assert.equal(formatCheckpointBytes(2 * 1024 ** 3), "2.00 GB");
 assert.equal(checkpointRevisionKey(2, c.toUpperCase()), `2:${c}`);
 assert.equal(selectedCheckpointRevision(payload, 2, c).revision, c);
 assert.equal(selectedCheckpointRevision(payload, 2).revision, b);
-assert.equal(selectedCheckpointRevision(payload).revision, b,
+assert.equal(selectedCheckpointRevision(payload).revision, e,
     "default selection is the deepest active branch tip");
 assert.equal(checkpointBranchRows(payload)[0].revisions[1].revision, b);
 assert.equal(checkpointBranchRows(payload)[1].revisions[0].revision, a,
@@ -69,10 +79,40 @@ assert.equal(
     JSON.stringify({
         run_name:"demo-run",
         lineage:[{scene:1, revision:a}, {scene:2, revision:c}],
+        scope_start_scene:1,
+        scope_end_scene:2,
     }),
     "selecting an alternate branch serializes its complete lineage",
 );
 assert.equal(checkpointSelectionJson(payload, "", payload.revisions[2]), "");
+const chapterTwo = {id:"chapter_2", start:3, end:3};
+assert.deepEqual(
+    checkpointRevisionLineage(payload, payload.revisions[4], chapterTwo),
+    [{scene:3, revision:e}],
+    "a chapter starts a lineage without inheriting its immutable parent branch",
+);
+assert.deepEqual(
+    checkpointProjectLineage(payload, payload.revisions[4], chapterTwo),
+    [{scene:1, revision:a}, {scene:2, revision:b}, {scene:3, revision:e}],
+    "the selected chapter is combined with the currently active earlier chapter",
+);
+assert.deepEqual(
+    JSON.parse(checkpointSelectionJson(
+        payload, "demo-run", payload.revisions[4], chapterTwo)),
+    {
+        run_name:"demo-run",
+        lineage:[{scene:1, revision:a}, {scene:2, revision:b},
+            {scene:3, revision:e}],
+        scope_start_scene:3,
+        scope_end_scene:3,
+    },
+);
+assert.equal(
+    checkpointChapterBranchRows(payload, chapterTwo).filter(
+        (branch) => branch.active).length,
+    1,
+    "chapter rows determine activity without requiring the prior chapter path",
+);
 assert.match(checkpointDependencyText(payload.revisions[1]),
     /Scene 2 · hall uses Video 39f \/ Audio 44f via guide/);
 assert.match(checkpointDependencyText(payload.revisions[2]),
@@ -116,7 +156,9 @@ assert.match(source, /connected Plan scene settings were restored/);
 assert.match(source, /cache_bust:String\(Date\.now\(\)\)/);
 assert.match(source, /\{cache:"no-store"\}/);
 assert.match(source, /No saved revision, workflow, reference, or assembled video is deleted/);
-assert.match(source, /later active pointers will be cleared/);
+assert.match(source, /Other chapters keep their active branches/);
+assert.match(source, /scope_start_scene:scope\.start/);
+assert.match(source, /retired_scope_pointers/);
 assert.match(source, /prepareResume\(resumeScene\)/);
 assert.match(source, /snapshot:plan\.snapshot/);
 assert.match(source, /window\.confirm/);

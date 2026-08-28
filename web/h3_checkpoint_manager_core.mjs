@@ -59,19 +59,82 @@ export function checkpointBranchRows(payload) {
     });
 }
 
-export function checkpointRevisionLineage(payload, selected) {
+export function checkpointChapterBranchRows(payload, range) {
+    const start = Number(range?.start);
+    const end = Number(range?.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end < start) {
+        return checkpointBranchRows(payload);
+    }
+    const grouped = new Map();
+    for (const branch of checkpointBranchRows(payload)) {
+        const revisions = branch.revisions.filter((revision) => {
+            const scene = Number(revision.scene);
+            return scene >= start && scene <= end;
+        });
+        if (!revisions.length) continue;
+        const key = revisions.map((revision) => checkpointRevisionKey(
+            revision.scene, revision.revision,
+        )).join("|");
+        const tip = revisions.at(-1);
+        const active = revisions.every((revision) => Boolean(revision.active));
+        const slot = branch.attribution_slot;
+        const attributionSlot = slot && Number(slot.scene) >= start
+            && Number(slot.scene) <= end
+            && Number(slot.parent_scene ?? tip.scene) === Number(tip.scene)
+            && String(slot.parent_revision ?? "").toLowerCase()
+                === String(tip.revision ?? "").toLowerCase()
+            ? slot : null;
+        const existing = grouped.get(key);
+        if (existing) {
+            existing.source_branch_ids.push(branch.id);
+            if (active) {
+                existing.active = true;
+                existing.label = "Active branch";
+            }
+            existing.attribution_slot ??= attributionSlot;
+            continue;
+        }
+        grouped.set(key, {
+            ...branch,
+            id:`chapter:${String(range?.id ?? `${start}-${end}`)}:${key}`,
+            label:active ? "Active branch"
+                : `Branch ${String(tip.revision ?? "").slice(0, 8)}`,
+            active,
+            path:revisions.map((revision) => ({
+                scene:Number(revision.scene),
+                revision:String(revision.revision ?? "").toLowerCase(),
+            })),
+            revisions,
+            attribution_slot:attributionSlot,
+            source_branch_ids:[branch.id],
+        });
+    }
+    return [...grouped.values()].sort((left, right) =>
+        Number(Boolean(right.active)) - Number(Boolean(left.active)) ||
+        Number(right.revisions.at(-1)?.scene ?? 0)
+            - Number(left.revisions.at(-1)?.scene ?? 0));
+}
+
+export function checkpointRevisionLineage(payload, selected, range = null) {
     const records = checkpointRevisionMap(payload);
+    const start = Math.max(1, Number(range?.start) || 1);
     let cursor = selected ?? null;
     const reversed = [];
     const seen = new Set();
     while (cursor) {
+        const scene = Number(cursor.scene);
+        if (!Number.isInteger(scene) || scene < start) return [];
         const key = checkpointRevisionKey(cursor.scene, cursor.revision);
         if (seen.has(key)) return [];
         seen.add(key);
         reversed.push({
-            scene: Number(cursor.scene),
+            scene,
             revision: String(cursor.revision ?? "").toLowerCase(),
         });
+        // A chapter start is an editorial branch root. Its immutable parent
+        // remains useful provenance, but it does not select the prior
+        // chapter's branch.
+        if (scene === start) break;
         if (!cursor.parent) break;
         cursor = records.get(checkpointRevisionKey(
             cursor.parent.scene, cursor.parent.revision,
@@ -79,16 +142,43 @@ export function checkpointRevisionLineage(payload, selected) {
         if (!cursor) return [];
     }
     const lineage = reversed.reverse();
-    if (!lineage.length || lineage[0].scene !== 1) return [];
-    if (lineage.some((item, index) => item.scene !== index + 1)) return [];
+    if (!lineage.length || lineage[0].scene !== start) return [];
+    if (lineage.some((item, index) => item.scene !== start + index)) return [];
     return lineage;
 }
 
-export function checkpointSelectionJson(payload, runName, selected) {
+export function checkpointProjectLineage(payload, selected, range = null) {
+    const start = Math.max(1, Number(range?.start) || 1);
+    const chapterLineage = checkpointRevisionLineage(payload, selected, {
+        ...range, start,
+    });
+    if (!chapterLineage.length) return [];
+    const revisions = Array.isArray(payload?.revisions) ? payload.revisions : [];
+    const prefix = [];
+    for (let scene = 1; scene < start; scene += 1) {
+        const active = revisions.find((item) =>
+            Number(item.scene) === scene && Boolean(item.active));
+        if (!active) return [];
+        prefix.push({
+            scene,
+            revision:String(active.revision ?? "").toLowerCase(),
+        });
+    }
+    return [...prefix, ...chapterLineage];
+}
+
+export function checkpointSelectionJson(payload, runName, selected, range = null) {
     const normalizedRun = String(runName ?? "").trim();
-    const lineage = checkpointRevisionLineage(payload, selected);
+    const lineage = checkpointProjectLineage(payload, selected, range);
+    const start = Math.max(1, Number(range?.start) || 1);
+    const end = Math.max(start, Number(range?.end) || Number(selected?.scene) || start);
     return normalizedRun && lineage.length
-        ? JSON.stringify({run_name: normalizedRun, lineage})
+        ? JSON.stringify({
+            run_name:normalizedRun,
+            lineage,
+            scope_start_scene:start,
+            scope_end_scene:end,
+        })
         : "";
 }
 
