@@ -778,6 +778,11 @@
           "links": [
             33
           ]
+        },
+        {
+          "name": "model",
+          "type": "MODEL",
+          "links": null
         }
       ],
       "title": "MiniMax H3 Contex Loop Context — AUTO CONTEXT — clip 1 bypass / continuation",
@@ -2212,7 +2217,7 @@
         },
         {
           "name": "preflight",
-          "type": "H3_PREFLIGHT",
+          "type": "H3_PREFLIGHT_REPORT",
           "links": null
         },
         {
