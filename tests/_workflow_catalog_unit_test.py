@@ -310,9 +310,11 @@ def validate_crab_extension(path, expected_shots, tagged):
         assert image["widgets_values"][0] == "soldier_crabs_reference_cc0.png"
         reference = node(workflow, "MiniMaxH3TaggedPictureReference")
         assert reference["widgets_values"] == ["crabs"]
+        conditioner = node(workflow, "MiniMaxH3TaggedReferenceToVideo")
+        assert conditioner["widgets_values"][-4:] == [
+            "strict", "512", "timestamped_video", True]
         assert socket(
-            node(workflow, "MiniMaxH3TaggedReferenceToVideo")["inputs"],
-            "references")["link"] in socket(
+            conditioner["inputs"], "references")["link"] in socket(
                 reference["outputs"], "references")["links"]
     return workflow
 
@@ -631,7 +633,8 @@ def validate_ref2v(path, variant):
         assert socket(editor["inputs"], "plan")["link"] is not None
     else:
         conditioner = node(workflow, "MiniMaxH3TaggedReferenceToVideo")
-        assert conditioner["widgets_values"][-1] == "strict"
+        assert conditioner["widgets_values"][-4:] == [
+            "strict", "512", "timestamped_video", True]
         tagged_refs = [item for item in workflow["nodes"]
                        if item.get("type") ==
                        "MiniMaxH3TaggedPictureReference"]
