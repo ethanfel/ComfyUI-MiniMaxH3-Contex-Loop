@@ -815,8 +815,9 @@
         192,
         "match",
         "strict",
-        "match",
-        "strict"
+        "512",
+        "timestamped_video",
+        true
       ],
       "color": "#346434",
       "bgcolor": "rgba(24,24,27,.9)"
