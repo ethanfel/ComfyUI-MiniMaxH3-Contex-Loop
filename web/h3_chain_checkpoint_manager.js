@@ -10,18 +10,18 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.6.54";
+} from "./h3_checkpoint_manager_core.mjs?v=0.6.55";
 import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.6.54";
-import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.54";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.54";
+} from "./h3_chain_plan_core.mjs?v=0.6.55";
+import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.55";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.55";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.54";
+} from "./h3_plan_restore_core.mjs?v=0.6.55";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -30,6 +30,7 @@ const RUN_PROPERTY = "h3_checkpoint_manager_run";
 const SCENE_PROPERTY = "h3_checkpoint_manager_scene";
 const REVISION_PROPERTY = "h3_checkpoint_manager_revision";
 const CHAPTER_PROPERTY = "h3_checkpoint_manager_chapter";
+const COLLAPSED_CHAPTERS_PROPERTY = "h3_checkpoint_manager_collapsed_chapters";
 const SHARED_COLORS = ["#6ea8ff", "#58c99d", "#bd8cff", "#e8a84f", "#f07f8c", "#55bfd0"];
 
 function nodeType(node) {
@@ -182,8 +183,16 @@ function injectStyles() {
       .h3cm-branch-chapter { margin-bottom:12px; padding:7px; border:1px solid color-mix(in srgb,var(--h3cm-border) 62%,transparent);
         border-radius:8px; background:color-mix(in srgb,var(--h3cm-panel) 70%,transparent); }
       .h3cm-branch-chapter:last-child { margin-bottom:0; }
-      .h3cm-branch-chapter-title { display:flex; justify-content:space-between; gap:8px; margin:0 2px 7px;
-        color:#ffe0a2; font-size:11px; font-weight:750; }
+      .h3cm-branch-chapter-title { width:100%; min-height:0 !important; display:flex; align-items:center;
+        justify-content:flex-start; gap:7px; margin:0 0 7px; padding:2px !important; border:0 !important;
+        background:transparent !important; color:#ffe0a2 !important; font-size:11px !important;
+        font-weight:750 !important; text-align:left; }
+      .h3cm-branch-chapter-title:hover,.h3cm-branch-chapter-title:focus-visible {
+        color:var(--h3cm-accent) !important; outline:1px solid var(--h3cm-accent) !important; }
+      .h3cm-branch-chapter-title .h3cm-muted { margin-left:auto; font-weight:500; }
+      .h3cm-branch-chapter-caret { width:11px; color:currentColor; text-align:center; }
+      .h3cm-branch-chapter-collapsed { padding-bottom:7px; }
+      .h3cm-branch-chapter-collapsed .h3cm-branch-chapter-title { margin-bottom:0; }
       .h3cm-branch { position:relative; z-index:1; margin-bottom:8px; padding:6px;
         border:1px solid color-mix(in srgb,var(--h3cm-border) 75%,transparent); border-radius:6px; }
       .h3cm-branch-head { justify-content:space-between; margin-bottom:5px; }
@@ -251,6 +260,10 @@ function mount(node) {
         scene:Number(node.properties[SCENE_PROPERTY]) || null,
         revision:String(node.properties[REVISION_PROPERTY] ?? ""),
         chapterTab:String(node.properties[CHAPTER_PROPERTY] ?? "all"),
+        collapsedChapters:new Set(
+            Array.isArray(node.properties[COLLAPSED_CHAPTERS_PROPERTY])
+                ? node.properties[COLLAPSED_CHAPTERS_PROPERTY].map(String) : [],
+        ),
         selected:null, deletion:null, busy:false, requestToken:0,
         initialRefresh:true, attribution:null, attributionButton:null,
     };
@@ -444,6 +457,21 @@ function mount(node) {
         return !range || (number >= range.start && number <= range.end);
     }
 
+    function chapterCollapseKey(range) {
+        return `${state.runName}:${String(range.id)}`;
+    }
+
+    function setChapterCollapsed(range, collapsed) {
+        const key = chapterCollapseKey(range);
+        if (collapsed) state.collapsedChapters.add(key);
+        else state.collapsedChapters.delete(key);
+        node.properties[COLLAPSED_CHAPTERS_PROPERTY] = [
+            ...state.collapsedChapters,
+        ].sort();
+        node.graph?.setDirtyCanvas?.(true, true);
+        renderBranches();
+    }
+
     function selectChapterTab(chapterId) {
         state.chapterTab = chapterId;
         const visibleScenes = (state.payload?.scenes ?? []).filter(
@@ -600,13 +628,25 @@ function mount(node) {
             if (!rows.length) continue;
             if (state.chapterTab === "all") {
                 const section = element("section", "h3cm-branch-chapter");
-                const heading = element("div", "h3cm-branch-chapter-title");
+                const collapseKey = chapterCollapseKey(range);
+                const collapsed = state.collapsedChapters.has(collapseKey);
+                section.classList.toggle(
+                    "h3cm-branch-chapter-collapsed", collapsed);
+                const heading = button(
+                    "",
+                    `${collapsed ? "Expand" : "Collapse"} ${range.title}`,
+                    () => setChapterCollapsed(range, !collapsed),
+                    "h3cm-branch-chapter-title",
+                );
+                heading.setAttribute("aria-expanded", String(!collapsed));
                 heading.append(
+                    element("span", "h3cm-branch-chapter-caret", collapsed ? "▸" : "▾"),
                     element("span", "", range.title),
                     element("span", "h3cm-muted", `Scenes ${range.start}–${range.end}`),
                 );
                 const body = element("div", "h3cm-branch-chapter-body");
-                renderBranchRows(body, rows);
+                body.hidden = collapsed;
+                if (!collapsed) renderBranchRows(body, rows);
                 section.append(heading, body);
                 branches.append(section);
             } else renderBranchRows(branches, rows);
