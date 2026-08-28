@@ -146,6 +146,12 @@ assert.equal(studioTimelineScrollAnchorSeconds(
 assert.equal(studioTimelineScrollLeftForAnchor(
     75, 600, 20, .5,
 ), 1200);
+const stableWorkspaceAnchor = studioTimelineScrollAnchorSeconds(
+    1200, 600, 2400, 120, .5,
+);
+assert.equal(studioTimelineScrollLeftForAnchor(
+    stableWorkspaceAnchor, 600, 20, .5,
+), 1200);
 assert.equal(studioNearestH3FrameLength(345), 345);
 assert.equal(studioNearestH3FrameLength(354), 362);
 assert.equal(studioNearestH3FrameLength(6, 23), 39);
@@ -352,6 +358,11 @@ assert.match(source, /Editorial start/);
 assert.match(source, /Black editorial gap/);
 assert.match(source, /OPEN TIMELINE/);
 assert.match(source, /extendTimelineWorkspace/);
+assert.match(source, /const preservedSeconds = preserveScroll/);
+assert.match(source, /const preservedScroll = restoreScroll \?\? timelineScrollSnapshot\(\)/);
+assert.doesNotMatch(source, /anchor \* layout\.contentWidth/);
+assert.match(source, /timelineScrollIntentUntil/);
+assert.match(source, /const movingRight = currentScrollLeft/);
 assert.match(source, /locked_scene_ids/);
 assert.match(source, /h3studio-resize-handle/);
 assert.match(source, /17n\+5 frame grid/);

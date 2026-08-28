@@ -3,7 +3,7 @@ import {
     TRANSITION_PRESETS,
     transitionPreset,
     transitionPresetName,
-} from "./h3_policy_core.mjs?v=0.6.68";
+} from "./h3_policy_core.mjs?v=0.6.69";
 
 export const CHAIN_POLICY_NODE = "MiniMaxH3ChainPolicy";
 export const ADVANCED_POLICY_NODE = "MiniMaxH3AdvancedPolicy";

@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.68";
+} from "./h3_chain_plan_core.mjs?v=0.6.69";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.68";
+} from "./h3_prompt_history_core.mjs?v=0.6.69";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.68";
+} from "./h3_reference_preview_core.mjs?v=0.6.69";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.68";
+} from "./h3_policy_core.mjs?v=0.6.69";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.68";
+} from "./h3_socket_presentation_core.mjs?v=0.6.69";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -89,8 +89,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.68";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.68";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.69";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.69";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -572,6 +572,7 @@ function mount(node) {
         timelineRenderedActive:null,
         timelineWorkspaceEndFrame:0, timelineSceneEndFrame:0,
         timelineExtending:false, timelineDragging:false,
+        timelineScrollIntentUntil:0, timelineLastScrollLeft:0,
         subtitleTimelineHost:null,
         panelHost:null,
         planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
@@ -1397,11 +1398,15 @@ function mount(node) {
         const boundedAnchor = Math.max(0, Math.min(
             1, Number(restoreScroll?.anchorRatio ?? anchorRatio) || 0,
         ));
-        const restoredSeconds = Number(restoreScroll?.seconds);
-        const anchor = preserveScroll
-            ? (viewport.scrollLeft + viewport.clientWidth * boundedAnchor) /
-                oldWidth
-            : 0;
+        const restoredSeconds = restoreScroll == null
+            ? Number.NaN : Number(restoreScroll.seconds);
+        const preservedSeconds = preserveScroll
+            ? studioTimelineScrollAnchorSeconds(
+                viewport.scrollLeft, viewport.clientWidth, oldWidth,
+                studioTimelineTotalSeconds(state.timelineSegments),
+                boundedAnchor,
+            )
+            : null;
         const model = timelineModel();
         const result = model.result;
         const layout = studioTimelineLayout(
@@ -1441,16 +1446,12 @@ function mount(node) {
         );
         requestAnimationFrame(() => {
             if (!viewport.isConnected) return;
-            if (Number.isFinite(restoredSeconds)) {
+            const targetSeconds = Number.isFinite(restoredSeconds)
+                ? restoredSeconds : preservedSeconds;
+            if (Number.isFinite(targetSeconds)) {
                 viewport.scrollLeft = studioTimelineScrollLeftForAnchor(
-                    restoredSeconds, viewport.clientWidth,
+                    targetSeconds, viewport.clientWidth,
                     layout.pixelsPerSecond, boundedAnchor,
-                );
-            } else if (preserveScroll) {
-                viewport.scrollLeft = Math.max(
-                    0,
-                    anchor * layout.contentWidth -
-                        viewport.clientWidth * boundedAnchor,
                 );
             }
             if (revealActive) revealActiveTimelineScene();
@@ -1493,13 +1494,7 @@ function mount(node) {
         if (next <= model.workspaceEndFrame) return false;
         state.timelineExtending = true;
         state.timelineWorkspaceEndFrame = next;
-        const scrollLeft = state.timelineViewport?.scrollLeft ?? 0;
         renderTimeline({revealActive:false});
-        requestAnimationFrame(() => {
-            if (state.timelineViewport?.isConnected) {
-                state.timelineViewport.scrollLeft = scrollLeft;
-            }
-        });
         const updated = timelineModel();
         if (state.playerSlider) {
             state.playerSlider.max = String(updated.totalSeconds);
@@ -1939,6 +1934,7 @@ function mount(node) {
     function renderTimeline({revealActive = false, restoreScroll = null} = {}) {
         const host = state.timelineHost;
         if (!host || !state.plan) return;
+        const preservedScroll = restoreScroll ?? timelineScrollSnapshot();
         host.replaceChildren();
         const result = timing();
         state.timelineSegments = timelineModel().segments;
@@ -2041,10 +2037,9 @@ function mount(node) {
         renderSourceAudioTimeline();
         renderSubtitleTimeline();
         layoutTimeline({
-            preserveScroll:restoreScroll == null
-                && Boolean(state.timelineContent?.dataset.timelineWidth),
+            preserveScroll:false,
             revealActive,
-            restoreScroll,
+            restoreScroll:preservedScroll,
         });
         state.timelineRenderedActive = state.active;
     }
@@ -4702,7 +4697,19 @@ function mount(node) {
         state.timelineRuler = ruler;
         state.timelineZoomInput = zoomInput;
         state.timelineZoomLabel = zoomLabel;
+        state.timelineScrollIntentUntil = 0;
+        state.timelineLastScrollLeft = timelineViewport.scrollLeft;
+        const noteTimelineScrollIntent = (duration = 1200) => {
+            state.timelineScrollIntentUntil = performance.now() + duration;
+        };
+        timelineViewport.addEventListener("pointerdown", (event) => {
+            if (event.target === timelineViewport || event.pointerType === "touch") {
+                noteTimelineScrollIntent(2000);
+            }
+        }, {passive:true});
         timelineViewport.addEventListener("wheel", (event) => {
+            const horizontalDelta = event.shiftKey ? event.deltaY : event.deltaX;
+            if (horizontalDelta > 0) noteTimelineScrollIntent();
             if (event.ctrlKey || event.metaKey) {
                 event.preventDefault();
                 const rect = timelineViewport.getBoundingClientRect();
@@ -4718,7 +4725,13 @@ function mount(node) {
             }
         }, {passive:false});
         timelineViewport.addEventListener("scroll", () => {
-            if (state.timelineDragging || state.timelineExtending) return;
+            const currentScrollLeft = timelineViewport.scrollLeft;
+            const movingRight = currentScrollLeft >
+                state.timelineLastScrollLeft + .5;
+            state.timelineLastScrollLeft = currentScrollLeft;
+            if (state.timelineDragging || state.timelineExtending
+                    || !movingRight
+                    || performance.now() > state.timelineScrollIntentUntil) return;
             if (timelineViewport.scrollLeft + timelineViewport.clientWidth <
                     timelineViewport.scrollWidth - 32) return;
             extendTimelineWorkspace();

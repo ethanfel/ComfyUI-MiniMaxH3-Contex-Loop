@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Plan Studio now preserves the visible absolute timeline time when its open
+  workspace grows or the timeline rerenders. It no longer treats horizontal
+  scroll as a percentage of the expanding blank workspace, which could throw
+  the scrollbar far to the right during ordinary editing.
+
 - Both prompt editors now discover tagged and Project Asset references through
   the compact **Current Tagged Ref2VA Scene** node, just as they already did
   through the original standalone Tagged Ref2VA wrapper.
