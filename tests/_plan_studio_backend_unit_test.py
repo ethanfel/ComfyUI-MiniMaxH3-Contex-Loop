@@ -162,6 +162,7 @@ async def check():
             "placements": [{
                 "scene": 2, "scene_id": "outro", "start_frame": 500,
             }],
+            "locked_scene_ids": ["intro"],
             "subtitles": {"mode": "off"},
         })
         editorial_loaded, timeline_records, editorial_frames = (
@@ -170,6 +171,7 @@ async def check():
                 {"index": 2, "id": "outro", "delivered_frames": 340},
             ]))
         assert editorial_loaded["placements"] == editorial["placements"]
+        assert editorial_loaded["locked_scene_ids"] == ["intro"]
         assert [item["kind"] for item in timeline_records] == [
             "scene", "gap", "scene"]
         assert timeline_records[1]["frame_count"] == 160
@@ -242,6 +244,8 @@ async def check():
             "audio_kind": "external_path",
             "frame_count": 340,
             "duration_seconds": 340 / 24,
+            "available_frame_count": 1200,
+            "available_duration_seconds": 50.0,
             "media_fingerprint": "3" * 64,
         }
         original_runtime_source_timeline = (
@@ -264,6 +268,7 @@ async def check():
         assert audio_payload["scenes"] == []
         assert audio_payload["source_audio"]["available"] is True
         assert audio_payload["source_audio"]["seek_seconds"] == 1.25
+        assert audio_payload["source_audio"]["available_frame_count"] == 1200
         assert chain._PLAN_STUDIO_SOURCE_PREVIEWS[
             audio_payload["token"]]["source_audio"] == source_audio_record
 

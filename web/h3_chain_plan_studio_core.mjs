@@ -87,7 +87,9 @@ function normalizedStartFrame(value) {
         ? Math.max(0, Math.min(864000, Math.round(frames))) : null;
 }
 
-export function studioTimelineSegments(rows, placements = []) {
+export function studioTimelineSegments(
+    rows, placements = [], workspaceEndFrame = null,
+) {
     const scenes = Array.isArray(rows) ? rows : [];
     const bySceneId = new Map();
     for (const placement of Array.isArray(placements) ? placements : []) {
@@ -131,6 +133,21 @@ export function studioTimelineSegments(rows, placements = []) {
         });
         cursorFrame = startFrame + durationFrames;
     });
+    const requestedWorkspaceEnd = normalizedStartFrame(workspaceEndFrame);
+    if (requestedWorkspaceEnd != null && requestedWorkspaceEnd > cursorFrame) {
+        const sceneIndex = Math.max(0, scenes.length - 1);
+        segments.push({
+            kind:"gap", key:"gap:tail", sceneIndex,
+            sceneId:String(scenes.at(-1)?.id ?? ""), gapId:"tail",
+            trailing:true,
+            startFrame:cursorFrame,
+            durationFrames:requestedWorkspaceEnd - cursorFrame,
+            endFrame:requestedWorkspaceEnd,
+            startSeconds:cursorFrame / 24,
+            durationSeconds:(requestedWorkspaceEnd - cursorFrame) / 24,
+            endSeconds:requestedWorkspaceEnd / 24,
+        });
+    }
     return segments;
 }
 
@@ -148,16 +165,46 @@ export function studioEditorialSceneStartSeconds(segments, sceneIndex) {
 }
 
 export function studioTimelineLayout(
-    rows, viewportWidth, zoom = 1, placements = [],
+    rows, viewportWidth, zoom = 1, placements = [], workspaceEndFrame = null,
 ) {
-    const segments = studioTimelineSegments(rows, placements);
+    const sceneSegments = studioTimelineSegments(rows, placements);
+    const sceneEndSeconds = studioTimelineTotalSeconds(sceneSegments);
+    const segments = studioTimelineSegments(
+        rows, placements, workspaceEndFrame,
+    );
     const width = Math.max(1, Number(viewportWidth) || 1);
     const scale = Math.max(1, Math.min(6, Number(zoom) || 1));
-    const contentWidth = width * scale;
     const totalSeconds = studioTimelineTotalSeconds(segments);
-    const widths = segments.map((segment) => totalSeconds
-        ? contentWidth * segment.durationSeconds / totalSeconds : 0);
-    return {zoom:scale, contentWidth, widths, segments, totalSeconds};
+    // Fit/100% always maps the placed scene span to one viewport. A longer
+    // workspace therefore adds horizontal scroll instead of compressing clips.
+    const fitSeconds = Math.max(1 / 24, sceneEndSeconds || totalSeconds);
+    const pixelsPerSecond = width * scale / fitSeconds;
+    const contentWidth = Math.max(
+        width * scale, totalSeconds * pixelsPerSecond,
+    );
+    const widths = segments.map(
+        (segment) => pixelsPerSecond * segment.durationSeconds,
+    );
+    return {
+        zoom:scale, contentWidth, widths, segments, totalSeconds,
+        sceneEndSeconds, pixelsPerSecond,
+    };
+}
+
+export function studioNearestH3FrameLength(
+    frames, minimumFrames = 5, maximumFrames = 3592,
+) {
+    const minimum = Math.max(5, Math.ceil(Number(minimumFrames) || 5));
+    const maximum = Math.max(minimum, Math.floor(
+        Number(maximumFrames) || 3592,
+    ));
+    const firstIndex = Math.max(0, Math.ceil((minimum - 5) / 17));
+    const lastIndex = Math.max(firstIndex, Math.floor((maximum - 5) / 17));
+    const requested = Number.isFinite(Number(frames)) ? Number(frames) : minimum;
+    const index = Math.max(firstIndex, Math.min(
+        lastIndex, Math.round((requested - 5) / 17),
+    ));
+    return 5 + index * 17;
 }
 
 export function locateStudioTimelineSegment(segments, seconds) {

@@ -7002,6 +7002,7 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
     raw_order = value.get("scene_order", [])
     raw_chapters = value.get("chapters", [])
     raw_placements = value.get("placements", [])
+    raw_locked = value.get("locked_scene_ids", [])
     if not isinstance(raw_order, list) or len(raw_order) > MAX_SHOTS:
         raise ValueError("scene_order must contain at most %d scenes." % MAX_SHOTS)
     if not isinstance(raw_chapters, list) or len(raw_chapters) > MAX_SHOTS:
@@ -7009,6 +7010,9 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
     if not isinstance(raw_placements, list) or len(raw_placements) > MAX_SHOTS:
         raise ValueError(
             "placements must contain at most %d entries." % MAX_SHOTS)
+    if not isinstance(raw_locked, list) or len(raw_locked) > MAX_SHOTS:
+        raise ValueError(
+            "locked_scene_ids must contain at most %d entries." % MAX_SHOTS)
     scene_order: list[dict[str, Any]] = []
     scene_by_id: dict[str, int] = {}
     for offset, item in enumerate(raw_order):
@@ -7083,6 +7087,21 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         })
     placements.sort(key=lambda item: int(item["scene"]))
 
+    locked_scene_ids: list[str] = []
+    locked_seen: set[str] = set()
+    for offset, item in enumerate(raw_locked):
+        scene_id = _safe_name(item, "")
+        if not scene_id or (scene_by_id and scene_id not in scene_by_id):
+            raise ValueError(
+                "Locked scene %d must target a scene in scene_order."
+                % (offset + 1))
+        if scene_id in locked_seen:
+            continue
+        locked_seen.add(scene_id)
+        locked_scene_ids.append(scene_id)
+    locked_scene_ids.sort(key=lambda scene_id: scene_by_id.get(
+        scene_id, MAX_SHOTS + 1))
+
     raw_subtitles = value.get("subtitles", {})
     if raw_subtitles is None:
         raw_subtitles = {}
@@ -7108,6 +7127,7 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         "chapters": chapters,
         "scene_order": scene_order,
         "placements": placements,
+        "locked_scene_ids": locked_scene_ids,
         "subtitles": subtitles,
     }
 
@@ -7117,6 +7137,7 @@ def _load_run_editorial(run_name: Any) -> dict[str, Any]:
     empty = {
         "format": "h3_chain_editorial_v1", "run_name": normalized,
         "chapters": [], "scene_order": [], "placements": [],
+        "locked_scene_ids": [],
         "subtitles": {"mode": "off", "asset_id": "", "offset_seconds": 0.0},
     }
     if not normalized:
@@ -13421,6 +13442,7 @@ def _plan_studio_source_audio_media(
         for shot in plan.get("shots") or ()))
     if frame_count < 1:
         return None
+    available_frame_count = _source_timeline_available_audio_frames(source)
     return {
         "audio_path": path,
         "audio_seek_seconds": float(
@@ -13428,6 +13450,8 @@ def _plan_studio_source_audio_media(
         "audio_kind": str(audio["kind"]),
         "frame_count": frame_count,
         "duration_seconds": frame_count / float(FPS),
+        "available_frame_count": available_frame_count,
+        "available_duration_seconds": available_frame_count / float(FPS),
         "media_fingerprint": str(
             source["fingerprints"].get("audio")
             or source["fingerprints"]["timeline"]),
@@ -13568,6 +13592,10 @@ def _register_plan_studio_source_previews(
             "seek_seconds": float(source_audio["audio_seek_seconds"]),
             "frame_count": int(source_audio["frame_count"]),
             "duration_seconds": float(source_audio["duration_seconds"]),
+            "available_frame_count": int(source_audio.get(
+                "available_frame_count", source_audio["frame_count"])),
+            "available_duration_seconds": float(source_audio.get(
+                "available_duration_seconds", source_audio["duration_seconds"])),
             "points_per_second": PLAN_STUDIO_WAVEFORM_POINTS_PER_SECOND,
         }
     motion_count = len(public_scenes)
@@ -22512,8 +22540,12 @@ async def _plan_studio_source_waveform(request):
         # waveform coverage for its longer editorial arrangement without
         # requiring Plan Studio to be queued again after every clip move.
         record = dict(record)
+        available_frames = int(record.get(
+            "available_frame_count", requested_frames))
         record["frame_count"] = max(
-            int(record.get("frame_count", 0)), requested_frames)
+            int(record.get("frame_count", 0)),
+            min(requested_frames, available_frames),
+        )
     try:
         path = await _ensure_plan_studio_source_waveform(record)
     except asyncio.CancelledError:

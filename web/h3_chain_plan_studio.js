@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.57";
+} from "./h3_chain_plan_core.mjs?v=0.6.59";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.57";
+} from "./h3_prompt_history_core.mjs?v=0.6.59";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.57";
+} from "./h3_reference_preview_core.mjs?v=0.6.59";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.57";
+} from "./h3_policy_core.mjs?v=0.6.59";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.57";
+} from "./h3_socket_presentation_core.mjs?v=0.6.59";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -78,6 +78,7 @@ import {
     studioContextWindowStartAtRatio,
     parseTimedLyrics,
     studioEditorialSceneStartSeconds,
+    studioNearestH3FrameLength,
     studioSourceAudioSecond,
     studioSourceSecond,
     studioTimelineLayout,
@@ -86,8 +87,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.57";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.57";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.59";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.59";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -206,6 +207,16 @@ function injectStyles() {
         .h3studio-drag-handle { position:absolute; z-index:3; left:4px; top:4px; padding:1px 4px;
             border-radius:3px; color:#fff; background:rgba(5,7,12,.72); cursor:grab; user-select:none; }
         .h3studio-drag-handle:active { cursor:grabbing; }
+        .h3studio-lock-handle { position:absolute; z-index:4; left:29px; top:4px; padding:1px 4px;
+            border-radius:3px; color:#fff; background:rgba(5,7,12,.72); cursor:pointer; user-select:none; }
+        .h3studio-resize-handle { position:absolute; z-index:5; top:0; right:0; width:8px; height:100%;
+            border-right:2px solid color-mix(in srgb,var(--scene) 78%,#fff); cursor:ew-resize;
+            touch-action:none; opacity:.72; }
+        .h3studio-resize-handle:hover, .h3studio-resize-handle:active { width:12px; opacity:1;
+            background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--scene) 28%,transparent)); }
+        .h3studio-card.h3studio-locked { border-style:dashed !important; }
+        .h3studio-card.h3studio-locked .h3studio-drag-handle,
+        .h3studio-card.h3studio-locked .h3studio-resize-handle { cursor:not-allowed; opacity:.38; }
         .h3studio-card-title { display:block; font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .h3studio-card-meta { display:block; color:#dce5f7; font-size:10px; }
         .h3studio-render-dot { position:absolute; right:6px; top:6px; width:8px; height:8px; border-radius:50%;
@@ -544,10 +555,13 @@ function mount(node) {
         timelineViewport:null, timelineContent:null, timelineRuler:null,
         timelineZoomInput:null, timelineZoomLabel:null,
         timelineResizeObserver:null, timelineWidths:[], timelineSegments:[],
+        timelineWorkspaceEndFrame:0, timelineSceneEndFrame:0,
+        timelineExtending:false, timelineDragging:false,
         subtitleTimelineHost:null,
         panelHost:null,
         planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
-        editorialReady:false, editorialRun:"", editorial:{placements:[], subtitles:{}},
+        editorialReady:false, editorialRun:"",
+        editorial:{placements:[], locked_scene_ids:[], subtitles:{}},
         subtitleAssets:[], subtitleAssetsRun:"", subtitleAssetsToken:0,
         playhead:null, player:null, playerAudio:null, sourceAudioPlayer:null,
         sourcePlayer:null, sourceLayer:null, subtitleOverlay:null,
@@ -714,8 +728,15 @@ function mount(node) {
         const mode = ["off", "preview_srt"].includes(rawSubtitles.mode)
             ? rawSubtitles.mode : "off";
         const offset = Number(rawSubtitles.offset_seconds);
+        const lockedSceneIds = [...new Set(
+            (Array.isArray(value?.locked_scene_ids)
+                ? value.locked_scene_ids : [])
+                .map((sceneId) => String(sceneId ?? "").trim())
+                .filter((sceneId) => knownIds.has(sceneId)),
+        )];
         return {
             placements,
+            locked_scene_ids:lockedSceneIds,
             subtitles:{
                 mode,
                 asset_id:String(rawSubtitles.asset_id ?? ""),
@@ -727,13 +748,65 @@ function mount(node) {
 
     function timelineModel() {
         const result = timing();
-        const segments = studioTimelineSegments(
+        const sceneSegments = studioTimelineSegments(
             result.shots, state.editorial.placements,
+        );
+        const sceneEndFrame = Math.max(
+            1,
+            Math.round(studioTimelineTotalSeconds(sceneSegments) * FPS),
+        );
+        const sourceDescriptor = state.sourcePreview?.source_audio;
+        const sourceEndFrame = sourceDescriptor?.available
+            ? Math.max(
+                Number(sourceDescriptor.available_frame_count) || 0,
+                Number(sourceDescriptor.frame_count) || 0,
+            ) : 0;
+        const subtitleOffset = Number(
+            state.editorial.subtitles?.offset_seconds,
+        ) || 0;
+        const subtitleEndFrame = subtitleCues().reduce(
+            (latest, cue) => Math.max(
+                latest,
+                Math.ceil((Number(cue?.endSeconds) + subtitleOffset) * FPS),
+            ),
+            0,
+        );
+        const workspaceEndFrame = Math.min(864000, Math.max(
+            sceneEndFrame * 2,
+            sourceEndFrame,
+            subtitleEndFrame,
+            Number(state.timelineWorkspaceEndFrame) || 0,
+        ));
+        state.timelineSceneEndFrame = sceneEndFrame;
+        state.timelineWorkspaceEndFrame = workspaceEndFrame;
+        const segments = studioTimelineSegments(
+            result.shots, state.editorial.placements, workspaceEndFrame,
         );
         return {
             result, segments,
             totalSeconds:studioTimelineTotalSeconds(segments),
+            sceneEndSeconds:sceneEndFrame / FPS,
+            workspaceEndFrame,
         };
+    }
+
+    function sceneLocked(index) {
+        const row = timing().shots[index];
+        return Boolean(row && state.editorial.locked_scene_ids.includes(
+            String(row.id),
+        ));
+    }
+
+    function setSceneLocked(index, locked) {
+        const row = timing().shots[index];
+        if (!row) return;
+        const sceneId = String(row.id);
+        const next = new Set(state.editorial.locked_scene_ids);
+        if (locked) next.add(sceneId);
+        else next.delete(sceneId);
+        state.editorial.locked_scene_ids = [...next];
+        scheduleEditorialSave();
+        renderShell();
     }
 
     function placementForScene(index) {
@@ -751,7 +824,7 @@ function mount(node) {
 
     function setScenePlacement(index, startFrame) {
         const row = timing().shots[index];
-        if (!row) return;
+        if (!row || sceneLocked(index)) return;
         state.editorial.placements = state.editorial.placements.filter(
             (placement) => placement.scene_id !== String(row.id),
         );
@@ -896,6 +969,7 @@ function mount(node) {
                 start_frame:resolvedStarts.get(placement.scene_id)
                     ?? placement.start_frame,
             })),
+            locked_scene_ids:[...state.editorial.locked_scene_ids],
             subtitles:{...state.editorial.subtitles},
         };
     }
@@ -926,6 +1000,7 @@ function mount(node) {
                 )?.scene,
                 start_frame:placement.start_frame,
             })),
+            locked_scene_ids:[...next.locked_scene_ids],
             subtitles:{...next.subtitles},
         });
         scheduleEditorialSave();
@@ -1187,14 +1262,18 @@ function mount(node) {
     function renderStatus() {
         const host = root.querySelector(".h3studio-statusline");
         if (!host || !state.plan) return;
-        const {result, totalSeconds} = timelineModel();
+        const {result, totalSeconds, sceneEndSeconds} = timelineModel();
         const ready = result.shots.filter(
             (row, index) => matchingStudioCheckpoint(state.checkpoints, index, row),
         ).length;
         host.replaceChildren();
         host.append(
             element("strong", "", `${result.shots.length} scenes`),
-            document.createTextNode(`${result.totalFrames} generated frames · ${formatClock(totalSeconds)} editorial timeline`),
+            document.createTextNode(
+                `${result.totalFrames} generated frames · ` +
+                `${formatClock(sceneEndSeconds)} placed · ` +
+                `blank track open to ${formatClock(totalSeconds)}`,
+            ),
             document.createTextNode(`${settings().contextLength}f overlap · ${ready}/${result.shots.length} rendered`),
         );
         if (result.errors.length) host.append(element("span", "h3studio-error", `${result.errors.length} plan issue${result.errors.length === 1 ? "" : "s"}`));
@@ -1301,10 +1380,11 @@ function mount(node) {
             ? (viewport.scrollLeft + viewport.clientWidth * boundedAnchor) /
                 oldWidth
             : 0;
-        const result = timing();
+        const model = timelineModel();
+        const result = model.result;
         const layout = studioTimelineLayout(
             result.shots, viewport.clientWidth, state.timelineZoom,
-            state.editorial.placements,
+            state.editorial.placements, model.workspaceEndFrame,
         );
         state.timelineZoom = layout.zoom;
         state.timelineWidths = layout.widths;
@@ -1371,6 +1451,39 @@ function mount(node) {
         dirty();
     }
 
+    function extendTimelineWorkspace(minimumEndFrame = null) {
+        if (state.timelineExtending) return false;
+        const model = timelineModel();
+        if (model.workspaceEndFrame >= 864000) return false;
+        const pageFrames = Math.max(FPS, state.timelineSceneEndFrame);
+        const requested = minimumEndFrame == null
+            ? model.workspaceEndFrame + pageFrames
+            : Number(minimumEndFrame);
+        const next = Math.min(864000, Math.max(
+            model.workspaceEndFrame + 1,
+            Math.ceil(Number(requested) || 0),
+        ));
+        if (next <= model.workspaceEndFrame) return false;
+        state.timelineExtending = true;
+        state.timelineWorkspaceEndFrame = next;
+        const scrollLeft = state.timelineViewport?.scrollLeft ?? 0;
+        renderTimeline({revealActive:false});
+        requestAnimationFrame(() => {
+            if (state.timelineViewport?.isConnected) {
+                state.timelineViewport.scrollLeft = scrollLeft;
+            }
+        });
+        const updated = timelineModel();
+        if (state.playerSlider) {
+            state.playerSlider.max = String(updated.totalSeconds);
+        }
+        const clock = root.querySelector(".h3studio-player-clock");
+        if (clock) clock.textContent = `${formatClock(state.timelinePosition ?? 0)} / ${formatClock(updated.totalSeconds)}`;
+        renderStatus();
+        requestAnimationFrame(() => { state.timelineExtending = false; });
+        return true;
+    }
+
     function sourceScene(index) {
         return matchingStudioSourceScene(
             state.sourcePreview, index, timing().shots[index],
@@ -1414,9 +1527,15 @@ function mount(node) {
 
     function sourceWaveformUrl(payload = state.sourcePreview) {
         if (!payload?.source_audio?.available || !payload?.token) return "";
+        const availableFrames = Number(
+            payload.source_audio.available_frame_count,
+        ) || Math.ceil(timelineModel().totalSeconds * FPS);
         const requestedFrames = Math.max(
             Number(payload.source_audio.frame_count) || 0,
-            Math.ceil(timelineModel().totalSeconds * FPS),
+            Math.min(
+                availableFrames,
+                Math.ceil(timelineModel().totalSeconds * FPS),
+            ),
         );
         const query = new URLSearchParams({
             token:payload.token,
@@ -1614,11 +1733,24 @@ function mount(node) {
         ) ?? null;
     }
 
+    function trailingGapSegment() {
+        return state.timelineSegments.find(
+            (segment) => segment.kind === "gap" && segment.trailing,
+        ) ?? null;
+    }
+
     function appendTimelineGap(host, segment, interactive = false) {
         if (!host || !segment) return;
         const gap = interactive
-            ? button("", `Black gap · ${formatClock(segment.durationSeconds)}`, () => {
-                state.timelinePosition = segment.startSeconds;
+            ? button("", segment.trailing
+                ? `Open black timeline after the last scene · ${formatClock(segment.durationSeconds)}`
+                : `Black gap · ${formatClock(segment.durationSeconds)}`, (event) => {
+                const rect = event.currentTarget?.getBoundingClientRect?.();
+                const ratio = rect?.width > 0 ? Math.max(0, Math.min(
+                    1, (event.clientX - rect.left) / rect.width,
+                )) : 0;
+                state.timelinePosition = segment.startSeconds +
+                    segment.durationSeconds * ratio;
                 state.view = "player"; persistView(); renderToolbarState(); renderPanel();
             })
             : element("div");
@@ -1633,15 +1765,19 @@ function mount(node) {
         );
         if (interactive) gap.append(element(
             "span", "h3studio-gap-copy",
-            `EMPTY · ${formatClock(segment.durationSeconds)}`,
+            segment.trailing
+                ? `OPEN TIMELINE · ${formatClock(segment.durationSeconds)}`
+                : `EMPTY · ${formatClock(segment.durationSeconds)}`,
         ));
         host.append(gap);
     }
 
     function enableScenePlacementDrag(card, handle, index) {
-        handle.title = "Drag this clip to an exact editorial start time. Empty track space becomes black.";
+        handle.title = sceneLocked(index)
+            ? "Scene locked · unlock it before moving"
+            : "Drag this clip to an exact editorial start time. Empty track space becomes black.";
         handle.addEventListener("pointerdown", (event) => {
-            if (event.button !== 0) return;
+            if (event.button !== 0 || sceneLocked(index)) return;
             event.preventDefault(); event.stopPropagation();
             const model = timelineModel();
             const scene = model.segments.find(
@@ -1657,11 +1793,20 @@ function mount(node) {
             );
             const secondsPerPixel = model.totalSeconds / contentWidth;
             const originX = event.clientX;
+            const viewport = state.timelineViewport;
+            const originScrollLeft = viewport?.scrollLeft ?? 0;
             let targetFrame = scene.startFrame;
             let moved = false;
+            state.timelineDragging = true;
             handle.setPointerCapture?.(event.pointerId);
             const onMove = (moveEvent) => {
-                const deltaX = moveEvent.clientX - originX;
+                if (viewport) {
+                    const rect = viewport.getBoundingClientRect();
+                    if (moveEvent.clientX > rect.right - 36) viewport.scrollLeft += 18;
+                    else if (moveEvent.clientX < rect.left + 36) viewport.scrollLeft -= 18;
+                }
+                const deltaX = moveEvent.clientX - originX +
+                    ((viewport?.scrollLeft ?? 0) - originScrollLeft);
                 if (Math.abs(deltaX) > 3) moved = true;
                 if (!moved) return;
                 const minimum = Number(previous?.endFrame) || 0;
@@ -1680,6 +1825,7 @@ function mount(node) {
                 handle.removeEventListener("pointerup", finish);
                 handle.removeEventListener("pointercancel", finish);
                 handle.releasePointerCapture?.(upEvent.pointerId);
+                state.timelineDragging = false;
                 card.style.removeProperty("transform");
                 card.style.removeProperty("opacity");
                 handle.textContent = "⋮⋮";
@@ -1691,23 +1837,87 @@ function mount(node) {
         });
     }
 
-    function renderTimeline() {
+    function enableSceneDurationDrag(card, handle, index) {
+        const defaultTitle = sceneLocked(index)
+            ? "Scene locked · unlock it before changing its length"
+            : "Drag to set this scene's generated length. It snaps to H3's 17n+5 frame grid.";
+        handle.title = defaultTitle;
+        handle.addEventListener("pointerdown", (event) => {
+            if (event.button !== 0 || sceneLocked(index)) return;
+            event.preventDefault(); event.stopPropagation();
+            const model = timelineModel();
+            const row = model.result.shots[index];
+            const shot = state.plan?.shots?.[index];
+            if (!row || !shot) return;
+            const contentWidth = Math.max(
+                1, Number(state.timelineContent?.dataset.timelineWidth)
+                    || state.timelineContent?.clientWidth || 1,
+            );
+            const secondsPerPixel = model.totalSeconds / contentWidth;
+            const contextFrames = Math.max(
+                0, Number(row.rawFrames) - Number(row.deliveredFrames),
+            );
+            const minimumRaw = studioNearestH3FrameLength(
+                contextFrames + 1, contextFrames + 1, 3592,
+            );
+            const originX = event.clientX;
+            const originWidth = card.getBoundingClientRect().width;
+            let targetRaw = Number(row.rawFrames) || minimumRaw;
+            let moved = false;
+            state.timelineDragging = true;
+            handle.setPointerCapture?.(event.pointerId);
+            const onMove = (moveEvent) => {
+                const deltaX = moveEvent.clientX - originX;
+                if (Math.abs(deltaX) > 2) moved = true;
+                if (!moved) return;
+                targetRaw = studioNearestH3FrameLength(
+                    Number(row.rawFrames) + deltaX * secondsPerPixel * FPS,
+                    minimumRaw, 3592,
+                );
+                const deliveredFrames = Math.max(1, targetRaw - contextFrames);
+                card.style.setProperty(
+                    "--h3-scene-width",
+                    `${deliveredFrames / FPS / secondsPerPixel}px`,
+                );
+                handle.title = `${targetRaw} raw frames · ${(targetRaw / FPS).toFixed(3)}s generation`;
+            };
+            const finish = (upEvent) => {
+                handle.removeEventListener("pointermove", onMove);
+                handle.removeEventListener("pointerup", finish);
+                handle.removeEventListener("pointercancel", finish);
+                handle.releasePointerCapture?.(upEvent.pointerId);
+                state.timelineDragging = false;
+                handle.title = defaultTitle;
+                card.style.setProperty("--h3-scene-width", `${originWidth}px`);
+                if (!moved || targetRaw === Number(row.rawFrames)) return;
+                shot.length = targetRaw;
+                delete shot.frames;
+                delete shot.duration_seconds;
+                writePlan();
+                renderShell();
+            };
+            handle.addEventListener("pointermove", onMove);
+            handle.addEventListener("pointerup", finish);
+            handle.addEventListener("pointercancel", finish);
+        });
+    }
+
+    function renderTimeline({revealActive = true} = {}) {
         const host = state.timelineHost;
         if (!host || !state.plan) return;
         host.replaceChildren();
         const result = timing();
-        state.timelineSegments = studioTimelineSegments(
-            result.shots, state.editorial.placements,
-        );
+        state.timelineSegments = timelineModel().segments;
         for (let index = 0; index < state.plan.shots.length; index += 1) {
             appendTimelineGap(host, gapSegmentBefore(index), true);
             const shot = state.plan.shots[index];
             const row = result.shots[index];
             const checkpoint = matchingStudioCheckpoint(state.checkpoints, index, row);
+            const locked = sceneLocked(index);
             const card = button("", `Scene ${index + 1}: ${row.id}`, () => void selectScene(index));
             card.dataset.sceneIndex = String(index);
             card.dataset.timelineKey = `scene:${index}`;
-            card.className = `h3studio-card${index === state.active ? " h3studio-selected" : ""}${checkpoint?.ready ? " h3studio-rendered" : ""}`;
+            card.className = `h3studio-card${index === state.active ? " h3studio-selected" : ""}${checkpoint?.ready ? " h3studio-rendered" : ""}${locked ? " h3studio-locked" : ""}`;
             card.style.setProperty("--scene", automaticSceneColor(index));
             const segmentIndex = state.timelineSegments.findIndex(
                 (segment) => segment.key === card.dataset.timelineKey,
@@ -1726,10 +1936,38 @@ function mount(node) {
             copy.append(element("span", "h3studio-card-title", `${index + 1}. ${row.id}`),
                 element("span", "h3studio-card-meta", `${formatClock(sceneSegment?.startSeconds ?? 0)} → ${formatClock(sceneSegment?.endSeconds ?? row.deliveredSeconds)} · ${row.rawFrames || "—"}f raw${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
             const dragHandle = element("span", "h3studio-drag-handle", "⋮⋮");
+            dragHandle.title = locked
+                ? "Scene locked · unlock it before moving"
+                : "Move scene on the editorial timeline";
             enableScenePlacementDrag(card, dragHandle, index);
-            card.append(copy, dragHandle, element("span", "h3studio-render-dot"));
+            const lockHandle = element("span", "h3studio-lock-handle", locked ? "🔒" : "🔓");
+            lockHandle.tabIndex = 0;
+            lockHandle.setAttribute("role", "button");
+            lockHandle.title = locked
+                ? "Unlock scene movement and duration editing"
+                : "Lock scene movement and duration editing";
+            lockHandle.addEventListener("pointerdown", (event) => event.stopPropagation());
+            lockHandle.addEventListener("click", (event) => {
+                event.preventDefault(); event.stopPropagation();
+                setSceneLocked(index, !locked);
+            });
+            lockHandle.addEventListener("keydown", (event) => {
+                if (!["Enter", " "].includes(event.key)) return;
+                event.preventDefault(); event.stopPropagation();
+                setSceneLocked(index, !locked);
+            });
+            const resizeHandle = element("span", "h3studio-resize-handle");
+            resizeHandle.title = locked
+                ? "Scene locked · unlock it before changing its length"
+                : "Resize scene length · snaps to H3's 17n+5 frame grid";
+            enableSceneDurationDrag(card, resizeHandle, index);
+            card.append(
+                copy, dragHandle, lockHandle, resizeHandle,
+                element("span", "h3studio-render-dot"),
+            );
             host.append(card);
         }
+        appendTimelineGap(host, trailingGapSegment(), true);
         for (const chapter of orderedChapters(state.plan)) {
             const index = state.plan.shots.findIndex((shot, offset) => (
                 safeShotId(shot?.id, `clip_${String(offset + 1).padStart(4, "0")}`)
@@ -1750,7 +1988,7 @@ function mount(node) {
         renderSubtitleTimeline();
         layoutTimeline({
             preserveScroll:Boolean(state.timelineContent?.dataset.timelineWidth),
-            revealActive:true,
+            revealActive,
         });
     }
 
@@ -1812,6 +2050,7 @@ function mount(node) {
             card.append(copy, element("span", "h3studio-render-dot"));
             host.append(card);
         }
+        appendTimelineGap(host, trailingGapSegment());
     }
 
     function renderSourceAudioTimeline() {
@@ -1903,6 +2142,31 @@ function mount(node) {
             mute.className = "h3studio-audio-mute";
             card.append(canvas, mute);
             host.append(card);
+        }
+        const tail = trailingGapSegment();
+        if (tail) {
+            const tailCard = element("div", "h3studio-audio-card");
+            tailCard.dataset.timelineKey = tail.key;
+            tailCard.title = "Source song continues through the open black timeline";
+            const segmentIndex = state.timelineSegments.findIndex(
+                (segment) => segment.key === tail.key,
+            );
+            if (state.timelineWidths[segmentIndex] > 0) tailCard.style.setProperty(
+                "--h3-scene-width", `${state.timelineWidths[segmentIndex]}px`,
+            );
+            const waveform = element("canvas", "h3studio-waveform");
+            waveform.style.inset = "3px 4px";
+            waveform.style.width = "calc(100% - 8px)";
+            drawSourceWaveform(
+                waveform,
+                studioWaveformIntervalSamples(
+                    state.sourceWaveform, tail.startSeconds,
+                    tail.durationSeconds,
+                ),
+                "#9aa5b8", false,
+            );
+            tailCard.append(waveform);
+            host.append(tailCard);
         }
         if (!state.sourceWaveform && !state.sourceWaveformPromise) {
             void loadSourceWaveform();
@@ -2098,6 +2362,7 @@ function mount(node) {
     function renderScenePanel() {
         const shot = state.plan.shots[state.active];
         const row = timing().shots[state.active];
+        const timelineLocked = sceneLocked(state.active);
         const panel = element("div");
         const head = element("div", "h3studio-scene-head");
         const editorialStart = studioEditorialSceneStartSeconds(
@@ -2158,6 +2423,9 @@ function mount(node) {
             for (const placement of state.editorial.placements) {
                 if (placement.scene_id === previousId) placement.scene_id = shot.id;
             }
+            state.editorial.locked_scene_ids = state.editorial.locked_scene_ids.map(
+                (sceneId) => sceneId === previousId ? shot.id : sceneId,
+            );
             writePlan(); renderShell();
         });
         const mode = element("select");
@@ -2166,7 +2434,9 @@ function mount(node) {
         }
         const length = element("input"); length.type = "number";
         function refreshLength() {
-            const selected = shotLengthMode(shot); mode.value = selected; length.disabled = selected === "default";
+            const selected = shotLengthMode(shot); mode.value = selected;
+            mode.disabled = timelineLocked;
+            length.disabled = timelineLocked || selected === "default";
             if (selected === "seconds") { length.value = shot.duration_seconds ?? ""; length.min = ".01"; length.max = String(3592 / 24); length.step = ".01"; }
             else if (selected === "frames") { length.value = shot.length ?? shot.frames ?? ""; length.min = "5"; length.max = "3592"; length.step = "17"; }
             else length.value = "";
@@ -2668,6 +2938,11 @@ function mount(node) {
             "Auto", "Place this scene immediately after the previous clip",
             () => setScenePlacement(state.active, null),
         );
+        sceneStart.disabled = timelineLocked;
+        resetStart.disabled = timelineLocked;
+        if (timelineLocked) {
+            sceneStart.title = "Scene locked · unlock it from the timeline before moving it.";
+        }
         sceneStart.addEventListener("change", () => {
             try {
                 const seconds = parseStudioTimecode(sceneStart.value);
@@ -3519,7 +3794,9 @@ function mount(node) {
         }
         const label = root.querySelector(".h3studio-player-label");
         if (label) label.textContent = inGap
-            ? `Black editorial gap before scene ${index + 1} · ${formatClock(location.durationSeconds)}`
+            ? location.trailing
+                ? `Open black timeline after scene ${index + 1} · ${formatClock(location.durationSeconds)}`
+                : `Black editorial gap before scene ${index + 1} · ${formatClock(location.durationSeconds)}`
             : generated
             ? `Scene ${index + 1} · ${timing().shots[index].id}${reference ? ` ↔ @${reference.tag}` : ""}`
             : `Scene ${index + 1} has no saved segment${sourceAudio() ? " · Source track is ready" : ""}${reference ? ` · @${reference.tag} is ready` : ""}.`;
@@ -3562,7 +3839,7 @@ function mount(node) {
             new Event("change"),
         );
         updateSubtitleOverlay(target);
-        state.primePlayerNext?.(inGap ? index : index + 1);
+        state.primePlayerNext?.(location.trailing ? -1 : inGap ? index : index + 1);
         if (autoplay && !generated) state.playPlayerTransport?.();
     }
 
@@ -3675,7 +3952,7 @@ function mount(node) {
         );
         const initialTimeline = timelineModel();
         const slider = element("input"); slider.type = "range"; slider.min = "0"; slider.max = String(initialTimeline.totalSeconds); slider.step = String(1 / 24); slider.value = "0";
-        const clock = element("span", "", `0 / ${formatClock(initialTimeline.totalSeconds)}`);
+        const clock = element("span", "h3studio-player-clock", `0 / ${formatClock(initialTimeline.totalSeconds)}`);
         slider.addEventListener("input", () => seekTimeline(Number(slider.value), false));
         const syncSource = () => {
             const reference = sourceReference(state.playerIndex);
@@ -3750,10 +4027,18 @@ function mount(node) {
             const originTime = performance.now();
             const tick = (now) => {
                 if (!video.isConnected || state.player !== video) return;
-                const model = timelineModel();
+                let model = timelineModel();
+                const unbounded =
+                    originPosition + (now - originTime) / 1000;
+                if (unbounded >= model.totalSeconds - 1 / FPS) {
+                    extendTimelineWorkspace(
+                        model.workspaceEndFrame + state.timelineSceneEndFrame,
+                    );
+                    model = timelineModel();
+                }
                 const current = Math.min(
                     model.totalSeconds,
-                    originPosition + (now - originTime) / 1000,
+                    unbounded,
                 );
                 const location = locateStudioTimelineSegment(
                     model.segments, current,
@@ -3780,6 +4065,16 @@ function mount(node) {
                 return video.play().catch(() => {});
             }
             if (!sourceTimelineAudio.dataset.source) {
+                startEditorialClock();
+                return undefined;
+            }
+            const timelineAudio = sourceAudio();
+            const availableSeconds = Number(
+                timelineAudio?.available_duration_seconds
+                    ?? timelineAudio?.duration_seconds,
+            ) || 0;
+            if ((Number(state.timelinePosition) || 0) >=
+                    availableSeconds - 1 / FPS) {
                 startEditorialClock();
                 return undefined;
             }
@@ -3893,8 +4188,13 @@ function mount(node) {
         });
         sourceTimelineAudio.addEventListener("ended", () => {
             if (video.dataset.source) return;
-            updateTransportPosition(timelineModel().totalSeconds);
-            play.textContent = "▶";
+            const descriptor = sourceAudio();
+            const current = Math.max(0, Number(
+                descriptor?.available_duration_seconds
+                    ?? descriptor?.duration_seconds,
+            ) || state.timelinePosition || 0);
+            updateTransportPosition(current);
+            startEditorialClock();
         });
         video.addEventListener("ended", () => {
             captureHandoffFrame();
@@ -4213,16 +4513,19 @@ function mount(node) {
         });
         remove.disabled = !state.activeChapterId && state.plan.shots.length <= 1;
         const left = button("←", "Move selected scene earlier", async () => {
-            if (!state.active) return; await flushHistoryDraft();
+            if (!state.active || sceneLocked(state.active)) return; await flushHistoryDraft();
             moveShot(state.plan.shots, state.active, state.active - 1); state.active -= 1;
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
-        }); left.disabled = Boolean(state.activeChapterId) || !state.active;
+        }); left.disabled = Boolean(state.activeChapterId) || !state.active
+            || sceneLocked(state.active);
         const right = button("→", "Move selected scene later", async () => {
-            if (state.active >= state.plan.shots.length - 1) return; await flushHistoryDraft();
+            if (state.active >= state.plan.shots.length - 1
+                    || sceneLocked(state.active)) return; await flushHistoryDraft();
             moveShot(state.plan.shots, state.active, state.active + 1); state.active += 1;
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
         }); right.disabled = Boolean(state.activeChapterId)
-            || state.active >= state.plan.shots.length - 1;
+            || state.active >= state.plan.shots.length - 1
+            || sceneLocked(state.active);
         toolbar.append(add, addChapter, duplicate, remove, left, right, element("span", "h3studio-spacer"));
         const sceneViewLabel = state.activeChapterId
             ? "Chapter notes"
@@ -4331,6 +4634,12 @@ function mount(node) {
                 timelineViewport.scrollLeft += event.deltaY;
             }
         }, {passive:false});
+        timelineViewport.addEventListener("scroll", () => {
+            if (state.timelineDragging || state.timelineExtending) return;
+            if (timelineViewport.scrollLeft + timelineViewport.clientWidth <
+                    timelineViewport.scrollWidth - 32) return;
+            extendTimelineWorkspace();
+        }, {passive:true});
         if (typeof ResizeObserver === "function") {
             state.timelineResizeObserver = new ResizeObserver(() => {
                 layoutTimeline({preserveScroll:true});
@@ -4388,9 +4697,11 @@ function mount(node) {
                 state.checkpoints = new Map(); state.checkpointSignature = "";
                 state.checkpointError = ""; state.timelinePosition = null;
                 state.editorialReady = false; state.editorialRun = "";
-                state.editorial = {placements:[], subtitles:{
+                state.editorial = {placements:[], locked_scene_ids:[], subtitles:{
                     mode:"off", asset_id:"", offset_seconds:0,
                 }};
+                state.timelineWorkspaceEndFrame = 0;
+                state.timelineSceneEndFrame = 0;
                 state.lastEditorialSignature = "";
                 state.subtitleAssets = []; state.subtitleAssetsRun = "";
                 state.subtitleAssetsToken += 1;

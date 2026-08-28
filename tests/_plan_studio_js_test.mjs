@@ -15,6 +15,7 @@ import {
     studioContextWindowLayout,
     studioContextWindowStartAtRatio,
     studioEditorialSceneStartSeconds,
+    studioNearestH3FrameLength,
     studioRulerTicks,
     studioSceneStartSeconds,
     studioSourceAudioSecond,
@@ -90,6 +91,22 @@ assert.equal(placedLayout.segments.length, 4);
 assert.ok(Math.abs(
     placedLayout.widths.reduce((total, value) => total + value, 0) - 600,
 ) < 1e-9);
+const openTimeline = studioTimelineLayout(rows, 600, 1, [], 2042);
+assert.equal(openTimeline.sceneEndSeconds, 1042 / 24);
+assert.equal(openTimeline.totalSeconds, 2042 / 24);
+assert.equal(openTimeline.contentWidth, 600 * 2042 / 1042);
+assert.equal(openTimeline.segments.at(-1).key, "gap:tail");
+assert.equal(openTimeline.segments.at(-1).trailing, true);
+assert.ok(Math.abs(
+    openTimeline.widths.slice(0, 3).reduce((total, value) => total + value, 0)
+        - 600,
+) < 1e-9);
+assert.equal(locateStudioTimelineSegment(
+    openTimeline.segments, 70,
+).key, "gap:tail");
+assert.equal(studioNearestH3FrameLength(345), 345);
+assert.equal(studioNearestH3FrameLength(354), 362);
+assert.equal(studioNearestH3FrameLength(6, 23), 39);
 assert.equal(parseStudioTimecode("90.5"), 90.5);
 assert.equal(parseStudioTimecode("15.000s"), 15);
 assert.equal(parseStudioTimecode("1:30.5"), 90.5);
@@ -141,7 +158,8 @@ assert.notEqual(
 
 const sourceTimeline = {token:"opaque", source_audio:{
     available:true, frame_count:1042, seek_seconds:2,
-    duration_seconds:1042 / 24,
+    duration_seconds:1042 / 24, available_frame_count:2000,
+    available_duration_seconds:2000 / 24,
 }, scenes:[{
     scene:2, scene_id:"two", delivered_frames:340,
     references:[{frame_count:362, compare_offset_frames:22}],
@@ -290,6 +308,11 @@ assert.match(source, /studioSourceAudioSecond/);
 assert.match(source, /studioWaveformIntervalSamples/);
 assert.match(source, /Editorial start/);
 assert.match(source, /Black editorial gap/);
+assert.match(source, /OPEN TIMELINE/);
+assert.match(source, /extendTimelineWorkspace/);
+assert.match(source, /locked_scene_ids/);
+assert.match(source, /h3studio-resize-handle/);
+assert.match(source, /17n\+5 frame grid/);
 assert.match(source, /SUBTITLES/);
 assert.match(source, /Source Timeline connected · no audio/);
 assert.match(source, /No active path-backed motion reference in this Plan/);

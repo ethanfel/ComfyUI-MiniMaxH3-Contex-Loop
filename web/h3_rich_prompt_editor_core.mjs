@@ -1,4 +1,4 @@
-import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.6.57";
+import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.6.59";
 
 export const RICH_PROMPT_GUIDES = Object.freeze([
     {id: "auto", label: "Auto · H3 mode"},
@@ -53,7 +53,14 @@ export function richGuideInstruction(guide, generationMode) {
 }
 
 function recordTokens(record) {
-    return [record?.token, record?.label]
+    const tokens = [record?.token, record?.label];
+    const explicitTag = String(record?.tag ?? "")
+        .trim().replace(/^[@#]+/, "");
+    const tokenTag = /^@([A-Za-z][A-Za-z0-9_-]{0,63})$/
+        .exec(String(record?.nativeToken ?? record?.token ?? "").trim())?.[1];
+    const canonicalTag = explicitTag || tokenTag;
+    if (canonicalTag) tokens.push(`#${canonicalTag}`);
+    return tokens
         .map((value) => String(value ?? "").trim())
         .filter(Boolean);
 }
@@ -92,7 +99,9 @@ export function tokenizeRichPrompt(text, records = []) {
         const section = lower.endsWith(":")
             ? H3_ALL_SECTIONS.find((item) => `${item}:` === lower) : null;
         const semanticMatch = /^#([a-z][a-z0-9_-]{0,63})\[([0-9]+(?:\.[0-9]+)?)s?\]$/i.exec(token);
-        const recordKey = semanticMatch ? `@${semanticMatch[1]}`.toLowerCase() : lower;
+        // A semantic-only asset has no native @tag token. Resolve #tag[time]
+        // through the timestamp-independent semantic key registered above.
+        const recordKey = semanticMatch ? `#${semanticMatch[1]}`.toLowerCase() : lower;
         const record = recordMap.get(recordKey) ?? null;
         if (section) {
             parts.push({type:"section", kind:"section", text:token, section, unresolved:false});
