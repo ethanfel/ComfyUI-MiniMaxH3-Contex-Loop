@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added **Generation Profile**, a two-control replacement for the cryptic Chain
+  Policy switches. Clear scene-continuity and audio choices include Generate
+  audio, fresh per-scene audio, source-guided generation, source soundtrack,
+  silence, and exact source-audio lip-sync. The former node remains compatible
+  as deprecated **Manual Chain Policy (Legacy)**.
+
 - Plan Studio now preserves the visible absolute timeline time when its open
   workspace grows or the timeline rerenders. It no longer treats horizontal
   scroll as a percentage of the expanding blank workspace, which could throw

@@ -1,6 +1,29 @@
 # Audio and continuity
 
-## Choose an audio policy
+## Choose a generation profile
+
+New workflows should use **Generation Profile**, which replaces the individual
+audio switches with explicit intent:
+
+| Audio profile | Generation and final-output behavior |
+|---|---|
+| Generate audio | H3 generates sound and carries it between scenes |
+| Generate fresh audio per scene | H3 generates sound without carrying the preceding scene's audio latent |
+| Lip-sync to source audio | The exact Source Timeline window drives generation and remains the final soundtrack |
+| Generate audio from source guide | Source audio is a loose reference while H3 creates the final sound |
+| Use source soundtrack only | The source track is used for assembly without guiding generation |
+| No final audio | The assembled MP4 is silent |
+
+Its **Scene continuity** profile separately selects visual continuity,
+independent scenes, or a hard/smooth audiovisual boundary. The profile output
+is the same canonical `chain_policy` record used everywhere else and can feed
+Advanced Policy Override before Plan.
+
+The deprecated **Manual Chain Policy (Legacy)** remains loadable for existing
+workflows and unusual combinations that do not fit a named profile. Its legacy
+controls are described below.
+
+## Manual policy axes
 
 Version 0.5 separates three independent decisions and one exact-target switch:
 
@@ -11,8 +34,9 @@ Version 0.5 separates three independent decisions and one exact-target switch:
 | Generated continuity | `on`, `off` | Whether the previous sampled audio latent continues into the next scene |
 | Lock source audio | `on`, `off` | Whether each exact source window occupies the complete target audio latent and is protected from denoising |
 
-Set these controls and the default incoming boundary on the single **Chain
-Policy** node. Its one output may connect directly to Plan or pass through an
+Set these controls and the default incoming boundary on the deprecated
+**Manual Chain Policy (Legacy)** node. Its output may connect directly to Plan
+or pass through an
 **Advanced Policy Override**. Advanced Policy preserves every audio choice and
 replaces only the incoming transition with a named experimental recipe such as
 Drift-Control AV. Use the **Legacy 0.4 Policy Adapter** only for a genuine 0.4
@@ -25,10 +49,10 @@ the boundary fields it owns; the last boundary layer wins, while the audio
 record continues unchanged:
 
 ```text
-Chain Policy → Plan
-Chain Policy → Advanced Policy Override → Plan
-Chain Policy → Legacy 0.4 Policy Adapter → Plan
-Chain Policy → Advanced Policy Override → Legacy 0.4 Policy Adapter → Plan
+Generation Profile → Plan
+Generation Profile → Advanced Policy Override → Plan
+Manual Chain Policy (Legacy) → Plan
+Generation Profile → Legacy 0.4 Policy Adapter → Plan
 ```
 
 The reverse Advanced/Legacy order is also valid: whichever is nearest Plan

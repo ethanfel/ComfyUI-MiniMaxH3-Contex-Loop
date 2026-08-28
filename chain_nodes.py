@@ -112,6 +112,8 @@ from .contracts_v05 import (
     LATENT_COLOR_CARRY_RECIPE,
     DEPENDENCY_SCOPES,
     FINAL_AUDIO_POLICIES,
+    GENERATION_AUDIO_PROFILES,
+    GENERATION_SCENE_PROFILES,
     GENERATED_CONTINUITY_POLICIES,
     PRIMARY_TRANSITION_PRESETS,
     PREFLIGHT_VERSION,
@@ -384,8 +386,9 @@ def _paired_audio_policy(value: Any) -> str:
 def _validate_chain_policy(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(
-            "H3 Chain Policy must come from MiniMax H3 Chain Policy, "
-            "Advanced Policy, or the Legacy 0.4 Policy Adapter.")
+            "H3 Chain Policy must come from MiniMax H3 Generation Profile, "
+            "Manual Chain Policy, Advanced Policy, or the Legacy 0.4 "
+            "Policy Adapter.")
     if value.get("version") != CHAIN_POLICY_VERSION:
         raise ValueError("H3 Chain Policy version is missing or obsolete.")
     return _contract_compose_chain_policy(
@@ -12601,8 +12604,83 @@ class MiniMaxH3ChainExternalVideo:
         return (external_context, status)
 
 
+class MiniMaxH3GenerationProfile:
+    """Normal-user generation intent expressed as two explicit profiles."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "scene_continuity": (list(GENERATION_SCENE_PROFILES), {
+                    "default": "Visual continuity",
+                    "display_name": "Scene continuity",
+                    "tooltip": "How each new scene connects to the previous "
+                               "one. Visual continuity carries a short RGB "
+                               "guide; Independent scenes carries nothing; "
+                               "Strong picture + audio protects a longer "
+                               "boundary; Smooth picture + audio keeps the "
+                               "same picture boundary while gently releasing "
+                               "its audio."}),
+                "audio_profile": (list(GENERATION_AUDIO_PROFILES), {
+                    "default": "Generate audio",
+                    "display_name": "Audio profile",
+                    "tooltip": "Generate audio keeps H3 sound continuous "
+                               "between scenes. Generate fresh audio starts "
+                               "each scene clean. Lip-sync protects the exact "
+                               "Source Timeline window during generation and "
+                               "uses that source track in the final MP4. "
+                               "Source guide asks H3 to create new sound from "
+                               "a loose reference. Source soundtrack only "
+                               "does not guide generation. No final audio "
+                               "creates a silent assembled MP4."}),
+            },
+        }
+
+    RETURN_TYPES = (CHAIN_POLICY_TYPE, "STRING")
+    RETURN_NAMES = ("chain_policy", "status")
+    OUTPUT_TOOLTIPS = (
+        "Generation profile to connect to Plan's chain_policy input.",
+        "Resolved scene-continuity and audio behavior summary.",
+    )
+    FUNCTION = "build"
+    CATEGORY = "conditioning/minimax/contex_loop/policies"
+    DESCRIPTION = (
+        "Choose understandable scene-continuity and audio profiles. The node "
+        "compiles them to the same stable Chain Policy used by Plan, so it "
+        "can also feed Advanced Policy Override. Use the deprecated Manual "
+        "Chain Policy only when an unusual combination is not represented."
+    )
+
+    def build(self, scene_continuity="Visual continuity",
+              audio_profile="Generate audio"):
+        try:
+            transition = GENERATION_SCENE_PROFILES[str(scene_continuity)]
+        except KeyError as exc:
+            raise ValueError(
+                "Unknown H3 scene-continuity profile %r." %
+                scene_continuity) from exc
+        try:
+            final, source, continuity, lock = GENERATION_AUDIO_PROFILES[
+                str(audio_profile)]
+        except KeyError as exc:
+            raise ValueError(
+                "Unknown H3 audio profile %r." % audio_profile) from exc
+        policy = _contract_chain_policy(
+            transition, final, source, continuity, lock)
+        source_need = (
+            "source timeline required"
+            if _audio_policy_requires_source({
+                "audio_policy": policy["audio_policy"]})
+            else "no source timeline required")
+        return policy, "%s; %s; %s; %df boundary" % (
+            str(scene_continuity), str(audio_profile), source_need,
+            int(policy["audio_context_length"]))
+
+
 class MiniMaxH3ChainPolicy:
     """Compact normal-user policy for transition and soundtrack intent."""
+
+    DEPRECATED = True
 
     @classmethod
     def INPUT_TYPES(cls):
@@ -12701,8 +12779,9 @@ class MiniMaxH3AdvancedPolicy:
         return {
             "required": {
                 "chain_policy": (CHAIN_POLICY_TYPE, {
-                    "tooltip": "Connect Chain Policy, another Advanced "
-                               "Policy, or the Legacy 0.4 Policy Adapter. "
+                    "tooltip": "Connect Generation Profile, Manual Chain "
+                               "Policy, another Advanced Policy, or the "
+                               "Legacy 0.4 Policy Adapter. "
                                "This node preserves its complete audio "
                                "intent and replaces only the incoming "
                                "transition."}),
@@ -12732,7 +12811,8 @@ class MiniMaxH3AdvancedPolicy:
     CATEGORY = "conditioning/minimax/contex_loop/policies"
     DESCRIPTION = (
         "Layer a named advanced incoming-transition recipe onto an existing "
-        "Chain Policy. This is the normal route for Tone, Latent, Detail, "
+        "Generation Profile or Manual Chain Policy. This is the normal route "
+        "for Tone, Latent, Detail, "
         "Drift-Control, or Color-Stable Drift continuation. It never "
         "replaces Final audio, Source "
         "reference, Generated continuity, or Lock source audio. Chain another "
@@ -12928,7 +13008,7 @@ class MiniMaxH3ChainPlan:
                 "context_length": (list(H3_CONTEXT_LENGTHS), {
                     "default": 22,
                     "tooltip": "Legacy 0.4 fallback, hidden in the normal 0.5 "
-                               "interface. Connect Chain Policy for new "
+                               "interface. Connect Generation Profile for new "
                                "workflows or the Legacy 0.4 Policy Adapter when "
                                "rebuilding an old control surface. Default "
                                "previous-scene video frames used to "
@@ -13059,7 +13139,7 @@ class MiniMaxH3ChainPlan:
                 "continuation_mode": (list(CONTINUATION_MODES), {
                     "default": "guide",
                     "tooltip": "Legacy 0.4 fallback, hidden in the normal 0.5 "
-                               "interface. Connect Chain Policy for new "
+                               "interface. Connect Generation Profile for new "
                                "workflows. Inherited default for scenes without a "
                                "per-scene continuation override. guide keeps "
                                "the established Motion Context "
@@ -13108,8 +13188,9 @@ class MiniMaxH3ChainPlan:
                                "disconnected input uses the internal plan_json "
                                "unchanged."}),
                 "chain_policy": (CHAIN_POLICY_TYPE, {
-                    "tooltip": "Connect MiniMax H3 Chain Policy directly, "
-                               "or pass it through Advanced Policy or the "
+                    "tooltip": "Connect MiniMax H3 Generation Profile "
+                               "directly, or pass it through Advanced Policy "
+                               "or the "
                                "Legacy 0.4 Policy Adapter. It combines "
                                "transition, final "
                                "soundtrack, source-audio reference, generated "
@@ -23674,6 +23755,7 @@ if (PromptServer is not None and web is not None and
 
 
 CHAIN_NODE_CLASS_MAPPINGS = {
+    "MiniMaxH3GenerationProfile": MiniMaxH3GenerationProfile,
     "MiniMaxH3ChainPolicy": MiniMaxH3ChainPolicy,
     "MiniMaxH3AdvancedPolicy": MiniMaxH3AdvancedPolicy,
     "MiniMaxH3Legacy04PolicyAdapter": MiniMaxH3Legacy04PolicyAdapter,
@@ -23733,7 +23815,8 @@ CHAIN_NODE_CLASS_MAPPINGS = {
 }
 
 CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3ChainPolicy": "MiniMax H3 Chain Policy",
+    "MiniMaxH3GenerationProfile": "MiniMax H3 Generation Profile",
+    "MiniMaxH3ChainPolicy": "MiniMax H3 Manual Chain Policy (Legacy)",
     "MiniMaxH3AdvancedPolicy": "MiniMax H3 Advanced Policy Override",
     "MiniMaxH3Legacy04PolicyAdapter": (
         "MiniMax H3 Legacy 0.4 Policy Adapter"),

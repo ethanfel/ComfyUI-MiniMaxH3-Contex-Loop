@@ -1,11 +1,14 @@
 import {
+    GENERATION_AUDIO_PROFILES,
+    GENERATION_SCENE_PROFILES,
     LEGACY_AUDIO_POLICIES,
     TRANSITION_PRESETS,
     transitionPreset,
     transitionPresetName,
-} from "./h3_policy_core.mjs?v=0.6.69";
+} from "./h3_policy_core.mjs?v=0.6.70";
 
 export const CHAIN_POLICY_NODE = "MiniMaxH3ChainPolicy";
+export const PROFILE_POLICY_NODE = "MiniMaxH3GenerationProfile";
 export const ADVANCED_POLICY_NODE = "MiniMaxH3AdvancedPolicy";
 export const LEGACY_POLICY_NODE = "MiniMaxH3Legacy04PolicyAdapter";
 export const PLAN_NODE = "MiniMaxH3ChainPlan";
@@ -83,7 +86,8 @@ function linkedOrigin(node, input) {
 
 export function policyPlanConsumers(policyNode) {
     const type = nodeType(policyNode);
-    const inputNames = (type === CHAIN_POLICY_NODE
+    const inputNames = (type === PROFILE_POLICY_NODE
+            || type === CHAIN_POLICY_NODE
             || type === ADVANCED_POLICY_NODE
             || type === LEGACY_POLICY_NODE)
         ? ["chain_policy"] : [];
@@ -136,6 +140,23 @@ function audioPolicyFromWidgets(node) {
         };
     }
     const type = nodeType(node);
+    if (type === PROFILE_POLICY_NODE) {
+        const selected = String(
+            widgetByName(node, "audio_profile")?.value ?? "");
+        const mapped = GENERATION_AUDIO_PROFILES[selected];
+        if (!mapped) return null;
+        const policy = {
+            known: true,
+            finalAudio: mapped.finalAudio,
+            sourceReference: mapped.sourceReference,
+            generatedContinuity: mapped.generatedContinuity,
+            source: "profile",
+        };
+        if (mapped.sourceAudioTarget === "locked") {
+            policy.sourceAudioTarget = "locked";
+        }
+        return policy;
+    }
     if (type !== CHAIN_POLICY_NODE) return null;
     const finalAudio = widgetByName(node, "final_audio")?.value;
     const sourceReference = widgetByName(node, "source_reference")?.value;
@@ -193,6 +214,12 @@ export function resolveAudioPolicy(start) {
 
 function directAudioContextLength(node) {
     const type = nodeType(node);
+    if (type === PROFILE_POLICY_NODE) {
+        const selected = String(
+            widgetByName(node, "scene_continuity")?.value ?? "");
+        const preset = transitionPreset(GENERATION_SCENE_PROFILES[selected]);
+        return preset?.contextLength ?? null;
+    }
     if (type === CHAIN_POLICY_NODE || type === ADVANCED_POLICY_NODE) {
         const preset = transitionPreset(String(
             widgetByName(node, "incoming_transition")?.value ?? ""));
@@ -232,6 +259,20 @@ function transitionPolicyFromWidgets(node) {
         return {
             known: true, preset, continuationMode, contextLength,
             expertOverride: preset === "custom", source: "legacy_adapter",
+        };
+    }
+    if (type === PROFILE_POLICY_NODE) {
+        const selected = String(
+            widgetByName(node, "scene_continuity")?.value ?? "");
+        const preset = GENERATION_SCENE_PROFILES[selected];
+        const pair = transitionPreset(preset);
+        if (!pair) return null;
+        return {
+            known: true, preset,
+            continuationMode: pair.continuationMode,
+            contextLength: pair.contextLength,
+            expertOverride: false,
+            source: "profile",
         };
     }
     if (type === CHAIN_POLICY_NODE || type === ADVANCED_POLICY_NODE) {

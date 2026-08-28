@@ -4,17 +4,25 @@ import {
     CHAIN_POLICY_NODE,
     LEGACY_POLICY_NODE,
     PLAN_NODE,
+    PROFILE_POLICY_NODE,
     applySocketPresentation,
     hasAdvancedPresentation,
     nodeType,
     policyPlanConsumers,
     presentationForNode,
-} from "./h3_socket_presentation_core.mjs?v=0.6.69";
+} from "./h3_socket_presentation_core.mjs?v=0.6.70";
 
 const EXTENSION = "minimax_h3_context_loop.socket_presentation";
 const WATCHED_POLICY_NODES = new Set([
-    CHAIN_POLICY_NODE, ADVANCED_POLICY_NODE, LEGACY_POLICY_NODE, PLAN_NODE,
+    PROFILE_POLICY_NODE, CHAIN_POLICY_NODE, ADVANCED_POLICY_NODE,
+    LEGACY_POLICY_NODE, PLAN_NODE,
 ]);
+const WIDGET_LABELS = Object.freeze({
+    [PROFILE_POLICY_NODE]: Object.freeze({
+        scene_continuity:"Scene continuity",
+        audio_profile:"Audio profile",
+    }),
+});
 
 function collapseWidget(widget) {
     if (!widget || widget.h3PresentationHidden) return;
@@ -56,6 +64,10 @@ function restoreWidget(widget) {
 function refreshNode(node) {
     if (!node) return;
     node.properties ??= {};
+    const labels = WIDGET_LABELS[nodeType(node)] ?? {};
+    for (const widget of node.widgets ?? []) {
+        if (labels[widget.name]) widget.label = labels[widget.name];
+    }
     const advanced = Boolean(node.properties.h3_show_advanced_sockets);
     const presentation = presentationForNode(node, advanced);
     applySocketPresentation(node, advanced);

@@ -23,6 +23,20 @@ GENERATED_CONTINUITY_POLICIES = ("off", "on")
 SOURCE_AUDIO_TARGET_POLICIES = ("off", "locked")
 PAIRED_AUDIO_POLICIES = ("off", "embedded")
 PRIMARY_TRANSITION_PRESETS = ("cut", "guide", "hard_av", "soft_av")
+GENERATION_SCENE_PROFILES = {
+    "Visual continuity": "guide",
+    "Independent scenes": "cut",
+    "Strong picture + audio continuity": "hard_av",
+    "Smooth picture + audio continuity": "soft_av",
+}
+GENERATION_AUDIO_PROFILES = {
+    "Generate audio": ("generated", "off", "on", False),
+    "Generate fresh audio per scene": ("generated", "off", "off", False),
+    "Lip-sync to source audio": ("source", "off", "off", True),
+    "Generate audio from source guide": ("generated", "on", "off", False),
+    "Use source soundtrack only": ("source", "off", "off", False),
+    "No final audio": ("none", "off", "off", False),
+}
 ADVANCED_TRANSITION_PRESETS = (
     "cut", "guide", "tone_guide", "latent_guide", "detail_guide",
     "detail_av", "drift_av", "color_drift_av", "hard_av", "soft_av",

@@ -62,6 +62,7 @@ assert "audio_context_length" not in required
 assert list(required)[-1] == "lock_source_audio"
 assert required["lock_source_audio"][0] == "BOOLEAN"
 assert required["lock_source_audio"][1]["default"] is False
+assert node.DEPRECATED is True
 combined, status = node.build("soft_av", "source", "on", "off")
 assert combined["version"] == chain.CHAIN_POLICY_VERSION
 assert combined["audio_policy"] == chain._contract_audio_policy(
@@ -80,6 +81,40 @@ assert locked["audio_policy"] == chain._contract_audio_policy(
     "source", "off", "off", "locked")
 assert "final=source/ref=off/carry=off/target=locked" in locked_status
 assert "source timeline required" in locked_status
+
+profile_node = chain.MiniMaxH3GenerationProfile()
+profile_inputs = profile_node.INPUT_TYPES()["required"]
+assert tuple(profile_inputs["scene_continuity"][0]) == (
+    "Visual continuity", "Independent scenes",
+    "Strong picture + audio continuity",
+    "Smooth picture + audio continuity")
+assert tuple(profile_inputs["audio_profile"][0]) == (
+    "Generate audio", "Generate fresh audio per scene",
+    "Lip-sync to source audio", "Generate audio from source guide",
+    "Use source soundtrack only", "No final audio")
+assert profile_inputs["scene_continuity"][1]["display_name"] == (
+    "Scene continuity")
+assert profile_inputs["audio_profile"][1]["display_name"] == "Audio profile"
+generated_profile, generated_profile_status = profile_node.build()
+assert generated_profile["audio_policy"] == chain._contract_audio_policy(
+    "generated", "off", "on")
+assert generated_profile["transition_policy"] == (
+    chain._contract_transition_policy("guide"))
+assert generated_profile["audio_context_length"] == 22
+assert "Generate audio" in generated_profile_status
+lip_sync_profile, lip_sync_status = profile_node.build(
+    "Smooth picture + audio continuity", "Lip-sync to source audio")
+assert lip_sync_profile["audio_policy"] == chain._contract_audio_policy(
+    "source", "off", "off", "locked")
+assert lip_sync_profile["transition_policy"] == (
+    chain._contract_transition_policy("soft_av"))
+assert lip_sync_profile["audio_context_length"] == 39
+assert "source timeline required" in lip_sync_status
+source_guide_profile = profile_node.build(
+    "Independent scenes", "Generate audio from source guide")[0]
+assert source_guide_profile["audio_policy"] == chain._contract_audio_policy(
+    "generated", "on", "off")
+assert source_guide_profile["audio_context_length"] == 0
 
 advanced = chain.MiniMaxH3AdvancedPolicy()
 advanced_inputs = advanced.INPUT_TYPES()["required"]
@@ -137,11 +172,15 @@ assert plan_inputs["optional"]["chain_policy"][0] == chain.CHAIN_POLICY_TYPE
 assert "audio_policy" not in plan_inputs["optional"]
 assert "transition_policy" not in plan_inputs["optional"]
 assert chain.CHAIN_NODE_CLASS_MAPPINGS[
+    "MiniMaxH3GenerationProfile"] is chain.MiniMaxH3GenerationProfile
+assert chain.CHAIN_NODE_CLASS_MAPPINGS[
     "MiniMaxH3ChainPolicy"] is chain.MiniMaxH3ChainPolicy
 assert chain.CHAIN_NODE_CLASS_MAPPINGS[
     "MiniMaxH3AdvancedPolicy"] is chain.MiniMaxH3AdvancedPolicy
 assert chain.CHAIN_NODE_DISPLAY_NAME_MAPPINGS[
-    "MiniMaxH3ChainPolicy"] == "MiniMax H3 Chain Policy"
+    "MiniMaxH3GenerationProfile"] == "MiniMax H3 Generation Profile"
+assert chain.CHAIN_NODE_DISPLAY_NAME_MAPPINGS[
+    "MiniMaxH3ChainPolicy"] == "MiniMax H3 Manual Chain Policy (Legacy)"
 assert chain.CHAIN_NODE_DISPLAY_NAME_MAPPINGS[
     "MiniMaxH3AdvancedPolicy"] == "MiniMax H3 Advanced Policy Override"
 assert chain.CHAIN_NODE_DISPLAY_NAME_MAPPINGS[
@@ -213,6 +252,6 @@ assert chain.CHAIN_NODE_DISPLAY_NAME_MAPPINGS[
     "MiniMaxH3ChainLoRAScheduler"] == "MiniMax H3 Scene LoRA Scheduler"
 
 print(
-    "compact chain policy and lazy scene LoRA routing: primary semantic "
-    "choices, one-wire Plan input, canonical compatibility, and existing-"
-    "loader MODEL selection pass")
+    "generation profiles, legacy manual policy, and lazy scene LoRA routing: "
+    "clear one-wire Plan intent, canonical compatibility, and existing-loader "
+    "MODEL selection pass")

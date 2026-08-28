@@ -3,6 +3,7 @@ import fs from "node:fs";
 import {
     ADVANCED_POLICY_NODE,
     CHAIN_POLICY_NODE,
+    PROFILE_POLICY_NODE,
     applySocketPresentation,
     hasSourceTimeline,
     policyPlanConsumers,
@@ -237,6 +238,45 @@ assert.equal(
     "locked source target still needs legacy source audio without a timeline",
 );
 
+const generationProfile = node(40, PROFILE_POLICY_NODE, [], [
+    ["chain_policy", [41]], ["status", null],
+], [
+    ["scene_continuity", "Smooth picture + audio continuity"],
+    ["audio_profile", "Lip-sync to source audio"],
+]);
+const profilePlan = node(41, "MiniMaxH3ChainPlan", [
+    ["chain_policy", 41],
+], [["plan", [42]]]);
+const profileStart = node(42, "MiniMaxH3ChainLoopStart", [
+    ["plan", 42], ["source_audio", null], ["source_timeline", null],
+]);
+new Graph([generationProfile, profilePlan, profileStart], {
+    41: {origin_id: 40, target_id: 41},
+    42: {origin_id: 41, target_id: 42},
+});
+assert.deepEqual(resolveAudioPolicy(profileStart), {
+    known: true,
+    finalAudio: "source",
+    sourceReference: "off",
+    generatedContinuity: "off",
+    source: "profile",
+    sourceAudioTarget: "locked",
+});
+assert.deepEqual(resolveTransitionPolicy(profileStart), {
+    known: true,
+    preset: "soft_av",
+    continuationMode: "audio_feathered_av",
+    contextLength: 39,
+    expertOverride: false,
+    source: "profile",
+});
+assert.equal(resolveAudioContextLength(profileStart), 39);
+assert.deepEqual(policyPlanConsumers(generationProfile), [profilePlan]);
+assert.equal(
+    presentationForNode(generationProfile, false).hiddenOutputs.has("status"),
+    true,
+);
+
 const legacyAdapter = node(8, "MiniMaxH3Legacy04PolicyAdapter", [], [
     ["chain_policy", null], ["status", null],
 ], [
@@ -349,6 +389,8 @@ assert.match(extensionSource, /Hide advanced H3 controls/);
 assert.match(extensionSource, /refreshPolicyConsumers\(node\)/);
 assert.match(extensionSource, /_h3ChainEditorConnectionRefresh/);
 assert.match(extensionSource, /_h3PlanStudioRefresh/);
+assert.match(extensionSource, /scene_continuity:"Scene continuity"/);
+assert.match(extensionSource, /audio_profile:"Audio profile"/);
 assert.doesNotMatch(extensionSource, /removeInput|removeOutput/);
 
 console.log("H3 socket presentation: positional compatibility and policy visibility pass");

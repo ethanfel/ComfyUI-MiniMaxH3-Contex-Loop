@@ -62,7 +62,7 @@ NODE_DISPLAY_NAMES = {
     "MiniMaxH3ChainManifestLoad": "MiniMax H3 Contex Loop Load Manifest",
     "MiniMaxH3ChainPlan": "MiniMax H3 Contex Loop Plan",
     "MiniMaxH3ChainPlanStudio": "MiniMax H3 Plan Studio (Experimental)",
-    "MiniMaxH3ChainPolicy": "MiniMax H3 Chain Policy",
+    "MiniMaxH3ChainPolicy": "MiniMax H3 Manual Chain Policy (Legacy)",
     "MiniMaxH3AdvancedPolicy": "MiniMax H3 Advanced Policy Override",
     "MiniMaxH3Legacy04PolicyAdapter": (
         "MiniMax H3 Legacy 0.4 Policy Adapter"),

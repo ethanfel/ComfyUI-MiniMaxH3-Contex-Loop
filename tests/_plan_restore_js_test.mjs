@@ -172,6 +172,51 @@ const compactMismatch = restoreConnectedPolicyInputs(compactPlan, {
 assert.deepEqual(compactMismatch.applied, []);
 assert.match(compactMismatch.unavailable[0], /Advanced Policy.*Legacy 0\.4/);
 
+const profileGraph = {
+    links: {60: {origin_id: 17, target_id: 16}},
+    _nodes: [],
+    beforeChange() {}, afterChange() {}, setDirtyCanvas() {},
+    getNodeById(id) { return this._nodes.find((node) => node.id === id); },
+};
+const profilePlan = {
+    id: 16, type: "MiniMaxH3ChainPlan", graph: profileGraph,
+    inputs: [{name: "chain_policy", link: 60}], widgets: [],
+};
+const generationProfile = {
+    id: 17, type: "MiniMaxH3GenerationProfile", graph: profileGraph,
+    inputs: [],
+    widgets: [
+        widget("scene_continuity", "Visual continuity"),
+        widget("audio_profile", "Generate audio"),
+    ],
+};
+profileGraph._nodes.push(profilePlan, generationProfile);
+const profileResult = restoreConnectedPolicyInputs(profilePlan, {
+    audio_policy: {
+        final_audio: "source", source_reference: "off",
+        generated_continuity: "off", source_audio_target: "locked",
+    },
+    transition_policy: {
+        preset: "soft_av", expert_override: false,
+        expert_continuation_mode: "audio_feathered_av",
+        expert_context_length: 39,
+    },
+}, {audio_context_length: 39});
+assert.deepEqual(profileResult, {
+    applied: ["audio_policy", "transition_policy"], unavailable: [],
+});
+assert.deepEqual(generationProfile.widgets.map((item) => item.value), [
+    "Smooth picture + audio continuity", "Lip-sync to source audio",
+]);
+const unsupportedProfile = restoreConnectedPolicyInputs(profilePlan, {
+    audio_policy: {
+        final_audio: "source", source_reference: "on",
+        generated_continuity: "on",
+    },
+});
+assert.deepEqual(unsupportedProfile.applied, []);
+assert.match(unsupportedProfile.unavailable[0], /Manual Chain Policy/);
+
 compactPolicy.type = "MiniMaxH3Legacy04PolicyAdapter";
 compactPolicy.widgets = [
     widget("audio_mode", "generated_audio"),
