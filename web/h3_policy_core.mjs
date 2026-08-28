@@ -9,8 +9,8 @@ export const PRIMARY_TRANSITION_PRESETS = Object.freeze([
 export const GENERATION_SCENE_PROFILES = Object.freeze({
     "Visual continuity": "guide",
     "Independent scenes": "cut",
-    "Strong picture + audio continuity": "hard_av",
-    "Smooth picture + audio continuity": "soft_av",
+    "Hard picture + protected audio": "hard_av",
+    "Hard picture + smooth audio": "soft_av",
 });
 
 export const GENERATION_AUDIO_PROFILES = Object.freeze({

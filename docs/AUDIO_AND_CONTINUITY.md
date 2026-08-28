@@ -15,9 +15,10 @@ audio switches with explicit intent:
 | No final audio | The assembled MP4 is silent |
 
 Its **Scene continuity** profile separately selects visual continuity,
-independent scenes, or a hard/smooth audiovisual boundary. The profile output
-is the same canonical `chain_policy` record used everywhere else and can feed
-Advanced Policy Override before Plan.
+independent scenes, a hard picture with protected audio, or a hard picture
+with a smooth audio release. The profile output is the same canonical
+`chain_policy` record used everywhere else and can feed Advanced Policy
+Override before Plan.
 
 The deprecated **Manual Chain Policy (Legacy)** remains loadable for existing
 workflows and unusual combinations that do not fit a named profile. Its legacy

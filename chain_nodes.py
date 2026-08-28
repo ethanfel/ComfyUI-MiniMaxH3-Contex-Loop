@@ -12617,10 +12617,10 @@ class MiniMaxH3GenerationProfile:
                     "tooltip": "How each new scene connects to the previous "
                                "one. Visual continuity carries a short RGB "
                                "guide; Independent scenes carries nothing; "
-                               "Strong picture + audio protects a longer "
-                               "boundary; Smooth picture + audio keeps the "
-                               "same picture boundary while gently releasing "
-                               "its audio."}),
+                               "Hard picture + protected audio keeps both "
+                               "boundary prefixes exact; Hard picture + "
+                               "smooth audio keeps the picture exact while "
+                               "gently releasing carried audio."}),
                 "audio_profile": (list(GENERATION_AUDIO_PROFILES), {
                     "default": "Generate audio",
                     "display_name": "Audio profile",

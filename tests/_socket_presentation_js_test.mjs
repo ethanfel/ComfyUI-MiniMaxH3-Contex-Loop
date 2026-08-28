@@ -241,7 +241,7 @@ assert.equal(
 const generationProfile = node(40, PROFILE_POLICY_NODE, [], [
     ["chain_policy", [41]], ["status", null],
 ], [
-    ["scene_continuity", "Smooth picture + audio continuity"],
+    ["scene_continuity", "Hard picture + smooth audio"],
     ["audio_profile", "Lip-sync to source audio"],
 ]);
 const profilePlan = node(41, "MiniMaxH3ChainPlan", [

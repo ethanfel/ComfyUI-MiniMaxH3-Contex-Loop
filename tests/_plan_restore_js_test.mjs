@@ -206,7 +206,7 @@ assert.deepEqual(profileResult, {
     applied: ["audio_policy", "transition_policy"], unavailable: [],
 });
 assert.deepEqual(generationProfile.widgets.map((item) => item.value), [
-    "Smooth picture + audio continuity", "Lip-sync to source audio",
+    "Hard picture + smooth audio", "Lip-sync to source audio",
 ]);
 const unsupportedProfile = restoreConnectedPolicyInputs(profilePlan, {
     audio_policy: {

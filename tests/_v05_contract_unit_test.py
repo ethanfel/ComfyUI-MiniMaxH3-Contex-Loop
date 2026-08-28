@@ -82,8 +82,8 @@ def main():
     assert contracts.GENERATION_SCENE_PROFILES == {
         "Visual continuity": "guide",
         "Independent scenes": "cut",
-        "Strong picture + audio continuity": "hard_av",
-        "Smooth picture + audio continuity": "soft_av",
+        "Hard picture + protected audio": "hard_av",
+        "Hard picture + smooth audio": "soft_av",
     }
     assert contracts.GENERATION_AUDIO_PROFILES[
         "Generate audio"] == ("generated", "off", "on", False)

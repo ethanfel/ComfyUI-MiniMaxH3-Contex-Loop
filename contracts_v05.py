@@ -26,8 +26,8 @@ PRIMARY_TRANSITION_PRESETS = ("cut", "guide", "hard_av", "soft_av")
 GENERATION_SCENE_PROFILES = {
     "Visual continuity": "guide",
     "Independent scenes": "cut",
-    "Strong picture + audio continuity": "hard_av",
-    "Smooth picture + audio continuity": "soft_av",
+    "Hard picture + protected audio": "hard_av",
+    "Hard picture + smooth audio": "soft_av",
 }
 GENERATION_AUDIO_PROFILES = {
     "Generate audio": ("generated", "off", "on", False),

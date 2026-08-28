@@ -86,8 +86,8 @@ profile_node = chain.MiniMaxH3GenerationProfile()
 profile_inputs = profile_node.INPUT_TYPES()["required"]
 assert tuple(profile_inputs["scene_continuity"][0]) == (
     "Visual continuity", "Independent scenes",
-    "Strong picture + audio continuity",
-    "Smooth picture + audio continuity")
+    "Hard picture + protected audio",
+    "Hard picture + smooth audio")
 assert tuple(profile_inputs["audio_profile"][0]) == (
     "Generate audio", "Generate fresh audio per scene",
     "Lip-sync to source audio", "Generate audio from source guide",
@@ -103,7 +103,7 @@ assert generated_profile["transition_policy"] == (
 assert generated_profile["audio_context_length"] == 22
 assert "Generate audio" in generated_profile_status
 lip_sync_profile, lip_sync_status = profile_node.build(
-    "Smooth picture + audio continuity", "Lip-sync to source audio")
+    "Hard picture + smooth audio", "Lip-sync to source audio")
 assert lip_sync_profile["audio_policy"] == chain._contract_audio_policy(
     "source", "off", "off", "locked")
 assert lip_sync_profile["transition_policy"] == (
