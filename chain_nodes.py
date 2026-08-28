@@ -212,6 +212,7 @@ MANIFEST_TYPE = "H3_CHAIN_MANIFEST"
 EXTERNAL_CONTEXT_TYPE = "H3_CHAIN_EXTERNAL_CONTEXT"
 REFERENCE_SCHEDULE_TYPE = "H3_REFERENCE_SCHEDULE"
 TAGGED_REFERENCE_TYPE = "H3_TAGGED_REFERENCES"
+REFMOD_SOURCE_LIST_TYPE = "H3_REF_LIST"
 SEMANTIC_ANCHOR_DRAFT_TYPE = "H3_SEMANTIC_ANCHOR_DRAFT"
 SEMANTIC_PRESENTATION_TYPE = "H3_SEMANTIC_PRESENTATION"
 LAZY_MOTION_SOURCE_TYPE = "H3_LAZY_MOTION_SOURCE"
@@ -226,6 +227,7 @@ REFERENCE_FINGERPRINT_LINEAGE_VERSION = 1
 SEMANTIC_ANCHOR_REGISTRY_VERSION = 1
 LAZY_MOTION_SOURCE_VERSION = 3
 SEMANTIC_PRESENTATION_VERSION = 1
+EXTERNAL_REFMOD_CONTRACT_VERSION = 2
 
 _PENDING_REVIEWS: dict[str, dict[str, Any]] = {}
 _ACTIVE_CANDIDATE_BATCHES: dict[str, dict[str, Any]] = {}
@@ -767,6 +769,7 @@ _SEMANTIC_ANCHOR_RE = re.compile(
     r"\[([0-9]+(?:\.[0-9]+)?)s?\]",
     flags=re.IGNORECASE)
 REFERENCE_COMPLIANCE_MODES = ("strict", "soft", "disabled")
+TAGGED_CONDITIONING_BACKENDS = ("native_ref2va", "external_refmod")
 REFERENCE_VIDEO_TIMELINE_MODES = (
     "restart_each_scene",
     "sequential",
@@ -792,6 +795,15 @@ def _semantic_anchor_mode(value: Any) -> str:
             "Semantic anchor mode must be timestamped_video or "
             "picture_storyboard; got %r." % value)
     return mode
+
+
+def _tagged_conditioning_backend(value: Any) -> str:
+    backend = str(value or "native_ref2va").strip().lower()
+    if backend not in TAGGED_CONDITIONING_BACKENDS:
+        raise ValueError(
+            "Tagged conditioning backend must be native_ref2va or "
+            "external_refmod; got %r." % value)
+    return backend
 
 
 def _prompt_reference_tags(text: Any) -> set[str]:
@@ -3507,6 +3519,78 @@ def _compile_tagged_reference_prompt(
     return compiled, summary, bindings
 
 
+def _refmod_prompt_phrase(entry: dict[str, Any], tag: str) -> str:
+    """Give an active RefMod a readable text anchor, not a fake media label."""
+    if (entry.get("kind") == "video"
+            and entry.get("semantic_role") == "motion"):
+        description = " ".join(str(
+            entry.get("motion_description") or "").split()).rstrip(". ")
+        if description:
+            return description
+    readable = re.sub(r"[_-]+", " ", str(tag)).strip()
+    return readable or str(tag)
+
+
+def _compile_refmod_hybrid_prompt(
+        prompt: Any, bindings: dict[str, Any],
+        semantic_anchors: list[dict[str, Any]],
+        semantic_anchor_mode: str) -> tuple[str, list[dict[str, Any]]]:
+    """Compile RefMod text plus an anchor-only Qwen media namespace.
+
+    External RefMod carries ordinary visual references through conditioning,
+    so presenting those sources to Qwen again would erase most of its speed
+    benefit.  Only semantic anchors receive native H3 media labels here.
+    """
+    normalized = str(prompt or "").replace(
+        "\r\n", "\n").replace("\r", "\n").strip()
+    entries_by_tag = {
+        alias: entry
+        for entry in (
+            list(bindings.get("pictures") or ())
+            + list(bindings.get("videos") or ()))
+        for alias in _reference_entry_tags(entry)
+    }
+
+    def replace_refmod_tag(match: re.Match[str]) -> str:
+        if bindings.get("compliance_mode") == "disabled":
+            return match.group(0)
+        tag = match.group(1)
+        entry = entries_by_tag.get(tag)
+        if entry is None:
+            return match.group(0)
+        return _refmod_prompt_phrase(entry, tag)
+
+    compiled = _REFERENCE_ALIAS_RE.sub(replace_refmod_tag, normalized)
+    anchor_mode = _semantic_anchor_mode(semantic_anchor_mode)
+    label_kind = "Picture" if anchor_mode == "picture_storyboard" else "Video"
+    anchor_items = []
+    labels = {}
+    for ordinal, anchor in enumerate(semantic_anchors, 1):
+        label = "<%s %d>" % (label_kind, ordinal)
+        labels[anchor["tag"]] = label
+        anchor_items.append({**anchor, "hybrid_label": label})
+
+    if labels:
+        compiled = _SEMANTIC_ANCHOR_RE.sub(
+            lambda match: labels.get(match.group(1), match.group(0)),
+            compiled)
+    if anchor_items and anchor_mode == "picture_storyboard":
+        timing_lines = []
+        timed_anchors = sorted(
+            (timestamp, item_index, item)
+            for item_index, item in enumerate(anchor_items)
+            for timestamp in item["timestamps"])
+        for timestamp, _item_index, item in timed_anchors:
+            timestamp_text = ("%.3f" % float(timestamp)).rstrip(
+                "0").rstrip(".")
+            timing_lines.append(
+                "For the target video, around %s seconds into this "
+                "scene, %s is an approximate visual storyboard "
+                "reference." % (timestamp_text, item["hybrid_label"]))
+        compiled = "\n".join(timing_lines) + "\n\n" + compiled
+    return compiled, anchor_items
+
+
 def _h3_aligned_frame_count(length: int) -> int:
     frame_count = max(5, int(length))
     while frame_count % 17 != 5:
@@ -4585,6 +4669,113 @@ def _shot_visual_context_lead_frames(
     return resolved
 
 
+def _h3_native_frame_boundary_step(frame: int) -> int | None:
+    """Map an H3 temporal frame boundary to its native latent step.
+
+    H3 has two reusable temporal phases: 17-frame runs advance five latent
+    steps, while a complete prefix adds the five-frame/two-step bootstrap.
+    Context crops may start on either phase, but never between them.
+    """
+    frame = int(frame)
+    if frame < 0:
+        return None
+    if frame % 17 == 0:
+        return 5 * (frame // 17)
+    if frame >= 5 and (frame - 5) % 17 == 0:
+        return 2 + 5 * ((frame - 5) // 17)
+    return None
+
+
+def _native_context_window_starts(
+        raw_frames: int, delivered_frames: int, span_frames: int,
+        prefix_frames: int = 0) -> tuple[int, ...]:
+    """Return delivered-frame starts that are exact native latent crops."""
+    raw_frames = int(raw_frames)
+    delivered_frames = int(delivered_frames)
+    span_frames = int(span_frames)
+    prefix_frames = int(prefix_frames)
+    if (raw_frames < delivered_frames or delivered_frames < 1
+            or span_frames < 1 or span_frames > delivered_frames
+            or prefix_frames < 0):
+        return ()
+    latest = delivered_frames - span_frames
+    # One-frame context is H3's special final-latent anchor. Its internal
+    # sub-cycle has no public frame-boundary mapping, so only the native tail
+    # is safe to expose.
+    if span_frames == 1 and prefix_frames == 0:
+        return (latest,)
+    target_start = _h3_native_frame_boundary_step(prefix_frames)
+    target_end = _h3_native_frame_boundary_step(
+        prefix_frames + span_frames)
+    if target_start is None or target_end is None:
+        return ()
+    expected_steps = target_end - target_start
+    trim_frames = raw_frames - delivered_frames
+    starts = []
+    for delivered_start in range(latest + 1):
+        raw_start = trim_frames + delivered_start
+        source_start = _h3_native_frame_boundary_step(raw_start)
+        source_end = _h3_native_frame_boundary_step(raw_start + span_frames)
+        if (source_start is not None and source_end is not None
+                and source_start % 5 == target_start % 5
+                and source_end - source_start == expected_steps):
+            starts.append(delivered_start)
+    return tuple(starts)
+
+
+def _shot_visual_context_start_frame(
+        shot: dict[str, Any], field: str, raw_frames: int,
+        delivered_frames: int, span_frames: int,
+        prefix_frames: int = 0) -> int:
+    """Resolve one delivered-video window on H3's native latent lattice."""
+    raw_frames = int(raw_frames)
+    delivered_frames = int(delivered_frames)
+    span_frames = int(span_frames)
+    if span_frames < 1:
+        if field in shot:
+            raise ValueError(
+                "%s requires a positive visual context span." % field)
+        return delivered_frames
+    latest = delivered_frames - span_frames
+    if latest < 0:
+        raise ValueError(
+            "%s requests %d frames from a source delivering only %d." %
+            (field, span_frames, delivered_frames))
+    starts = _native_context_window_starts(
+        raw_frames, delivered_frames, span_frames, prefix_frames)
+    if not starts:
+        raise ValueError(
+            "%s has no native latent-aligned %d-frame window inside the "
+            "source's %d raw / %d delivered frames at target offset %d." %
+            (field, span_frames, raw_frames, delivered_frames, prefix_frames))
+    value = shot.get(field)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return starts[-1]
+    if isinstance(value, bool) or (
+            isinstance(value, float) and not value.is_integer()):
+        raise ValueError(
+            "%s must be an integer delivered-video frame index." % field)
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "%s must be an integer delivered-video frame index." % field
+        ) from exc
+    if resolved < 0 or resolved > latest:
+        raise ValueError(
+            "%s must be between 0 and %d so its %d-frame window fits inside "
+            "the source's %d delivered frames." %
+            (field, latest, span_frames, delivered_frames))
+    if resolved not in starts:
+        nearest = min(starts, key=lambda candidate: (
+            abs(candidate - resolved), candidate))
+        raise ValueError(
+            "%s=%d is not on H3's native temporal latent lattice. Use %d "
+            "(nearest), or another aligned start from %s." %
+            (field, resolved, nearest, starts))
+    return resolved
+
+
 def _shot_audio_context_length(shot: dict[str, Any],
                                default_audio_context_length: int,
                                video_context_length: int) -> int:
@@ -4762,9 +4953,10 @@ def _low_grid_guide_context(
             "H3 low-grid Guide video VAE returned image shape %s; expected "
             "[frames,height,width,channels]." % (tuple(decoded.shape),))
 
-    if int(state.get("_visual_context_lead_source", 0)):
-        # Composed state already contains exactly the synthetic prefix rather
-        # than a complete predecessor clip. Decode and consume it as-is.
+    if bool(state.get("_visual_context_exact_prefix", False)):
+        # A composed or explicitly windowed state already contains exactly
+        # the selected prefix rather than a complete predecessor clip.
+        # Decode and consume it as-is.
         if int(decoded.shape[0]) != requested:
             raise ValueError(
                 "H3 low-grid Guide composed context decoded to %d frames; "
@@ -4831,11 +5023,17 @@ def _legacy_history_contract(
         if "visual_context_source" in shot:
             contract["visual_context_source"] = shot[
                 "visual_context_source"]
+        if "visual_context_start_frame" in shot:
+            contract["visual_context_start_frame"] = int(
+                shot["visual_context_start_frame"])
         if "visual_context_lead_source" in shot:
             contract["visual_context_lead_source"] = shot[
                 "visual_context_lead_source"]
             contract["visual_context_lead_frames"] = int(
                 shot["visual_context_lead_frames"])
+            if "visual_context_lead_start_frame" in shot:
+                contract["visual_context_lead_start_frame"] = int(
+                    shot["visual_context_lead_start_frame"])
         if "audio_context_length" in shot:
             contract["audio_context_length"] = shot["audio_context_length"]
         if "context_spatial_proxy" in shot:
@@ -5060,6 +5258,9 @@ def _scene_dependency_record(
             "visual_context_source_id": str(
                 plan["shots"][visual_source - 1]["id"]),
         })
+    if "visual_context_start_frame" in shot and context > 0:
+        scopes["incoming_boundary"]["visual_context_start_frame"] = int(
+            shot["visual_context_start_frame"])
     visual_lead_source = (
         _shot_visual_context_lead_source(plan, index)
         if index > 1 and context > 0 else None)
@@ -5071,6 +5272,10 @@ def _scene_dependency_record(
             "visual_context_lead_frames": int(
                 _shot_visual_context_lead_frames(shot, context)),
         })
+        if "visual_context_lead_start_frame" in shot:
+            scopes["incoming_boundary"][
+                "visual_context_lead_start_frame"] = int(
+                    shot["visual_context_lead_start_frame"])
     if _audio_policy_locks_source_audio(compatibility, shot):
         # Omit the disabled spelling so pre-switch scene-dependency records
         # remain byte-for-byte compatible with unchanged 0.5 runs.
@@ -5651,6 +5856,10 @@ def _plan_with_external_context(
                 "visual source." %
                 (source["index"], source["id"],
                  source["delivered_frames"], recent_frames, target_index))
+        _shot_visual_context_start_frame(
+            target, "visual_context_start_frame",
+            int(source["raw_frames"]), int(source["delivered_frames"]),
+            recent_frames, lead_frames)
         if lead_source_index is not None:
             lead_source = prepared["shots"][lead_source_index - 1]
             if int(lead_source["delivered_frames"]) < lead_frames:
@@ -5660,6 +5869,10 @@ def _plan_with_external_context(
                     (lead_source["index"], lead_source["id"],
                      lead_source["delivered_frames"], target_index,
                      lead_frames))
+            _shot_visual_context_start_frame(
+                target, "visual_context_lead_start_frame",
+                int(lead_source["raw_frames"]),
+                int(lead_source["delivered_frames"]), lead_frames, 0)
 
     prepared["total_delivered_frames"] = stitched_frames
     prepared["plan_hash"] = _fingerprint({
@@ -5863,6 +6076,10 @@ def _retime_review_plan(plan: dict[str, Any]) -> None:
                 "visual source." %
                 (source["index"], source["id"],
                  source["delivered_frames"], recent_frames, target_index))
+        _shot_visual_context_start_frame(
+            target, "visual_context_start_frame",
+            int(source["raw_frames"]), int(source["delivered_frames"]),
+            recent_frames, lead_frames)
         if lead_source_index is not None:
             lead_source = plan["shots"][lead_source_index - 1]
             if int(lead_source["delivered_frames"]) < lead_frames:
@@ -5872,6 +6089,10 @@ def _retime_review_plan(plan: dict[str, Any]) -> None:
                     (lead_source["index"], lead_source["id"],
                      lead_source["delivered_frames"], target_index,
                      lead_frames))
+            _shot_visual_context_start_frame(
+                target, "visual_context_lead_start_frame",
+                int(lead_source["raw_frames"]),
+                int(lead_source["delivered_frames"]), lead_frames, 0)
     plan["total_delivered_frames"] = stitched_frames
     cfg = plan["compatibility"]
     imported = "; imported video" if external_span else ""
@@ -6340,6 +6561,11 @@ def _normalize_plan(
             # numeric scene indexes.
             shot["visual_context_source"] = item.get(
                 "visual_context_source")
+        if "visual_context_start_frame" in item:
+            # Delivered-video frame zero is the first frame visible in the
+            # saved segment, after its own incoming overlap was trimmed.
+            shot["visual_context_start_frame"] = item.get(
+                "visual_context_start_frame")
         if "visual_context_lead_source" in item:
             # Optional first block of a composed visual prefix. The ordinary
             # visual_context_source remains the second block nearest the new
@@ -6348,10 +6574,21 @@ def _normalize_plan(
                 "visual_context_lead_source")
             shot["visual_context_lead_frames"] = item.get(
                 "visual_context_lead_frames")
+            if "visual_context_lead_start_frame" in item:
+                shot["visual_context_lead_start_frame"] = item.get(
+                    "visual_context_lead_start_frame")
         elif "visual_context_lead_frames" in item:
             raise ValueError(
                 "Shot %d defines visual_context_lead_frames without a "
                 "visual_context_lead_source." % index)
+        elif "visual_context_lead_start_frame" in item:
+            raise ValueError(
+                "Shot %d defines visual_context_lead_start_frame without a "
+                "visual_context_lead_source." % index)
+        if index == 1 and "visual_context_start_frame" in shot:
+            raise ValueError(
+                "Shot 1 cannot define visual_context_start_frame; its "
+                "optional Existing Video Context is prepared separately.")
         shots.append(shot)
         stitched_frames += delivered_frames
 
@@ -6394,6 +6631,20 @@ def _normalize_plan(
                 (source["index"], source["id"],
                  source["delivered_frames"], recent_frames,
                  target_index))
+        recent_start = _shot_visual_context_start_frame(
+            target, "visual_context_start_frame",
+            int(source["raw_frames"]), int(source["delivered_frames"]),
+            recent_frames, lead_frames)
+        if "visual_context_start_frame" in target:
+            recent_default = _native_context_window_starts(
+                int(source["raw_frames"]), int(source["delivered_frames"]),
+                recent_frames, lead_frames)[-1]
+            if recent_start == recent_default:
+                # Latest native alignment is represented by absence so
+                # existing plans and history hashes stay compact.
+                target.pop("visual_context_start_frame", None)
+            else:
+                target["visual_context_start_frame"] = recent_start
         if lead_source_index is not None:
             lead_source = shots[lead_source_index - 1]
             if int(lead_source["delivered_frames"]) < lead_frames:
@@ -6403,13 +6654,28 @@ def _normalize_plan(
                     (lead_source["index"], lead_source["id"],
                      lead_source["delivered_frames"], target_index,
                      lead_frames))
+            lead_start = _shot_visual_context_start_frame(
+                target, "visual_context_lead_start_frame",
+                int(lead_source["raw_frames"]),
+                int(lead_source["delivered_frames"]), lead_frames, 0)
+            if "visual_context_lead_start_frame" in target:
+                lead_default = _native_context_window_starts(
+                    int(lead_source["raw_frames"]),
+                    int(lead_source["delivered_frames"]), lead_frames, 0)[-1]
+                if lead_start == lead_default:
+                    target.pop("visual_context_lead_start_frame", None)
+                else:
+                    target["visual_context_lead_start_frame"] = lead_start
         if ((source_index != target_index - 1
-                or lead_source_index is not None)
+                or lead_source_index is not None
+                or "visual_context_start_frame" in target
+                or "visual_context_lead_start_frame" in target)
                 and int(target.get("video_blend_frames", video_blend_frames))):
             raise ValueError(
-                "Shot %d selects non-linear or composed visual context, so "
-                "its video_blend_frames must be 0. Timeline assembly still "
-                "cuts from scene %d." % (target_index, target_index - 1))
+                "Shot %d selects non-linear, composed, or windowed visual "
+                "context, so its video_blend_frames must be 0. Timeline "
+                "assembly still cuts from scene %d." %
+                (target_index, target_index - 1))
 
     compatibility = {
         "fps": FPS,
@@ -6800,10 +7066,18 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         raise ValueError("A non-empty H3 chain run_name is required.")
     raw_order = value.get("scene_order", [])
     raw_chapters = value.get("chapters", [])
+    raw_placements = value.get("placements", [])
+    raw_locked = value.get("locked_scene_ids", [])
     if not isinstance(raw_order, list) or len(raw_order) > MAX_SHOTS:
         raise ValueError("scene_order must contain at most %d scenes." % MAX_SHOTS)
     if not isinstance(raw_chapters, list) or len(raw_chapters) > MAX_SHOTS:
         raise ValueError("chapters must contain at most %d entries." % MAX_SHOTS)
+    if not isinstance(raw_placements, list) or len(raw_placements) > MAX_SHOTS:
+        raise ValueError(
+            "placements must contain at most %d entries." % MAX_SHOTS)
+    if not isinstance(raw_locked, list) or len(raw_locked) > MAX_SHOTS:
+        raise ValueError(
+            "locked_scene_ids must contain at most %d entries." % MAX_SHOTS)
     scene_order: list[dict[str, Any]] = []
     scene_by_id: dict[str, int] = {}
     for offset, item in enumerate(raw_order):
@@ -6850,6 +7124,65 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
             "text": text,
         })
     chapters.sort(key=lambda item: int(item["start_scene"]))
+
+    placements: list[dict[str, Any]] = []
+    placed_ids: set[str] = set()
+    for offset, item in enumerate(raw_placements):
+        if not isinstance(item, dict):
+            raise ValueError(
+                "Editorial placement %d must be an object." % (offset + 1))
+        scene_id = _safe_name(item.get("scene_id"), "")
+        if not scene_id or (scene_by_id and scene_id not in scene_by_id):
+            raise ValueError(
+                "Editorial placement %d must target a scene in scene_order."
+                % (offset + 1))
+        if scene_id in placed_ids:
+            raise ValueError(
+                "Scene %s has more than one editorial placement." % scene_id)
+        placed_ids.add(scene_id)
+        start_frame = int(item.get("start_frame", 0))
+        if start_frame < 0 or start_frame > 864000:
+            raise ValueError(
+                "Editorial scene start frames must be between 0 and 864000.")
+        placements.append({
+            "scene_id": scene_id,
+            "scene": int(scene_by_id.get(
+                scene_id, item.get("scene", offset + 1))),
+            "start_frame": start_frame,
+        })
+    placements.sort(key=lambda item: int(item["scene"]))
+
+    locked_scene_ids: list[str] = []
+    locked_seen: set[str] = set()
+    for offset, item in enumerate(raw_locked):
+        scene_id = _safe_name(item, "")
+        if not scene_id or (scene_by_id and scene_id not in scene_by_id):
+            raise ValueError(
+                "Locked scene %d must target a scene in scene_order."
+                % (offset + 1))
+        if scene_id in locked_seen:
+            continue
+        locked_seen.add(scene_id)
+        locked_scene_ids.append(scene_id)
+    locked_scene_ids.sort(key=lambda scene_id: scene_by_id.get(
+        scene_id, MAX_SHOTS + 1))
+
+    raw_subtitles = value.get("subtitles", {})
+    if raw_subtitles is None:
+        raw_subtitles = {}
+    if not isinstance(raw_subtitles, dict):
+        raise ValueError("subtitles must be a JSON object.")
+    subtitle_mode = str(raw_subtitles.get("mode") or "off").strip().lower()
+    if subtitle_mode not in ("off", "preview_srt"):
+        raise ValueError("subtitles mode must be off or preview_srt.")
+    subtitle_offset = float(raw_subtitles.get("offset_seconds", 0.0))
+    if not math.isfinite(subtitle_offset) or abs(subtitle_offset) > 3600.0:
+        raise ValueError("Subtitle offset must be between -3600 and 3600 seconds.")
+    subtitles = {
+        "mode": subtitle_mode,
+        "asset_id": _safe_name(raw_subtitles.get("asset_id"), "")[:160],
+        "offset_seconds": subtitle_offset,
+    }
     return {
         "format": "h3_chain_editorial_v1",
         "run_name": normalized_run,
@@ -6858,6 +7191,9 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
                               timespec="seconds").replace("+00:00", "Z")),
         "chapters": chapters,
         "scene_order": scene_order,
+        "placements": placements,
+        "locked_scene_ids": locked_scene_ids,
+        "subtitles": subtitles,
     }
 
 
@@ -6865,7 +7201,9 @@ def _load_run_editorial(run_name: Any) -> dict[str, Any]:
     normalized = _safe_name(run_name, "")
     empty = {
         "format": "h3_chain_editorial_v1", "run_name": normalized,
-        "chapters": [], "scene_order": [],
+        "chapters": [], "scene_order": [], "placements": [],
+        "locked_scene_ids": [],
+        "subtitles": {"mode": "off", "asset_id": "", "offset_seconds": 0.0},
     }
     if not normalized:
         return empty
@@ -6878,6 +7216,171 @@ def _load_run_editorial(run_name: Any) -> dict[str, Any]:
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         _LOG.warning("Ignoring invalid H3 run editorial sidecar %s: %s", path, exc)
         return empty
+
+
+def _editorial_timeline_records(
+        run_name: Any, segments: list[dict[str, Any]]) -> tuple[
+            dict[str, Any], list[dict[str, Any]], int]:
+    """Resolve editorial clip positions without changing the chain manifest."""
+    editorial = _load_run_editorial(run_name)
+    requested = {
+        str(item.get("scene_id") or ""): int(item.get("start_frame", 0))
+        for item in editorial.get("placements", [])
+        if isinstance(item, dict)
+    }
+    ordered: list[dict[str, Any]] = []
+    natural_start = 0
+    for offset, segment in enumerate(segments, start=1):
+        scene_id = str(segment.get("id") or "clip_%04d" % offset)
+        delivered = int(segment["delivered_frames"])
+        explicit = scene_id in requested
+        ordered.append({
+            "segment": segment,
+            "scene": int(segment.get("index", offset)),
+            "scene_id": scene_id,
+            "frame_count": delivered,
+            "source_start_frame": natural_start,
+            "requested_start_frame": int(
+                requested[scene_id] if explicit else natural_start),
+            "explicit": explicit,
+        })
+        natural_start += delivered
+    ordered.sort(key=lambda item: (
+        int(item["requested_start_frame"]),
+        0 if bool(item["explicit"]) else 1,
+        int(item["scene"]),
+    ))
+    records: list[dict[str, Any]] = []
+    cursor = 0
+    for item in ordered:
+        start = max(cursor, int(item["requested_start_frame"]))
+        if start > cursor:
+            records.append({
+                "kind": "gap",
+                "before_scene": int(item["scene"]),
+                "before_scene_id": str(item["scene_id"]),
+                "start_frame": cursor,
+                "frame_count": start - cursor,
+            })
+        records.append({
+            "kind": "scene",
+            "scene": int(item["scene"]),
+            "scene_id": str(item["scene_id"]),
+            "start_frame": start,
+            "frame_count": int(item["frame_count"]),
+            "source_start_frame": int(item["source_start_frame"]),
+            "segment": item["segment"],
+        })
+        cursor = start + int(item["frame_count"])
+    return editorial, records, cursor
+
+
+def _parse_timed_lyrics(value: Any) -> list[dict[str, Any]]:
+    text = str(value or "").replace("\r\n", "\n").replace("\r", "\n")
+
+    def srt_seconds(groups: tuple[str, str, str, str]) -> float:
+        hours, minutes, seconds, fraction = groups
+        milliseconds = int((fraction + "00")[:3])
+        return (int(hours) * 3600 + int(minutes) * 60 + int(seconds) +
+                milliseconds / 1000.0)
+
+    pattern = re.compile(
+        r"(?:^|\n)(?:\d+\s*\n)?\s*"
+        r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})\s*-->\s*"
+        r"(\d{1,2}):(\d{2}):(\d{2})[,.](\d{1,3})[^\n]*\n"
+        r"([\s\S]*?)(?=\n{2,}|$)")
+    cues: list[dict[str, Any]] = []
+    for match in pattern.finditer(text):
+        start = srt_seconds(match.groups()[0:4])
+        end = srt_seconds(match.groups()[4:8])
+        cue_text = match.group(9).strip()
+        if cue_text and end > start:
+            cues.append({"start": start, "end": end, "text": cue_text})
+    if cues:
+        return sorted(cues, key=lambda item: float(item["start"]))
+
+    offset = 0.0
+    starts: list[dict[str, Any]] = []
+    for line in text.split("\n"):
+        offset_match = re.fullmatch(
+            r"\s*\[offset:([+-]?\d+)\]\s*", line, re.IGNORECASE)
+        if offset_match:
+            offset = int(offset_match.group(1)) / 1000.0
+            continue
+        timestamps = list(re.finditer(
+            r"\[(\d{1,3}):(\d{2})(?:[.:](\d{1,3}))?\]", line))
+        if not timestamps:
+            continue
+        cue_text = re.sub(r"\[[^\]]+\]", "", line).strip()
+        if not cue_text:
+            continue
+        for timestamp in timestamps:
+            fraction = str(timestamp.group(3) or "0")
+            scale = 1000.0 if len(fraction) == 3 else (
+                100.0 if len(fraction) == 2 else 10.0)
+            start = (int(timestamp.group(1)) * 60 +
+                     int(timestamp.group(2)) + int(fraction) / scale + offset)
+            starts.append({"start": max(0.0, start), "text": cue_text})
+    starts.sort(key=lambda item: float(item["start"]))
+    for index, cue in enumerate(starts):
+        following = (float(starts[index + 1]["start"])
+                     if index + 1 < len(starts) else float(cue["start"]) + 4.0)
+        cues.append({
+            **cue,
+            "end": max(float(cue["start"]) + 0.1, following),
+        })
+    return cues
+
+
+def _editorial_subtitle_cues(
+        run_name: str, editorial: dict[str, Any], total_frames: int
+        ) -> list[dict[str, Any]]:
+    settings = editorial.get("subtitles") or {}
+    if settings.get("mode") != "preview_srt":
+        return []
+    asset_id = str(settings.get("asset_id") or "")
+    if not asset_id:
+        raise ValueError(
+            "Editorial subtitles are enabled but no lyrics asset is selected.")
+    catalog = ProjectAssetStore(_input_root(), _output_root()).load(run_name)
+    asset = next((item for item in catalog.get("assets", [])
+                  if str(item.get("id") or "") == asset_id), None)
+    if asset is None or asset.get("kind") != "audio":
+        raise ValueError(
+            "Editorial subtitle audio asset %s is missing." % asset_id)
+    cues = _parse_timed_lyrics(asset.get("lyrics"))
+    if not cues:
+        raise ValueError(
+            "Editorial subtitle asset @%s has no LRC or SRT timestamps."
+            % str(asset.get("tag") or "audio"))
+    shift = float(settings.get("offset_seconds", 0.0))
+    duration = int(total_frames) / float(FPS)
+    result = []
+    for cue in cues:
+        start = max(0.0, float(cue["start"]) + shift)
+        end = min(duration, float(cue["end"]) + shift)
+        if end > start:
+            result.append({"start": start, "end": end,
+                           "text": str(cue["text"])})
+    return result
+
+
+def _srt_timestamp(seconds: float) -> str:
+    milliseconds = max(0, int(round(float(seconds) * 1000.0)))
+    hours, remainder = divmod(milliseconds, 3600000)
+    minutes, remainder = divmod(remainder, 60000)
+    whole_seconds, milliseconds = divmod(remainder, 1000)
+    return "%02d:%02d:%02d,%03d" % (
+        hours, minutes, whole_seconds, milliseconds)
+
+
+def _write_editorial_srt(path: str, cues: list[dict[str, Any]]) -> None:
+    blocks = []
+    for index, cue in enumerate(cues, start=1):
+        blocks.append("%d\n%s --> %s\n%s" % (
+            index, _srt_timestamp(float(cue["start"])),
+            _srt_timestamp(float(cue["end"])), str(cue["text"])))
+    _atomic_text(path, "\n\n".join(blocks) + "\n")
 
 
 def _effective_editor_plan(plan: dict[str, Any]) -> dict[str, Any]:
@@ -6898,11 +7401,17 @@ def _effective_editor_plan(plan: dict[str, Any]) -> dict[str, Any]:
                 if "context_length" in shot else {}),
              **({"visual_context_source": shot["visual_context_source"]}
                 if "visual_context_source" in shot else {}),
+             **({"visual_context_start_frame": int(
+                    shot["visual_context_start_frame"])}
+                if "visual_context_start_frame" in shot else {}),
              **({"visual_context_lead_source": shot[
                     "visual_context_lead_source"],
                  "visual_context_lead_frames": shot[
                     "visual_context_lead_frames"]}
                 if "visual_context_lead_source" in shot else {}),
+             **({"visual_context_lead_start_frame": int(
+                    shot["visual_context_lead_start_frame"])}
+                if "visual_context_lead_start_frame" in shot else {}),
              **({"audio_context_length": shot["audio_context_length"]}
                 if "audio_context_length" in shot else {}),
              **({"video_blend_frames": shot["video_blend_frames"]}
@@ -7482,36 +7991,35 @@ def _previous_context_frames(state: dict[str, Any], vae: Any,
     if requested <= 0 or int(frames.shape[0]) >= requested:
         return frames
 
-    if int(state.get("_visual_context_lead_source", 0)):
-        # Older checkpoints may have retained fewer RGB frames than a newly
-        # authored composition requests even though their complete video
-        # latents are available. Decode the already-composed prefix once for
-        # RGB Guide/mask consumers; never re-encode or alter its latent blocks.
+    if bool(state.get("_visual_context_exact_prefix", False)):
+        # A selected or composed context already contains exactly the native
+        # latent prefix requested by this scene. Decode that crop once for RGB
+        # Guide/mask consumers; never re-encode or alter its latent steps.
         previous_latent = state.get("previous_latent")
         streams = (_streams_from_latent(previous_latent)
                    if previous_latent is not None else [])
         if not streams:
             raise ValueError(
-                "H3 composed visual context has no video latent to recover "
+                "H3 selected visual context has no video latent to recover "
                 "its RGB prefix.")
         decoded = vae.decode(streams[0])
         if not torch.is_tensor(decoded):
             raise ValueError(
-                "H3 composed-context VAE returned %r instead of image "
+                "H3 selected-context VAE returned %r instead of image "
                 "frames." % type(decoded))
         if decoded.ndim == 5:
             decoded = decoded.reshape(
                 -1, decoded.shape[-3], decoded.shape[-2], decoded.shape[-1])
         if decoded.ndim != 4 or int(decoded.shape[0]) != requested:
             raise ValueError(
-                "H3 composed-context latent decoded to shape %s; expected "
+                "H3 selected-context latent decoded to shape %s; expected "
                 "%d RGB frames." % (tuple(decoded.shape), requested))
         recovered = _tensor_cpu_clone(decoded)
         state["previous_frames"] = recovered
         _LOG.info(
-            "H3 Chain decoded the composed %d-frame visual prefix because "
-            "one source checkpoint retained a shorter RGB tail; its ordered "
-            "video-latent blocks remain unchanged.", requested)
+            "H3 Chain decoded the selected %d-frame native latent prefix for "
+            "its RGB mirror; the saved latent crop remains unchanged.",
+            requested)
         return recovered
 
     segments = state.get("segments")
@@ -7586,12 +8094,13 @@ def _public_segment(value: dict[str, Any]) -> dict[str, Any]:
         "resolved_context_length",
         "resolved_audio_context_length",
         "visual_context_source_scene", "visual_context_source_id",
+        "visual_context_start_frame",
         "visual_context_source_revision",
         "visual_context_source_checkpoint_sha256",
         "visual_context_lead_source_scene", "visual_context_lead_source_id",
         "visual_context_lead_source_revision",
         "visual_context_lead_checkpoint_sha256",
-        "visual_context_lead_frames",
+        "visual_context_lead_frames", "visual_context_lead_start_frame",
         "sample_rate", "segment_sha256",
         "checkpoint_sha256", "prompt_file_sha256", "predecessor_revision",
         "predecessor_checkpoint_sha256") if key in value}
@@ -7606,26 +8115,28 @@ def _visual_context_state(
     pairs it with the immediate predecessor's audio latent. The cached view is
     reused by Chain Context and Segment Save during the same scene execution.
 
-    A composed edge prepends one selected scene tail to a second selected
-    source tail. The second block remains nearest the generation boundary.
-    Native-phase layouts splice saved latents directly; their inverse layouts
-    preserve the requested RGB order and are normalized through the video VAE
-    only when a latent consumer needs them. Audio remains one continuous tail
-    from the immediate timeline predecessor.
+    A composed edge prepends one selected scene crop to a second selected
+    source crop. The second block remains nearest the generation boundary.
+    Every authored crop is snapped to H3's native temporal lattice and slices
+    saved latent steps directly; RGB is only a retained or decoded mirror.
+    Audio remains one continuous tail from the immediate timeline predecessor.
     """
     plan = state["plan"]
     index = int(state["index"])
     source_index = _shot_visual_context_source(plan, index)
     lead_source_index = _shot_visual_context_lead_source(plan, index)
-    if (source_index is None
-            or (source_index == index - 1 and lead_source_index is None)):
-        return state
     shot = plan["shots"][index - 1]
     context_length = _shot_context_length(
         shot, int(plan["compatibility"].get("context_length", 0)))
     lead_frames = (
         _shot_visual_context_lead_frames(shot, context_length)
         if lead_source_index is not None else 0)
+    recent_frames = int(context_length) - int(lead_frames)
+    range_selected = "visual_context_start_frame" in shot
+    if (source_index is None
+            or (source_index == index - 1 and lead_source_index is None
+                and not range_selected)):
+        return state
     cache = state.get("_visual_context_state")
     if (isinstance(cache, dict)
             and int(cache.get("_visual_context_target", 0)) == index
@@ -7633,7 +8144,12 @@ def _visual_context_state(
             and int(cache.get("_visual_context_lead_source", 0)) == int(
                 lead_source_index or 0)
             and int(cache.get("_visual_context_lead_frames", 0)) ==
-            lead_frames):
+            lead_frames
+            and int(cache.get("_visual_context_start_frame", -1)) == int(
+                shot.get("visual_context_start_frame", -1))
+            and int(cache.get(
+                "_visual_context_lead_start_frame", -1)) == int(
+                    shot.get("visual_context_lead_start_frame", -1))):
         return cache
     if _st_load is None:
         raise RuntimeError(
@@ -7668,42 +8184,79 @@ def _visual_context_state(
             video = video.unsqueeze(0)
         return position, segment, tensors, frames, video
 
-    def delivered_rgb_tail(segment, retained_frames, video, wanted):
+    def retained_rgb_window(
+            segment, retained_frames, start_frame, wanted,
+            planned_delivered_frames):
         wanted = int(wanted)
-        if int(retained_frames.shape[0]) >= wanted:
-            return retained_frames[-wanted:].detach().contiguous().clone()
-        if vae is None:
+        delivered_frames = int(segment.get(
+            "delivered_frames", planned_delivered_frames))
+        start_frame = int(start_frame)
+        end_frame = start_frame + wanted
+        if start_frame < 0 or end_frame > delivered_frames:
             raise ValueError(
-                "H3 scene %d composed context needs %d RGB frames from "
-                "scene %d, whose checkpoint retained only %d. Execute it "
-                "through Chain Context with the video VAE connected." %
-                (index, wanted, int(segment.get("index", 0)),
-                 int(retained_frames.shape[0])))
-        decoded = vae.decode(video)
-        if not torch.is_tensor(decoded):
+                "H3 scene %d context window %d..%d does not fit inside "
+                "scene %d's %d delivered frames." %
+                (index, start_frame, end_frame - 1,
+                 int(segment.get("index", 0)), delivered_frames))
+        retained_count = int(retained_frames.shape[0])
+        retained_start = delivered_frames - retained_count
+        if (retained_start >= 0 and start_frame >= retained_start
+                and end_frame <= delivered_frames):
+            local_start = start_frame - retained_start
+            return retained_frames[
+                local_start:local_start + wanted
+            ].detach().contiguous().clone()
+        return None
+
+    def native_latent_window(
+            segment, video, start_frame, wanted, prefix_frames,
+            planned_raw_frames, planned_delivered_frames, label):
+        raw_frames = int(segment.get("raw_frames", planned_raw_frames))
+        delivered_frames = int(segment.get(
+            "delivered_frames", planned_delivered_frames))
+        start_frame = int(start_frame)
+        wanted = int(wanted)
+        if start_frame not in _native_context_window_starts(
+                raw_frames, delivered_frames, wanted, prefix_frames):
             raise ValueError(
-                "H3 composed-context VAE returned %r instead of image "
-                "frames." % type(decoded))
-        if decoded.ndim == 5:
-            decoded = decoded.reshape(
-                -1, decoded.shape[-3], decoded.shape[-2], decoded.shape[-1])
-        raw_frames = int(segment.get("raw_frames", 0))
-        delivered_frames = int(segment.get("delivered_frames", 0))
-        trim_frames = raw_frames - delivered_frames
-        if (decoded.ndim != 4 or raw_frames <= 0 or delivered_frames <= 0
-                or trim_frames < 0 or int(decoded.shape[0]) != raw_frames
-                or wanted > delivered_frames):
+                "H3 %s start %d is not a native latent-aligned window." %
+                (label, start_frame))
+        if wanted == 1 and int(prefix_frames) == 0:
+            if int(video.shape[2]) < 1:
+                raise ValueError("H3 %s has no video latent steps." % label)
+            return video[:1, :, -1:].detach().contiguous().clone()
+        raw_start = raw_frames - delivered_frames + start_frame
+        start_step = _h3_native_frame_boundary_step(raw_start)
+        end_step = _h3_native_frame_boundary_step(raw_start + wanted)
+        target_start = _h3_native_frame_boundary_step(prefix_frames)
+        target_end = _h3_native_frame_boundary_step(prefix_frames + wanted)
+        raw_end = _h3_native_frame_boundary_step(raw_frames)
+        if (start_step is None or end_step is None
+                or target_start is None or target_end is None
+                or raw_end is None or int(video.shape[2]) != raw_end
+                or start_step % 5 != target_start % 5
+                or end_step - start_step != target_end - target_start):
             raise ValueError(
-                "H3 composed context cannot recover scene %d's %d-frame "
-                "tail: decoded shape %s, metadata %d raw / %d delivered." %
-                (int(segment.get("index", 0)), wanted,
-                 tuple(getattr(decoded, "shape", ())), raw_frames,
-                 delivered_frames))
-        delivered = decoded[trim_frames:trim_frames + delivered_frames]
-        return _tensor_cpu_clone(delivered[-wanted:])
+                "H3 %s cannot map frames %d..%d onto checkpoint latent "
+                "shape %s (%d raw / %d delivered)." %
+                (label, start_frame, start_frame + wanted - 1,
+                 tuple(video.shape), raw_frames, delivered_frames))
+        return video[
+            :1, :, start_step:end_step
+        ].detach().contiguous().clone()
 
     source_position, source_segment, tensors, source_frames, source_video = (
         load_visual_source(source_index))
+    source_delivered_frames = int(source_segment.get(
+        "delivered_frames",
+        plan["shots"][source_index - 1].get("delivered_frames", 0)))
+    source_raw_frames = int(source_segment.get(
+        "raw_frames", plan["shots"][source_index - 1].get("raw_frames", 0)))
+    source_start = _shot_visual_context_start_frame(
+        shot, "visual_context_start_frame",
+        source_raw_frames, source_delivered_frames, recent_frames, lead_frames)
+    total_steps = max(
+        1, 2 + 5 * ((int(context_length) - 5) // 17))
     audio_source_index = _resume_context_predecessors(
         plan, index)["audio"]
     if audio_source_index is not None:
@@ -7724,96 +8277,65 @@ def _visual_context_state(
                 "latent placeholder." % source_index)
     selected_frames = source_frames
     selected_video = source_video
+    if range_selected and lead_source_index is None:
+        selected_frames = retained_rgb_window(
+            source_segment, source_frames,
+            source_start, recent_frames, source_delivered_frames)
+        if selected_frames is None:
+            selected_frames = source_frames[:0].detach().clone()
+        selected_video = native_latent_window(
+            source_segment, source_video, source_start, recent_frames, 0,
+            source_raw_frames, source_delivered_frames,
+            "scene %d selected context" % index)
     lead_segment = None
     if lead_source_index is not None:
         (_lead_position, lead_segment, _lead_tensors, lead_source_frames,
          lead_video) = load_visual_source(lead_source_index)
-        recent_frames = int(context_length) - int(lead_frames)
-        total_steps = 2 + 5 * ((int(context_length) - 5) // 17)
+        lead_raw_frames = int(lead_segment.get(
+            "raw_frames", plan["shots"][
+                lead_source_index - 1].get("raw_frames", 0)))
+        lead_delivered_frames = int(lead_segment.get(
+            "delivered_frames", plan["shots"][
+                lead_source_index - 1].get("delivered_frames", 0)))
+        lead_start = _shot_visual_context_start_frame(
+            shot, "visual_context_lead_start_frame",
+            lead_raw_frames, lead_delivered_frames, lead_frames, 0)
         if tuple(lead_video.shape[:2] + lead_video.shape[3:]) != tuple(
                 source_video.shape[:2] + source_video.shape[3:]):
             raise ValueError(
                 "H3 composed context scenes %d and %d use different latent "
                 "geometry." % (lead_source_index, source_index))
-        direct_latent_split = int(lead_frames) in H3_CONTEXT_LENGTHS
-        if direct_latent_split:
-            retained_rgb_available = (
-                int(lead_source_frames.shape[0]) >= int(lead_frames)
-                and int(source_frames.shape[0]) >= recent_frames)
-            lead_steps = 2 + 5 * ((int(lead_frames) - 5) // 17)
-            recent_steps = total_steps - lead_steps
-            if recent_steps < 1 or recent_steps % 5:
-                raise RuntimeError(
-                    "H3 composed context resolved a non-phase-safe latent "
-                    "split %d + %d steps." % (lead_steps, recent_steps))
-            if (int(lead_video.shape[2]) < lead_steps
-                    or int(source_video.shape[2]) < recent_steps):
-                raise ValueError(
-                    "H3 scene %d composed context source checkpoint has too "
-                    "few video latent steps for %d + %d." %
-                    (index, lead_steps, recent_steps))
-            lead_start_phase = (int(lead_video.shape[2]) - lead_steps) % 5
-            recent_start_phase = (
-                int(source_video.shape[2]) - recent_steps) % 5
-            if lead_start_phase != 0 or recent_start_phase != lead_steps % 5:
-                raise ValueError(
-                    "H3 composed context source latent phases do not align "
-                    "with the target prefix (%d then %d)." %
-                    (lead_start_phase, recent_start_phase))
-            selected_frames = (
-                torch.cat((
-                    lead_source_frames[-lead_frames:].detach().contiguous().clone(),
-                    source_frames[-recent_frames:].detach().contiguous().clone(),
-                ), dim=0)
-                if retained_rgb_available
-                else source_frames[:0].detach().clone())
-            selected_video = torch.cat((
-                lead_video[:1, :, -lead_steps:].detach().contiguous().clone(),
-                source_video[:1, :, -recent_steps:].detach().contiguous().clone(),
-            ), dim=2)
-            if not retained_rgb_available:
-                _LOG.info(
-                    "H3 Chain scene %d composed context will decode its RGB "
-                    "mirror from the assembled latent because scene %d or "
-                    "%d retained fewer source frames than the new %d+%d "
-                    "split.", index, lead_source_index, source_index,
-                    lead_frames, recent_frames)
-        else:
-            selected_frames = torch.cat((
-                delivered_rgb_tail(
-                    lead_segment, lead_source_frames, lead_video, lead_frames),
-                delivered_rgb_tail(
-                    source_segment, source_frames, source_video, recent_frames),
-            ), dim=0)
-            continuation_mode = migrate_continuation_mode(shot.get(
-                "continuation_mode", plan["compatibility"].get(
-                    "continuation_mode", "guide")))
-            requires_video_latent = (
-                continuation_mode in MASKED_CONTINUATION_MODES
-                or continuation_mode == "latent_guide")
-            if requires_video_latent:
-                if vae is None:
-                    raise ValueError(
-                        "H3 reversed composed context requires the video VAE "
-                        "connected to Chain Context for %s." %
-                        continuation_mode)
-                selected_video = vae.encode(selected_frames[..., :3])
-                if (not torch.is_tensor(selected_video)
-                        or selected_video.ndim != 5
-                        or int(selected_video.shape[2]) != total_steps
-                        or tuple(selected_video.shape[:2]
-                                 + selected_video.shape[3:]) != tuple(
-                                     source_video.shape[:2]
-                                     + source_video.shape[3:])):
-                    raise ValueError(
-                        "H3 reversed composed context encoded to latent shape "
-                        "%s; expected %d steps with source geometry %s." %
-                        (tuple(getattr(selected_video, "shape", ())),
-                         total_steps, tuple(source_video.shape)))
-                _LOG.info(
-                    "H3 Chain scene %d normalized reversed %d+%d composed "
-                    "context through the video VAE for %s.", index,
-                    lead_frames, recent_frames, continuation_mode)
+        lead_video_crop = native_latent_window(
+            lead_segment, lead_video, lead_start, lead_frames, 0,
+            lead_raw_frames, lead_delivered_frames,
+            "scene %d composed lead" % index)
+        recent_video_crop = native_latent_window(
+            source_segment, source_video, source_start, recent_frames,
+            lead_frames, source_raw_frames, source_delivered_frames,
+            "scene %d composed second block" % index)
+        selected_video = torch.cat(
+            (lead_video_crop, recent_video_crop), dim=2)
+        if int(selected_video.shape[2]) != total_steps:
+            raise ValueError(
+                "H3 scene %d composed native crops produced %d latent steps; "
+                "expected %d for %d frames." %
+                (index, int(selected_video.shape[2]), total_steps,
+                 context_length))
+        lead_rgb = retained_rgb_window(
+            lead_segment, lead_source_frames, lead_start, lead_frames,
+            lead_delivered_frames)
+        recent_rgb = retained_rgb_window(
+            source_segment, source_frames, source_start, recent_frames,
+            source_delivered_frames)
+        selected_frames = (
+            torch.cat((lead_rgb, recent_rgb), dim=0)
+            if lead_rgb is not None and recent_rgb is not None
+            else source_frames[:0].detach().clone())
+        if int(selected_frames.shape[0]) != context_length:
+            _LOG.info(
+                "H3 Chain scene %d will decode the %d+%d native latent "
+                "composition once for its RGB mirror; no RGB re-encode is "
+                "performed.", index, lead_frames, recent_frames)
         # Keep the complete immediate audio latent. The consumer selects its
         # own scene-local audio context, which may intentionally be longer,
         # shorter, or disabled independently from this composed video prefix.
@@ -7828,6 +8350,15 @@ def _visual_context_state(
         "_visual_context_source": source_index,
         "_visual_context_lead_source": int(lead_source_index or 0),
         "_visual_context_lead_frames": int(lead_frames),
+        "_visual_context_start_frame": int(
+            shot.get("visual_context_start_frame", -1)),
+        "_visual_context_lead_start_frame": int(
+            shot.get("visual_context_lead_start_frame", -1)),
+        "_visual_context_resolved_start_frame": int(source_start),
+        "_visual_context_resolved_lead_start_frame": int(
+            lead_start if lead_source_index is not None else -1),
+        "_visual_context_exact_prefix": bool(
+            lead_source_index is not None or range_selected),
         "visual_context_source_segment": source_segment,
         **({"visual_context_lead_segment": lead_segment}
            if lead_segment is not None else {}),
@@ -7836,16 +8367,20 @@ def _visual_context_state(
     if lead_source_index is not None:
         _LOG.info(
             "H3 Chain scene %d composed visual context: %d frames from scene "
-            "%d (%s), then %d frames from scene %d (%s); generated-audio "
+            "%d (%s) at %d, then %d frames from scene %d (%s) at %d; "
+            "generated-audio "
             "continuity remains one tail from immediate scene %d.",
             index, lead_frames, lead_source_index,
-            lead_segment.get("id", "scene"), context_length - lead_frames,
-            source_index, source_segment.get("id", "scene"), index - 1)
+            lead_segment.get("id", "scene"), lead_start,
+            context_length - lead_frames, source_index,
+            source_segment.get("id", "scene"), source_start, index - 1)
     else:
         _LOG.info(
-            "H3 Chain scene %d visual context uses scene %d (%s); generated-"
-            "audio continuity remains sourced from immediate scene %d.",
-            index, source_index, source_segment.get("id", "scene"), index - 1)
+            "H3 Chain scene %d visual context uses scene %d (%s), frames "
+            "%d..%d; generated-audio continuity remains sourced from "
+            "immediate scene %d.", index, source_index,
+            source_segment.get("id", "scene"), source_start,
+            source_start + recent_frames - 1, index - 1)
     return selected
 
 
@@ -10481,6 +11016,19 @@ class MiniMaxH3TaggedReferenceToVideo:
                            "picture masters for target-resolution pass 2. "
                            "Deferred upscale discovers the cache from the "
                            "source checkpoint fingerprint."}),
+            # Append new widgets so existing serialized positional values keep
+            # their original meaning.
+            "conditioning_backend": (list(TAGGED_CONDITIONING_BACKENDS), {
+                "default": "native_ref2va",
+                "tooltip": "native_ref2va preserves the existing stock H3 "
+                           "reference path. external_refmod emits text-only "
+                           "conditioning plus the active scene pictures/videos "
+                           "through refmod_sources; connect that output to "
+                           "Extract H3 RefMod, then apply the resulting mod to "
+                           "positive before Chain Context. Active #semantic "
+                           "anchors use a hybrid path: only those timed images "
+                           "are presented to Qwen, while ordinary @visuals "
+                           "remain RefMods."}),
         }
         return {"required": ordered, "optional": optional}
 
@@ -10488,10 +11036,12 @@ class MiniMaxH3TaggedReferenceToVideo:
     def VALIDATE_INPUTS(
             cls, reference_policy="strict",
             semantic_anchor_mode="timestamped_video",
-            semantic_anchor_size="512"):
+            semantic_anchor_size="512",
+            conditioning_backend="native_ref2va"):
         try:
             _reference_compliance_mode(reference_policy)
             _semantic_anchor_mode(semantic_anchor_mode)
+            _tagged_conditioning_backend(conditioning_backend)
             if str(semantic_anchor_size) not in SEMANTIC_ANCHOR_SIZES:
                 raise ValueError(
                     "Semantic anchor size must be one of %s." %
@@ -10500,38 +11050,50 @@ class MiniMaxH3TaggedReferenceToVideo:
             return str(exc)
         return True
 
-    RETURN_TYPES = ("CONDITIONING", "LATENT", "STRING", "STRING", "STRING")
+    RETURN_TYPES = (
+        "CONDITIONING", "LATENT", "STRING", "STRING", "STRING",
+        REFMOD_SOURCE_LIST_TYPE)
     RETURN_NAMES = (
         "positive", "latent", "compiled_prompt", "active_references",
-        "reference_fingerprint")
+        "reference_fingerprint", "refmod_sources")
     OUTPUT_TOOLTIPS = (
-        "Positive conditioning produced by stock MiniMax H3 Ref2VA.",
-        "Empty MiniMax H3 AV latent produced by stock Ref2VA.",
+        "Native Ref2VA conditioning, or text-only H3 conditioning when the "
+        "external_refmod backend is selected.",
+        "Matching empty MiniMax H3 AV latent for the selected backend.",
         "Exact prompt sent to H3 after native @tags and semantic #anchors compile.",
-        "Scene-local mapping of native references and Qwen-only semantic anchors.",
+        "Scene-local mapping of native references, RefMods, and Qwen-only "
+        "semantic anchors.",
         "Append-aware fingerprint lineage of the registered source set for "
         "Plan checkpoint safety.",
+        "Active scene pictures and resolved video slices as H3_REF_LIST. "
+        "Connect to Extract H3 RefMod refs_bundle; audio and semantic-only "
+        "anchors are excluded.",
     )
     FUNCTION = "apply"
     CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
-    DESCRIPTION = ("Prompt-driven Ref2VA with no numeric reference schedule. "
+    DESCRIPTION = ("Prompt-driven H3 references with no numeric schedule. "
                    "Each scene activates only registered @tags present in its "
                    "resolved prompt, compactly renumbers those assets to native "
                    "H3 labels, and leaves unrelated @syntax untouched. A "
                    "Tagged Picture can also be written as #tag[2.50s] to add "
                    "either a timestamped Qwen semantic checkpoint or an "
                    "approximate Qwen-only Picture storyboard cue without a "
-                   "VAE reference.")
+                   "VAE reference. The optional external_refmod backend exposes "
+                   "the active @visual tensors while producing text-only base "
+                   "conditioning for ComfyUI-MiniMaxH3Mod; active #anchors "
+                   "remain timed through an anchor-only Qwen hybrid pass.")
 
     def apply(self, clip, vae, audio_vae, references, clip_index,
               clip_count, prompt, width, height, length,
               ref_image_size="match", state=None,
               reference_policy="strict", semantic_anchor_size="512",
               semantic_anchor_mode="timestamped_video",
-              cache_for_upscale=True):
+              cache_for_upscale=True,
+              conditioning_backend="native_ref2va"):
         if GraphBuilder is None:
             raise RuntimeError(
                 "Tagged H3 Ref2VA requires ComfyUI GraphBuilder.")
+        backend = _tagged_conditioning_backend(conditioning_backend)
         anchor_bundle = _reference_semantic_anchor_bundle(references)
         if anchor_bundle is not None:
             semantic_anchor_size = anchor_bundle["semantic_anchor_size"]
@@ -10553,28 +11115,53 @@ class MiniMaxH3TaggedReferenceToVideo:
                 "value": _project_asset_image(anchor["entry"]["value"]),
             },
         } for anchor in (bindings.get("semantic_anchors") or [])]
+        semantic_anchors = bindings.get("semantic_anchors") or []
+        hybrid_anchors = semantic_anchors
+        if backend == "external_refmod":
+            unsupported = []
+            if bindings["audios"]:
+                unsupported.append("standalone tagged audio")
+            if any(entry.get("audio") is not None
+                   for entry in bindings["videos"]):
+                unsupported.append("paired reference-video audio")
+            if unsupported:
+                raise ValueError(
+                    "Tagged Ref2VA external_refmod is visual-only and cannot "
+                    "preserve active %s. Remove those tags for this test or "
+                    "switch conditioning_backend to native_ref2va." %
+                    ", ".join(unsupported))
+            compiled, hybrid_anchors = _compile_refmod_hybrid_prompt(
+                prompt, bindings, semantic_anchors, semantic_anchor_mode)
+            refmod_tags = [
+                "@%s" % entry["tag"]
+                for entry in (
+                    list(bindings.get("pictures") or ())
+                    + list(bindings.get("videos") or ()))
+            ]
+            anchor_mappings = [
+                "#%s -> %s" % (item["tag"], item["hybrid_label"])
+                for item in hybrid_anchors
+            ]
+            summary = "scene %d/%d: %s" % (
+                int(clip_index), int(clip_count),
+                "; ".join(
+                    (["RefMod " + ", ".join(refmod_tags)]
+                     if refmod_tags else [])
+                    + anchor_mappings)
+                or "no tagged references used by prompt")
+            if bindings.get("compliance_warnings"):
+                summary += "; warning-only: %s" % " ".join(
+                    bindings["compliance_warnings"])
+            elif bindings.get("compliance_mode") == "disabled":
+                summary += "; reference policy disabled; @tags passed unchanged"
+
         graph = GraphBuilder()
-        ref2va = graph.node("MiniMaxH3ReferenceToVideo", "TaggedRef2VA")
-        for key, value in (
-                ("clip", clip), ("vae", vae), ("audio_vae", audio_vae),
-                ("prompt", compiled), ("width", int(width)),
-                ("height", int(height)), ("length", int(length)),
-                ("ref_image_size", ref_image_size)):
-            ref2va.set_input(key, value)
-        for index, entry in enumerate(bindings["pictures"]):
-            ref2va.set_input(
-                "ref_images.ref_image_%d" % index, entry["value"])
         slice_details = []
         presentation_videos = []
         resolved_videos = []
-        for index, entry in enumerate(bindings["videos"]):
+        for entry in bindings["videos"]:
             video, paired_audio, detail = _scheduled_video_reference_slice(
                 entry, state, clip_index, clip_count, length)
-            ref2va.set_input("ref_videos.ref_video_%d" % index, video)
-            if paired_audio is not None:
-                ref2va.set_input(
-                    "ref_video_audios.ref_video_audio_%d" % index,
-                    paired_audio)
             presentation_videos.append({
                 "video": video,
                 "paired_audio": paired_audio is not None,
@@ -10583,32 +11170,97 @@ class MiniMaxH3TaggedReferenceToVideo:
             if detail:
                 slice_details.append(detail)
         resolved_audios = []
-        for index, entry in enumerate(bindings["audios"]):
-            audio, detail = _tagged_audio_reference_value(
-                entry, state, clip_index, clip_count, length)
-            resolved_audios.append(audio)
-            ref2va.set_input(
-                "ref_audios.ref_audio_%d" % index, audio)
-            if detail:
-                slice_details.append(detail)
+        if backend == "native_ref2va":
+            for entry in bindings["audios"]:
+                audio, detail = _tagged_audio_reference_value(
+                    entry, state, clip_index, clip_count, length)
+                resolved_audios.append(audio)
+                if detail:
+                    slice_details.append(detail)
+
+        refmod_sources = [
+            entry["value"] for entry in bindings["pictures"]
+        ] + [item["video"] for item in resolved_videos]
+        if backend == "native_ref2va":
+            conditioner = graph.node(
+                "MiniMaxH3ReferenceToVideo", "TaggedRef2VA")
+            for key, value in (
+                    ("clip", clip), ("vae", vae),
+                    ("audio_vae", audio_vae), ("prompt", compiled),
+                    ("width", int(width)), ("height", int(height)),
+                    ("length", int(length)),
+                    ("ref_image_size", ref_image_size)):
+                conditioner.set_input(key, value)
+            for index, entry in enumerate(bindings["pictures"]):
+                conditioner.set_input(
+                    "ref_images.ref_image_%d" % index, entry["value"])
+            for index, item in enumerate(resolved_videos):
+                conditioner.set_input(
+                    "ref_videos.ref_video_%d" % index, item["video"])
+                if item.get("audio") is not None:
+                    conditioner.set_input(
+                        "ref_video_audios.ref_video_audio_%d" % index,
+                        item["audio"])
+            for index, audio in enumerate(resolved_audios):
+                conditioner.set_input(
+                    "ref_audios.ref_audio_%d" % index, audio)
+        else:
+            if not refmod_sources:
+                raise ValueError(
+                    "Tagged Ref2VA external_refmod needs at least one active "
+                    "visual @tag in the current scene prompt.")
+            conditioner = graph.node(
+                "MiniMaxH3ImageToVideo", "TaggedRefModBase")
+            for key, value in (
+                    ("clip", clip), ("vae", vae), ("prompt", compiled),
+                    ("width", int(width)), ("height", int(height)),
+                    ("length", int(length))):
+                conditioner.set_input(key, value)
+            summary += (
+                "; external RefMod base: %d visual source(s), text-only "
+                "conditioning; Extract/Apply settings are external to the "
+                "Plan fingerprint" % len(refmod_sources))
         if isinstance(references, dict) and references.get("fingerprint"):
             fingerprint_registry = _combined_reference_registry(
                 references, anchor_bundle)
             fingerprint = str(fingerprint_registry["fingerprint"])
             fingerprint_output = _reference_fingerprint_output(
-                fingerprint_registry)
+                fingerprint_registry,
+                wrapper_key=(
+                    "tagged_reference_fingerprint"
+                    if backend == "external_refmod" else ""),
+                wrapper_contract=(
+                    {
+                        "conditioning_backend": backend,
+                        "external_refmod_contract": (
+                            EXTERNAL_REFMOD_CONTRACT_VERSION),
+                    }
+                    if backend == "external_refmod" else None))
+            if backend == "external_refmod":
+                fingerprint = _fingerprint({
+                    "tagged_reference_fingerprint": fingerprint,
+                    "conditioning_backend": backend,
+                    "external_refmod_contract": (
+                        EXTERNAL_REFMOD_CONTRACT_VERSION),
+                })
         elif _reference_compliance_mode(reference_policy) == "disabled":
             fingerprint = _fingerprint({
                 "tagged_references": "ignored",
                 "reference_policy": "disabled",
+                **({
+                    "conditioning_backend": backend,
+                    "external_refmod_contract": (
+                        EXTERNAL_REFMOD_CONTRACT_VERSION),
+                }
+                   if backend == "external_refmod" else {}),
             })
             fingerprint_output = fingerprint
         else:
             raise ValueError(
                 "Tagged references have no valid reference fingerprint.")
         cache_fingerprint = fingerprint
-        positive = ref2va.out(0)
-        semantic_anchors = bindings.get("semantic_anchors") or []
+        positive = conditioner.out(0)
+        latent = conditioner.out(1)
         presentation = None
         if semantic_anchors:
             anchor_mode = _semantic_anchor_mode(semantic_anchor_mode)
@@ -10621,15 +11273,21 @@ class MiniMaxH3TaggedReferenceToVideo:
                 "ref_image_size": str(ref_image_size),
                 "semantic_anchor_size": anchor_size,
                 "semantic_anchor_mode": anchor_mode,
-                "pictures": [
-                    entry["value"] for entry in bindings["pictures"]],
-                "videos": presentation_videos,
-                "standalone_audio_count": len(bindings["audios"]),
+                # The external hybrid deliberately omits ordinary @media:
+                # Extract/Apply carries those as RefMods.  Qwen sees only the
+                # timed semantic anchors and therefore retains the speed win.
+                "pictures": ([] if backend == "external_refmod" else [
+                    entry["value"] for entry in bindings["pictures"]]),
+                "videos": ([] if backend == "external_refmod"
+                           else presentation_videos),
+                "standalone_audio_count": (
+                    0 if backend == "external_refmod"
+                    else len(bindings["audios"])),
                 "anchors": [{
                     "tag": anchor["tag"],
                     "image": anchor["entry"]["value"],
                     "timestamps": tuple(anchor["timestamps"]),
-                } for anchor in semantic_anchors],
+                } for anchor in hybrid_anchors],
             }
             semantic = graph.node(
                 "MiniMaxH3SemanticAnchorConditioning", "SemanticAnchors")
@@ -10638,6 +11296,10 @@ class MiniMaxH3TaggedReferenceToVideo:
             semantic.set_input("prompt", compiled)
             semantic.set_input("presentation", presentation)
             positive = semantic.out(0)
+            if backend == "external_refmod":
+                summary += (
+                    "; hybrid Qwen: %d semantic anchor source(s) only" %
+                    len(hybrid_anchors))
             fingerprint = _fingerprint({
                 "tagged_reference_fingerprint": fingerprint,
                 "semantic_anchor_mode": anchor_mode,
@@ -10650,6 +11312,11 @@ class MiniMaxH3TaggedReferenceToVideo:
                     wrapper_contract={
                         "semantic_anchor_mode": anchor_mode,
                         "semantic_anchor_size": anchor_size,
+                        **({
+                            "conditioning_backend": backend,
+                            "external_refmod_contract": (
+                                EXTERNAL_REFMOD_CONTRACT_VERSION),
+                        } if backend == "external_refmod" else {}),
                     })
         cache_runtime_ready = (
             callable(getattr(vae, "encode", None))
@@ -10658,9 +11325,10 @@ class MiniMaxH3TaggedReferenceToVideo:
                 item.get("audio") is not None for item in resolved_videos)
                  or (callable(getattr(audio_vae, "encode", None))
                      and not isinstance(audio_vae, (str, bytes)))))
-        if bool(cache_for_upscale) and cache_runtime_ready and (
+        if (backend == "native_ref2va" and bool(cache_for_upscale)
+                and cache_runtime_ready and (
                 bindings["pictures"] or resolved_videos or resolved_audios
-                or semantic_anchors):
+                or semantic_anchors)):
             try:
                 cache_status = _cache_reference_scene(
                     fingerprint=cache_fingerprint, scene=clip_index,
@@ -10678,8 +11346,8 @@ class MiniMaxH3TaggedReferenceToVideo:
             summary += "; " + "; ".join(slice_details)
         return {
             "result": (
-                positive, ref2va.out(1), compiled, summary,
-                fingerprint_output),
+                positive, latent, compiled, summary,
+                fingerprint_output, refmod_sources),
             "expand": graph.finalize(),
         }
 
@@ -12422,6 +13090,7 @@ def _plan_studio_source_audio_media(
         for shot in plan.get("shots") or ()))
     if frame_count < 1:
         return None
+    available_frame_count = _source_timeline_available_audio_frames(source)
     return {
         "audio_path": path,
         "audio_seek_seconds": float(
@@ -12429,6 +13098,8 @@ def _plan_studio_source_audio_media(
         "audio_kind": str(audio["kind"]),
         "frame_count": frame_count,
         "duration_seconds": frame_count / float(FPS),
+        "available_frame_count": available_frame_count,
+        "available_duration_seconds": available_frame_count / float(FPS),
         "media_fingerprint": str(
             source["fingerprints"].get("audio")
             or source["fingerprints"]["timeline"]),
@@ -12570,6 +13241,10 @@ def _register_plan_studio_source_previews(
             "seek_seconds": float(source_audio["audio_seek_seconds"]),
             "frame_count": int(source_audio["frame_count"]),
             "duration_seconds": float(source_audio["duration_seconds"]),
+            "available_frame_count": int(source_audio.get(
+                "available_frame_count", source_audio["frame_count"])),
+            "available_duration_seconds": float(source_audio.get(
+                "available_duration_seconds", source_audio["duration_seconds"])),
             "points_per_second": PLAN_STUDIO_WAVEFORM_POINTS_PER_SECOND,
         }
     motion_count = len(public_scenes)
@@ -14893,6 +15568,9 @@ class MiniMaxH3ChainSegmentSave:
                         visual_source_segment.get(
                             "checkpoint_sha256") or ""),
                 })
+                if "visual_context_start_frame" in shot:
+                    segment["visual_context_start_frame"] = int(
+                        shot["visual_context_start_frame"])
             if (visual_lead_source_index is not None
                     and isinstance(visual_lead_segment, dict)):
                 segment.update({
@@ -14909,6 +15587,9 @@ class MiniMaxH3ChainSegmentSave:
                         _shot_visual_context_lead_frames(
                             shot, effective_context_length)),
                 })
+                if "visual_context_lead_start_frame" in shot:
+                    segment["visual_context_lead_start_frame"] = int(
+                        shot["visual_context_lead_start_frame"])
             if "source_audio_target" in shot:
                 # Keep an explicit scene-local "off" as well as "locked".
                 # Without it, activating this revision under a globally
@@ -16779,6 +17460,73 @@ def _generated_audio(manifest: dict[str, Any]) -> dict[str, Any]:
     return result
 
 
+def _audio_with_editorial_timeline(
+    audio: dict[str, Any],
+    timeline_records: list[dict[str, Any]],
+    generated_frames: int,
+    editorial_frames: int,
+    label: str,
+) -> dict[str, Any]:
+    """Place scene-owned audio in resolved editorial order and fill gaps."""
+    waveform, sample_rate = _audio_waveform_3d(audio, label)
+    expected_input = sample_boundary_from_frames(
+        int(generated_frames), sample_rate, FPS)
+    if int(waveform.shape[-1]) < expected_input:
+        raise ValueError(
+            "%s contains %d samples; %d are required before editorial spacing."
+            % (label, int(waveform.shape[-1]), expected_input))
+    total_samples = sample_boundary_from_frames(
+        int(editorial_frames), sample_rate, FPS)
+    output = torch.zeros(
+        (*tuple(waveform.shape[:-1]), total_samples),
+        dtype=waveform.dtype, device=waveform.device)
+    placed_frames = 0
+    for record in timeline_records:
+        if record["kind"] != "scene":
+            continue
+        frames = int(record["frame_count"])
+        source_frame = int(record.get("source_start_frame", placed_frames))
+        source_start = sample_boundary_from_frames(
+            source_frame, sample_rate, FPS)
+        source_end = sample_boundary_from_frames(
+            source_frame + frames, sample_rate, FPS)
+        target_start = sample_boundary_from_frames(
+            int(record["start_frame"]), sample_rate, FPS)
+        target_end = sample_boundary_from_frames(
+            int(record["start_frame"]) + frames, sample_rate, FPS)
+        source = waveform[..., source_start:source_end]
+        budget = target_end - target_start
+        if int(source.shape[-1]) > budget:
+            source = source[..., :budget]
+        elif int(source.shape[-1]) < budget:
+            source = torch.nn.functional.pad(
+                source, (0, budget - int(source.shape[-1])))
+        output[..., target_start:target_end] = source
+        placed_frames += frames
+    if placed_frames != int(generated_frames):
+        raise ValueError(
+            "Editorial audio placed %d generated frames; expected %d."
+            % (placed_frames, int(generated_frames)))
+    result = {"waveform": output, "sample_rate": sample_rate}
+    first_scene = next((
+        item for item in timeline_records if item.get("kind") == "scene"
+    ), None)
+    keeps_original_incoming_boundary = bool(
+        timeline_records and timeline_records[0].get("kind") == "scene"
+        and first_scene is timeline_records[0]
+        and int(first_scene.get("source_start_frame", -1)) == 0
+        and int(first_scene.get("start_frame", -1)) == 0
+    )
+    if keeps_original_incoming_boundary:
+        for key in (
+                AUDIO_WITH_OVERLAP_WAVEFORM_KEY,
+                AUDIO_WITH_OVERLAP_FRAMES_KEY,
+                AUDIO_TRIM_FRAMES_KEY):
+            if key in audio:
+                result[key] = audio[key]
+    return result
+
+
 def _validate_prelude(manifest: dict[str, Any]) -> dict[str, Any] | None:
     value = manifest.get("prelude")
     if value is None:
@@ -17342,6 +18090,104 @@ def _blend_video_records(
         int(item["blend_frames"]) for item in records) else [])
 
 
+def _apply_editorial_timeline_records(
+    records: list[dict[str, Any]],
+    timeline_records: list[dict[str, Any]],
+    segments: list[dict[str, Any]],
+    compatibility: dict[str, Any],
+) -> list[dict[str, Any]]:
+    timeline_scene_order = [
+        int(item["scene"])
+        for item in timeline_records if item.get("kind") == "scene"
+    ]
+    generated_scene_order = [
+        int(item.get("index", offset))
+        for offset, item in enumerate(segments, start=1)
+    ]
+    reordered = timeline_scene_order != generated_scene_order
+    has_gaps = any(
+        item.get("kind") == "gap" and int(item.get("frame_count", 0)) > 0
+        for item in timeline_records
+    )
+    if not reordered and not has_gaps:
+        return records
+    width = 0
+    height = 0
+    if has_gaps:
+        width = int(compatibility.get("width", 0))
+        height = int(compatibility.get("height", 0))
+        if (width < 1 or height < 1) and av is not None:
+            first_path = next((
+                str(item.get("path") or "") for item in records
+                if item.get("kind") != "gap" and item.get("path")
+            ), "")
+            if first_path:
+                with av.open(first_path, mode="r") as container:
+                    streams = list(container.streams.video)
+                    if len(streams) == 1:
+                        width = int(streams[0].codec_context.width or 0)
+                        height = int(streams[0].codec_context.height or 0)
+        if width < 1 or height < 1:
+            raise ValueError(
+                "Editorial black-gap assembly could not resolve video "
+                "dimensions.")
+    segment_by_scene = {
+        int(item.get("index", offset)): item
+        for offset, item in enumerate(segments, start=1)
+    }
+    record_by_scene = {
+        int(item.get("scene_index", 0)): item
+        for item in records if item.get("kind") == "segment"
+    }
+    result: list[dict[str, Any]] = [
+        item for item in records if item.get("kind") == "prelude"
+    ]
+    gap_before_scene = False
+    for item in timeline_records:
+        if item.get("kind") == "gap":
+            gap_frames = int(item.get("frame_count", 0))
+            if gap_frames < 1:
+                continue
+            result.append({
+                "kind": "gap",
+                "before_scene": int(item["before_scene"]),
+                "input_frames": gap_frames,
+                "delivered_frames": gap_frames,
+                "blend_frames": 0,
+                "skip_frames": 0,
+                "width": width,
+                "height": height,
+            })
+            gap_before_scene = True
+            continue
+        if item.get("kind") != "scene":
+            continue
+        scene = int(item["scene"])
+        record = record_by_scene.get(scene)
+        source = segment_by_scene.get(scene)
+        if record is None or source is None:
+            raise ValueError(
+                "Editorial timeline targets missing scene %d." % scene)
+        record = dict(record)
+        if reordered or gap_before_scene:
+            # Saved incoming overlap belongs to the scene's generation
+            # predecessor. It is invalid after an editorial reorder, and a
+            # black gap also establishes a hard boundary. Use the complete
+            # delivered clip without resampling or touching its checkpoint.
+            record.update({
+                "path": _absolute_output_path(source["segment"]),
+                "input_frames": int(source["delivered_frames"]),
+                "delivered_frames": int(source["delivered_frames"]),
+                "blend_frames": 0,
+                "skip_frames": 0,
+            })
+            record.pop("tone_match", None)
+            record.pop("tone_match_prefix", None)
+        result.append(record)
+        gap_before_scene = False
+    return result
+
+
 def _boundary_luma(array: Any, stride: int = 1) -> Any:
     """Return gamma-domain Rec.709 luma for inexpensive boundary analysis."""
     if np is None:
@@ -17850,7 +18696,14 @@ def _ffmpeg_blend_video(
     """Cumulatively xfade overlap-bearing segments without changing duration."""
     command = [ffmpeg, "-y"]
     for record in records:
-        command.extend(["-i", record["path"]])
+        if record.get("kind") == "gap":
+            command.extend([
+                "-f", "lavfi", "-i",
+                "color=c=black:s=%dx%d:r=%d" % (
+                    int(record["width"]), int(record["height"]), FPS),
+            ])
+        else:
+            command.extend(["-i", record["path"]])
     command.extend(["-f", "ffmetadata", "-i", metadata_path])
 
     filters = []
@@ -17936,7 +18789,12 @@ def _pyav_blend_video(
 
     output = None
     try:
-        with av.open(records[0]["path"], mode="r") as first:
+        first_record = next(
+            (record for record in records if record.get("kind") != "gap"),
+            None)
+        if first_record is None:
+            raise ValueError("H3 editorial assembly requires at least one scene.")
+        with av.open(first_record["path"], mode="r") as first:
             streams = list(first.streams.video)
             if len(streams) != 1:
                 raise ValueError("The first H3 blend input must have one video stream.")
@@ -17967,8 +18825,12 @@ def _pyav_blend_video(
             written += 1
 
         for record_index, record in enumerate(records):
-            iterator = iter(_decode_rgb_frames(record["path"]))
             expected_input = int(record["input_frames"])
+            if record.get("kind") == "gap":
+                black = np.zeros((height, width, 3), dtype=np.uint8)
+                iterator = (black for _offset in range(expected_input))
+            else:
+                iterator = iter(_decode_rgb_frames(record["path"]))
             blend = int(record["blend_frames"])
             tone_prefix_luts = [
                 _boundary_tone_lut(match)
@@ -19163,6 +20025,22 @@ class MiniMaxH3ChainAssemble:
                 upscale_manifest, upscale_segments)
         segments = _validate_manifest(manifest)
         prelude = _validate_prelude(manifest)
+        run_name = _safe_name(manifest.get("run_name"), "h3_chain")
+        editorial, editorial_records, editorial_extension_frames = (
+            _editorial_timeline_records(run_name, segments))
+        generated_extension_frames = int(manifest["total_delivered_frames"])
+        editorial_gap_frames = (
+            editorial_extension_frames - generated_extension_frames)
+        generated_scene_order = [
+            int(item.get("index", offset))
+            for offset, item in enumerate(segments, start=1)
+        ]
+        editorial_scene_order = [
+            int(item["scene"])
+            for item in editorial_records if item.get("kind") == "scene"
+        ]
+        editorial_reordered = editorial_scene_order != generated_scene_order
+        editorial_changed = bool(editorial_gap_frames or editorial_reordered)
         tone_match_mode = str(
             boundary_tone_match if boundary_tone_match is not None
             else "off").strip().lower()
@@ -19192,6 +20070,11 @@ class MiniMaxH3ChainAssemble:
                 generated_warning = (
                     "generated audio sidecar unavailable: %s" % exc)
                 _LOG.warning("H3 Chain %s", generated_warning)
+        if generated_track is not None and editorial_changed:
+            generated_track = _audio_with_editorial_timeline(
+                generated_track, editorial_records,
+                generated_extension_frames, editorial_extension_frames,
+                "H3 generated editorial audio")
         audio = None
         if selected == "source":
             if source_timeline is None:
@@ -19213,7 +20096,7 @@ class MiniMaxH3ChainAssemble:
                     "H3 Chain Assemble")
                 source_audio = _source_timeline_scene_audio(
                     source_timeline, 0,
-                    int(manifest["total_delivered_frames"]))
+                    editorial_extension_frames)
             else:
                 _validate_source_audio_hash(
                     manifest["compatibility"], source_audio,
@@ -19221,7 +20104,7 @@ class MiniMaxH3ChainAssemble:
             waveform, sample_rate = _validate_audio(
                 source_audio, "H3 Chain Assemble source audio")
             required_samples = int(round(
-                int(manifest["total_delivered_frames"]) /
+                editorial_extension_frames /
                 float(FPS) * sample_rate))
             if int(waveform.shape[-1]) < required_samples:
                 if manifest["compatibility"].get(
@@ -19234,7 +20117,7 @@ class MiniMaxH3ChainAssemble:
                         "H3 Chain Assemble source audio has %d samples; at least "
                         "%d are required for %d video frames." %
                         (int(waveform.shape[-1]), required_samples,
-                         int(manifest["total_delivered_frames"])))
+                         editorial_extension_frames))
             else:
                 audio = source_audio
         elif selected == "generated":
@@ -19242,7 +20125,7 @@ class MiniMaxH3ChainAssemble:
         elif selected != "none":
             raise ValueError("Unknown H3 chain assembly audio source %r."
                              % selected)
-        extension_frames = int(manifest["total_delivered_frames"])
+        extension_frames = editorial_extension_frames
         prelude_frames = int(prelude["frame_count"]) if prelude is not None else 0
         total_output_frames = prelude_frames + extension_frames
         if audio is not None and prelude is not None:
@@ -19251,8 +20134,16 @@ class MiniMaxH3ChainAssemble:
         if generated_sidecar_audio is not None and prelude is not None:
             generated_sidecar_audio = _audio_with_prelude(
                 generated_sidecar_audio, extension_frames, prelude)
+        subtitle_cues = _editorial_subtitle_cues(
+            run_name, editorial, editorial_extension_frames)
+        if prelude_frames and subtitle_cues:
+            subtitle_shift = prelude_frames / float(FPS)
+            subtitle_cues = [{
+                **cue,
+                "start": float(cue["start"]) + subtitle_shift,
+                "end": float(cue["end"]) + subtitle_shift,
+            } for cue in subtitle_cues]
 
-        run_name = _safe_name(manifest.get("run_name"), "h3_chain")
         run_dir = os.path.join(_output_root(), "h3_chains", run_name)
         if upscale_manifest is not None:
             final_dir = upscale_support._profile_paths(
@@ -19268,6 +20159,8 @@ class MiniMaxH3ChainAssemble:
         generated_sidecar_path = (
             os.path.splitext(final_path)[0] + ".generated.wav"
             if generated_sidecar_audio is not None else None)
+        subtitle_path = (os.path.splitext(final_path)[0] + ".srt"
+                         if subtitle_cues else None)
         concat_path = os.path.join(final_dir, ".concat.txt")
         video_tmp = os.path.join(final_dir, ".video.tmp.mp4")
         final_tmp = os.path.join(final_dir, ".final.tmp.mp4")
@@ -19303,7 +20196,12 @@ class MiniMaxH3ChainAssemble:
                 blend_schedule=blend_schedule,
                 video_vae=blend_video_vae,
                 temporary_paths=scheduled_blend_temps,
-                force_records=color_stabilization_mode != "off")
+                force_records=(color_stabilization_mode != "off"
+                               or editorial_changed))
+            if editorial_changed:
+                blend_records = _apply_editorial_timeline_records(
+                    blend_records, editorial_records, segments,
+                    manifest.get("compatibility") or {})
             if tone_match_mode == "auto" and blend_records:
                 blend_records = _auto_boundary_tone_match_records(
                     blend_records)
@@ -19397,6 +20295,8 @@ class MiniMaxH3ChainAssemble:
             if generated_sidecar_path is not None:
                 _atomic_wav(generated_sidecar_audio, generated_sidecar_path)
             os.replace(final_tmp, final_path)
+            if subtitle_path is not None:
+                _write_editorial_srt(subtitle_path, subtitle_cues)
         finally:
             for temporary in (concat_path, video_tmp, final_tmp, wav_tmp,
                               metadata_tmp, *scheduled_blend_temps):
@@ -19409,12 +20309,25 @@ class MiniMaxH3ChainAssemble:
 
         output_copy = (_copy_final_to_output(final_path, output_subfolder)
                        if copy_to_output else None)
+        subtitle_copy = None
+        if output_copy is not None and subtitle_path is not None:
+            subtitle_copy = os.path.splitext(output_copy)[0] + ".srt"
+            shutil.copy2(subtitle_path, subtitle_copy)
         sidecar_status = (
             "; generated audio -> %s" % generated_sidecar_path
             if generated_sidecar_path is not None else
             ("; %s" % generated_warning if generated_warning else ""))
         copy_status = ("; output copy -> %s" % output_copy
                        if output_copy is not None else "")
+        subtitle_status = ("; subtitles -> %s" % subtitle_path
+                           if subtitle_path is not None else "")
+        if subtitle_copy is not None:
+            subtitle_status += " + %s" % subtitle_copy
+        gap_status = ("; %d black editorial frames" % editorial_gap_frames
+                      if editorial_gap_frames else "")
+        order_status = ("; editorial scene order [%s]" % ",".join(
+            str(value) for value in editorial_scene_order)
+            if editorial_reordered else "")
         resolved_blends = [
             int(record["blend_frames"])
             for record in blend_records[1:]
@@ -19438,11 +20351,12 @@ class MiniMaxH3ChainAssemble:
             if color_stabilization_mode == "scene_1_anchor" else "")
         clip_kind = ("HQ clips" if upscale_manifest is not None
                      else "generated clips")
-        status = "assembled %d %s%s with %s%s%s%s -> %s%s%s" % (
+        status = "assembled %d %s%s with %s%s%s%s%s%s -> %s%s%s%s" % (
             len(segments), clip_kind,
             " + existing-video prelude" if prelude else "",
-            backend, blend_status, tone_status, color_status, final_path,
-            sidecar_status, copy_status)
+            backend, blend_status, tone_status, color_status, gap_status,
+            order_status,
+            final_path, sidecar_status, copy_status, subtitle_status)
         _LOG.info("H3 Chain %s", status)
         published_video = output_copy or final_path
         _publish_final_review_preview(manifest, published_video, status)
@@ -20158,11 +21072,17 @@ def _checkpoint_plan_revision(segment: dict[str, Any]) -> dict[str, Any]:
     if "visual_context_source_id" in segment:
         revision["visual_context_source"] = str(
             segment["visual_context_source_id"])
+    if "visual_context_start_frame" in segment:
+        revision["visual_context_start_frame"] = int(
+            segment["visual_context_start_frame"])
     if "visual_context_lead_source_id" in segment:
         revision["visual_context_lead_source"] = str(
             segment["visual_context_lead_source_id"])
         revision["visual_context_lead_frames"] = int(
             segment["visual_context_lead_frames"])
+    if "visual_context_lead_start_frame" in segment:
+        revision["visual_context_lead_start_frame"] = int(
+            segment["visual_context_lead_start_frame"])
     if "lora_route" in segment:
         revision["lora_route"] = str(segment["lora_route"])
     for key in (
@@ -21215,6 +22135,29 @@ async def _plan_studio_source_waveform(request):
     if record is None:
         return web.json_response(
             {"error": error}, status=400 if "invalid" in str(error) else 410)
+    requested = request.query.get("frame_count")
+    if requested not in (None, ""):
+        try:
+            requested_frames = int(requested)
+        except (TypeError, ValueError):
+            return web.json_response(
+                {"error": "Source waveform frame_count must be an integer."},
+                status=400)
+        if requested_frames < 1 or requested_frames > 864000:
+            return web.json_response({
+                "error": (
+                    "Source waveform frame_count must be between 1 and "
+                    "864000.")}, status=400)
+        # The registered source file is served whole. Let the editor request
+        # waveform coverage for its longer editorial arrangement without
+        # requiring Plan Studio to be queued again after every clip move.
+        record = dict(record)
+        available_frames = int(record.get(
+            "available_frame_count", requested_frames))
+        record["frame_count"] = max(
+            int(record.get("frame_count", 0)),
+            min(requested_frames, available_frames),
+        )
     try:
         path = await _ensure_plan_studio_source_waveform(record)
     except asyncio.CancelledError:

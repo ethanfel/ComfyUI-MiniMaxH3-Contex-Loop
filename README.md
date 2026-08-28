@@ -73,7 +73,7 @@ assembly when FFmpeg is unavailable.
 Some examples need bundled media copied into `ComfyUI/input/`. See the
 [asset guide](example_workflows/assets/README.md).
 
-### Project Asset Carousel (nightly)
+### Project Asset Carousel
 
 **MiniMax H3 Project Asset Carousel** replaces a wall of loader and tag nodes
 with one path-backed project library. Put it before Plan through its
@@ -117,6 +117,10 @@ in the Carousel as Discord-style cards with a four-item miniature; click to
 expand or collapse their assets inline, or drag an asset onto a folder card to
 move it there. Expansion state, folder names, membership, and order do not
 affect prompts or fingerprints.
+
+Selecting an audio asset opens an editable **Lyrics** workspace beside its
+player. Lyrics are saved with the project catalog and recovery backup, but are
+notes only: they do not enter prompts, reference fingerprints, or generation.
 
 ## Choose a workflow
 
@@ -173,6 +177,16 @@ metadata remain on disk.
 
 Repository-native references remain available under [`docs/`](docs/) and in
 the [complete Plan format guide](H3_CHAIN_FORMAT_GUIDE.md).
+
+Plan Studio's timeline is an editorial track, not only a contiguous scene
+list. Drag a scene by its timeline handle or enter an exact start time in the
+Scene panel. Scene starts snap to the 24 fps frame clock; scenes cannot overlap,
+and every uncovered interval is previewed and assembled as black video.
+Generation order, checkpoints, context dependencies, and branch ancestry stay
+unchanged. Generated audio is silent during an editorial gap, while a selected
+Source Timeline soundtrack continues on the absolute project clock. Audio-asset
+lyrics can be stamped as LRC (or pasted as SRT), previewed on the subtitle row,
+and exported as an optional `.srt` beside the assembled movie.
 
 Checkpoint Manager identifies saved takes by scene and inferred branch, previews
 saved media and exact video/audio dependencies, and safely deletes inactive

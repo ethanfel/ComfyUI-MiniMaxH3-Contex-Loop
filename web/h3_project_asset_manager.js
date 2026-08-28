@@ -5,7 +5,7 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.5.49";
+} from "./h3_project_asset_editor_core.mjs?v=0.5.50";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -100,6 +100,15 @@ function formatBytes(value) {
     return `${number.toFixed(index ? 1 : 0)} ${units[index]}`;
 }
 
+function formatLyricsTimestamp(seconds) {
+    const centiseconds = Math.max(0, Math.round((Number(seconds) || 0) * 100));
+    const minutes = Math.floor(centiseconds / 6000);
+    const remainder = centiseconds - minutes * 6000;
+    return `[${String(minutes).padStart(2, "0")}:${String(
+        Math.floor(remainder / 100),
+    ).padStart(2, "0")}.${String(remainder % 100).padStart(2, "0")}]`;
+}
+
 function assetDetail(asset) {
     const meta = asset.metadata ?? {};
     const pieces = [asset.kind, formatBytes(asset.size)];
@@ -152,6 +161,21 @@ function injectStyles() {
         .h3pa-preview>img,.h3pa-preview>video{position:absolute;inset:0;display:block;width:100%;height:100%;
           min-width:0;min-height:0;object-fit:contain}
         .h3pa-preview audio{width:min(94%,650px)}.h3pa-empty{color:#738097;text-align:center;padding:24px}
+        .h3pa-preview.h3pa-audio-preview{display:grid;grid-template-columns:minmax(240px,.72fr) minmax(300px,1.28fr);
+          place-items:stretch;gap:18px;padding:18px}
+        .h3pa-audio-player{display:flex;flex-direction:column;justify-content:center;align-items:center;gap:10px;
+          min-width:0;padding:18px;border:1px solid #3e4859;border-radius:9px;background:#10141c}
+        .h3pa-audio-player strong{max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+        .h3pa-audio-player audio{width:100%}
+        .h3pa-lyrics{display:flex;flex-direction:column;min-width:0;min-height:0;padding:12px;border:1px solid #3e4859;
+          border-radius:9px;background:#10141c;text-align:left}
+        .h3pa-lyrics-head{display:flex;justify-content:space-between;gap:12px;align-items:baseline;margin-bottom:8px}
+        .h3pa-lyrics-head strong{font-size:14px}.h3pa-lyrics-head small{color:#8794a9;text-align:right}
+        .h3pa-lyrics-actions{display:flex;align-items:center;justify-content:space-between;gap:8px;margin:0 0 8px}
+        .h3pa-lyrics-time{color:#9fb0ca;font-variant-numeric:tabular-nums}
+        .h3pa-lyrics textarea{flex:1;min-width:0;min-height:150px;width:100%;padding:10px 11px;resize:none;
+          border:1px solid #4b576b;border-radius:7px;background:#0b0e14;color:inherit;font:13px/1.55 system-ui;
+          white-space:pre-wrap}.h3pa-lyrics textarea:focus{outline:1px solid #70a9ff;border-color:#70a9ff}
         .h3pa-editor{display:flex;flex-direction:column;gap:8px;padding:10px;overflow:auto;border:1px solid
           var(--border-color,#566174);border-radius:9px;background:var(--comfy-input-bg,#151820)}
         .h3pa-editor label{display:flex;flex-direction:column;gap:3px;color:#aeb7c8}.h3pa-editor textarea{min-height:62px;resize:vertical}
@@ -208,6 +232,7 @@ function injectStyles() {
         .h3pa-crop-modal{width:min(1180px,calc(100vw - 28px));height:min(780px,calc(100vh - 32px))}
         .h3pa-crop-layout{display:grid;grid-template-columns:minmax(0,1fr) 290px;gap:12px;min-height:0;flex:1}
         .h3pa-crop-canvas-wrap{min-width:0;min-height:0;display:grid;place-items:center;overflow:hidden;border:1px solid #48556a;border-radius:8px;background:#080a0f}
+        @media (max-width:900px){.h3pa-preview.h3pa-audio-preview{grid-template-columns:1fr;grid-template-rows:auto minmax(180px,1fr)}}
         .h3pa-crop-canvas{display:block;width:100%;height:100%;touch-action:none;cursor:crosshair;outline:none;user-select:none}
         .h3pa-crop-controls{display:flex;flex-direction:column;gap:9px;min-height:0;overflow:auto;padding:10px;border:1px solid #48556a;border-radius:8px;background:#11151d}
         .h3pa-crop-controls label{display:flex;flex-direction:column;gap:3px;color:#aeb7c8}.h3pa-crop-grid{display:grid;grid-template-columns:1fr 1fr;gap:7px}
@@ -355,6 +380,7 @@ function mount(node) {
     function stopMedia() {
         if (state.media?.pause) state.media.pause();
         state.media = null;
+        preview.classList.remove("h3pa-audio-preview");
         preview.replaceChildren();
     }
     function persistCatalog(catalog) {
@@ -530,13 +556,79 @@ function mount(node) {
             video.src = mediaUrl(project(), asset, "preview");
             preview.append(video); state.media = video;
         } else {
+            preview.classList.add("h3pa-audio-preview");
+            const player = el("section", "h3pa-audio-player");
+            player.append(el("strong", "", asset.original_name || promptTag(asset)));
             const audio = el("audio");
             audio.controls = true; audio.preload = "metadata";
             audio.src = mediaUrl(project(), asset, "original");
-            preview.append(audio); state.media = audio;
+            player.append(audio);
+            const lyricsPanel = el("section", "h3pa-lyrics");
+            const lyricsHead = el("div", "h3pa-lyrics-head");
+            lyricsHead.append(
+                el("strong", "", "Lyrics"),
+                el("small", "", "Saved with the project · generation unchanged"),
+            );
+            const lyrics = el("textarea");
+            lyrics.value = String(asset.lyrics ?? "");
+            lyrics.placeholder = "Paste lyrics, then stamp each line while the song plays…";
+            lyrics.title = "Lyrics are project notes stored with this audio asset. Add [MM:SS.xx] timestamps or paste SRT to show them in sync in Plan Studio. They do not enter prompts, generation, or the reference fingerprint. Changes save when you leave the field; Ctrl/Cmd+Enter saves immediately.";
+            lyrics.setAttribute("aria-label", `Lyrics for ${asset.original_name || promptTag(asset)}`);
+            let savedLyrics = lyrics.value;
+            lyrics.addEventListener("change", async () => {
+                const nextLyrics = lyrics.value.replaceAll("\r\n", "\n").replaceAll("\r", "\n");
+                if (nextLyrics === savedLyrics) return;
+                const result = await updateAsset(
+                    asset, {lyrics: nextLyrics}, {
+                        renderAfter: false,
+                        success: `Saved lyrics for ${promptTag(asset)}.`,
+                    },
+                );
+                if (!result) return;
+                savedLyrics = String(result.asset?.lyrics ?? "");
+                lyrics.value = savedLyrics;
+            });
+            lyrics.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter" || (!event.ctrlKey && !event.metaKey)) return;
+                event.preventDefault(); lyrics.blur();
+            });
+            const lyricsActions = el("div", "h3pa-lyrics-actions");
+            const currentTime = el(
+                "span", "h3pa-lyrics-time", formatLyricsTimestamp(0),
+            );
+            audio.addEventListener("timeupdate", () => {
+                currentTime.textContent = formatLyricsTimestamp(audio.currentTime);
+            });
+            const stamp = button(
+                "Stamp selected line",
+                () => {
+                    const caret = lyrics.selectionStart ?? 0;
+                    const start = lyrics.value.lastIndexOf("\n", Math.max(0, caret - 1)) + 1;
+                    const nextBreak = lyrics.value.indexOf("\n", caret);
+                    const end = nextBreak < 0 ? lyrics.value.length : nextBreak;
+                    const line = lyrics.value.slice(start, end)
+                        .replace(/^(?:\[\d{1,3}:\d{2}(?:[.:]\d{1,3})?\])+\s*/, "");
+                    const stamped = `${formatLyricsTimestamp(audio.currentTime)}${line}`;
+                    lyrics.setRangeText(stamped, start, end, "end");
+                    const nextStart = Math.min(
+                        lyrics.value.length,
+                        start + stamped.length + (nextBreak < 0 ? 0 : 1),
+                    );
+                    const followingBreak = lyrics.value.indexOf("\n", nextStart);
+                    lyrics.setSelectionRange(
+                        nextStart,
+                        followingBreak < 0 ? lyrics.value.length : followingBreak,
+                    );
+                    lyrics.focus();
+                },
+                "Insert the player's current [MM:SS.xx] time at the beginning of the selected lyric line, then select the next line.",
+            );
+            lyricsActions.append(stamp, currentTime);
+            lyricsPanel.append(lyricsHead, lyricsActions, lyrics);
+            preview.append(player, lyricsPanel); state.media = audio;
         }
     }
-    async function updateAsset(asset, changes) {
+    async function updateAsset(asset, changes, options = {}) {
         try {
             setStatus(`Updating ${promptTag(asset)}…`);
             const result = await jsonRequest(
@@ -544,9 +636,11 @@ function mount(node) {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({project: project(), asset_id: asset.id, changes}),
                 });
-            persistCatalog(result.catalog); render();
-            setStatus(`Updated ${promptTag(result.asset)}.`);
-        } catch (error) { setStatus(error.message, true); }
+            persistCatalog(result.catalog);
+            if (options.renderAfter !== false) render();
+            setStatus(options.success || `Updated ${promptTag(result.asset)}.`);
+            return result;
+        } catch (error) { setStatus(error.message, true); return null; }
     }
     async function reorderAssets(assetIds) {
         try {

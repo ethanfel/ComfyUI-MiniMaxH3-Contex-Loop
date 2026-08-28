@@ -32,8 +32,8 @@ import {
     shotLengthMode,
     sharedPrompt,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.5.49";
-import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.5.49";
+} from "./h3_chain_plan_core.mjs?v=0.5.50";
+import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.5.50";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -42,12 +42,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.5.49";
+} from "./h3_policy_core.mjs?v=0.5.50";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.5.49";
+} from "./h3_socket_presentation_core.mjs?v=0.5.50";
 
 // This scene editor is an original implementation. Its quick @ reference and
 // # dialogue interactions are inspired by nkxx188/ComfyUI-MiniMaxH3-Easy,
@@ -1018,6 +1018,7 @@ function mountEditor(node) {
             if (!allowed.length) {
                 delete shot.visual_context_lead_source;
                 delete shot.visual_context_lead_frames;
+                delete shot.visual_context_lead_start_frame;
                 return;
             }
             try {
@@ -1075,6 +1076,8 @@ function mountEditor(node) {
                 shot.video_blend_frames = nextContext;
             }
             normalizeVisualLeadSpan();
+            delete shot.visual_context_start_frame;
+            delete shot.visual_context_lead_start_frame;
             syncPlan();
             render();
         });
@@ -1097,6 +1100,8 @@ function mountEditor(node) {
             else shot.context_length = Number(context.value);
             sceneContextLength(shot, planContextLength);
             normalizeVisualLeadSpan();
+            delete shot.visual_context_start_frame;
+            delete shot.visual_context_lead_start_frame;
             refreshBlendControl();
             refreshIncomingTransition();
             syncPlan();
@@ -1169,6 +1174,7 @@ function mountEditor(node) {
                 shot.visual_context_source = visualSource.value;
                 shot.video_blend_frames = 0;
             }
+            delete shot.visual_context_start_frame;
             const recentSource = sceneVisualContextSource(
                 state.plan, index + 1,
             );
@@ -1178,6 +1184,7 @@ function mountEditor(node) {
             if (leadSource !== null && leadSource === recentSource) {
                 delete shot.visual_context_lead_source;
                 delete shot.visual_context_lead_frames;
+                delete shot.visual_context_lead_start_frame;
             }
             refreshBlendControl();
             syncPlan();
@@ -1272,10 +1279,13 @@ function mountEditor(node) {
             if (!visualLeadSource.value) {
                 delete shot.visual_context_lead_source;
                 delete shot.visual_context_lead_frames;
+                delete shot.visual_context_lead_start_frame;
             } else {
                 shot.visual_context_lead_source = visualLeadSource.value;
                 applyVisualComposition();
             }
+            delete shot.visual_context_start_frame;
+            delete shot.visual_context_lead_start_frame;
             refreshBlendControl();
             syncPlan();
             render();
@@ -1284,6 +1294,8 @@ function mountEditor(node) {
             if (visualLeadSource.value) {
                 applyVisualComposition();
             }
+            delete shot.visual_context_start_frame;
+            delete shot.visual_context_lead_start_frame;
             refreshBlendControl();
             syncPlan();
             render();

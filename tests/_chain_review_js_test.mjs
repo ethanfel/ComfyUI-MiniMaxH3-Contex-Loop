@@ -196,11 +196,14 @@ const restoredComposition = applyCheckpointRevisionSet({
     scene:3, scene_id:"three", scene_prompt:"three", seed:"303",
     raw_frames:39, steps:9, prompt_prefix:"keep", context_length:39,
     visual_context_source:"one", visual_context_lead_source:"two",
-    visual_context_lead_frames:5, video_blend_frames:0,
+    visual_context_start_frame:2, visual_context_lead_frames:5,
+    visual_context_lead_start_frame:3, video_blend_frames:0,
 }]);
 assert.equal(restoredComposition.shots[2].visual_context_source, "one");
+assert.equal(restoredComposition.shots[2].visual_context_start_frame, 2);
 assert.equal(restoredComposition.shots[2].visual_context_lead_source, "two");
 assert.equal(restoredComposition.shots[2].visual_context_lead_frames, 5);
+assert.equal(restoredComposition.shots[2].visual_context_lead_start_frame, 3);
 
 assert.throws(() => applyCheckpointRevisionSet({
     prompt_prefix: ["keep"],

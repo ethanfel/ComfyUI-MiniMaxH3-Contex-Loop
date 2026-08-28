@@ -176,8 +176,24 @@ async def check():
                 "id": "chapter_1", "title": "Chapter 1",
                 "start_scene_id": "scene_1", "text": "lyrics and notes",
             }],
+            "placements": [{
+                "scene": 2, "scene_id": "scene_2", "start_frame": 480,
+            }],
+            "locked_scene_ids": ["scene_2"],
+            "subtitles": {
+                "mode": "preview_srt", "asset_id": "song_asset",
+                "offset_seconds": 0.25,
+            },
         })
         assert editorial["chapters"][0]["start_scene"] == 1
+        assert editorial["placements"] == [{
+            "scene": 2, "scene_id": "scene_2", "start_frame": 480,
+        }]
+        assert editorial["locked_scene_ids"] == ["scene_2"]
+        assert editorial["subtitles"] == {
+            "mode": "preview_srt", "asset_id": "song_asset",
+            "offset_seconds": 0.25,
+        }
         old_one = "1" * 32
         new_one = "2" * 32
         old_two = "3" * 32
@@ -194,6 +210,8 @@ async def check():
         # route's asyncio.to_thread wakeup depends on ComfyUI's real event loop.
         payload = chain._saved_checkpoint_listing("revision_test")
         assert payload["editorial"]["chapters"][0]["text"] == "lyrics and notes"
+        assert payload["editorial"]["placements"][0]["start_frame"] == 480
+        assert payload["editorial"]["locked_scene_ids"] == ["scene_2"]
         assert [item["revision"] for item in payload["checkpoints"]] == [
             new_one, new_two]
         assert len(payload["revisions"]) == 4

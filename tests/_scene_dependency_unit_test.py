@@ -413,6 +413,33 @@ assert nonlinear_dependency["scopes"]["incoming_boundary"][
 assert nonlinear_dependency["scopes"]["incoming_boundary"][
     "visual_context_source_id"] == "three"
 
+windowed_plan_source = json.loads(json.dumps({"shots": [
+    {"id": name, "prompt": name, "length": 90,
+     **({"visual_context_source": "three",
+         "visual_context_start_frame": 12,
+         "video_blend_frames": 0} if name == "five" else {})}
+    for name in ("one", "two", "three", "four", "five")
+]}))
+windowed_plan = chain._normalize_plan(
+    json.dumps(windowed_plan_source),
+    "windowed-context-test", 64, 64, 5, "video", "head", "disabled",
+    "generated_audio", 5, 1.0, 8, 11, 18, "body:auto:v1", 0,
+    "latent_guide")
+assert windowed_plan["shots"][4]["visual_context_start_frame"] == 12
+windowed_boundary = chain._scene_dependency_record(
+    windowed_plan, 5, None)["scopes"]["incoming_boundary"]
+assert windowed_boundary["visual_context_start_frame"] == 12
+
+# Explicitly spelling the historical tail canonicalizes back to absence.
+tail_plan_source = json.loads(json.dumps(windowed_plan_source))
+tail_plan_source["shots"][4]["visual_context_start_frame"] = 80
+tail_plan = chain._normalize_plan(
+    json.dumps(tail_plan_source),
+    "tail-context-test", 64, 64, 5, "video", "head", "disabled",
+    "generated_audio", 5, 1.0, 8, 11, 18, "body:auto:v1", 0,
+    "latent_guide")
+assert "visual_context_start_frame" not in tail_plan["shots"][4]
+
 source_frames = torch.full((5, 2, 2, 3), 3.0)
 source_video = torch.full((1, 24, 2, 2, 2), 30.0)
 immediate_video = torch.full((1, 24, 2, 2, 2), 40.0)
@@ -445,6 +472,58 @@ try:
     assert [item["index"] for item in selected_state["segments"]] == [1, 2, 3]
     assert nonlinear_state["previous_latent"]["samples"][0] is immediate_video
     assert chain._visual_context_state(nonlinear_state) is selected_state
+finally:
+    chain._st_load = original_loader
+    chain._streams_from_latent = original_streams
+
+class WindowVAE:
+    def __init__(self):
+        self.decoded = None
+
+    def decode(self, video):
+        self.decoded = video.detach().clone()
+        values = torch.arange(5, dtype=torch.float32).reshape(5, 1, 1, 1)
+        return values.expand(5, 2, 2, 3).clone()
+
+    def encode(self, _frames):
+        raise AssertionError("native context selection must not re-encode RGB")
+
+window_vae = WindowVAE()
+chain._st_load = lambda _path: {
+    "context_frames": torch.arange(
+        85, 90, dtype=torch.float32,
+    ).reshape(5, 1, 1, 1).expand(5, 2, 2, 3).clone(),
+    "video": torch.arange(27, dtype=torch.float32).reshape(
+        1, 1, 27, 1, 1).expand(1, 24, 27, 2, 2).clone(),
+}
+chain._streams_from_latent = lambda value: value["samples"]
+try:
+    windowed_state = chain._visual_context_state({
+        "plan": windowed_plan, "index": 5,
+        "previous_frames": torch.full((5, 2, 2, 3), 4.0),
+        "previous_latent": {
+            "samples": [immediate_video, immediate_audio]},
+        "segments": [
+            {"index": scene,
+             "id": windowed_plan["shots"][scene - 1]["id"],
+             "checkpoint": "scene_%d.safetensors" % scene,
+             "revision": "r%d" % scene,
+             "checkpoint_sha256": "h%d" % scene,
+             "raw_frames": 90,
+             "delivered_frames": 90 if scene == 1 else 85}
+            for scene in range(1, 5)
+        ],
+    }, vae=window_vae)
+    assert windowed_state["_visual_context_resolved_start_frame"] == 12
+    assert windowed_state["previous_frames"].shape[0] == 0
+    selected_video = windowed_state["previous_latent"]["samples"][0]
+    assert selected_video.shape[2] == 2
+    assert torch.all(selected_video[:, :, 0] == 5.0)
+    assert torch.all(selected_video[:, :, 1] == 6.0)
+    recovered = chain._previous_context_frames(windowed_state, window_vae, 5)
+    assert recovered.shape[0] == 5
+    assert torch.equal(window_vae.decoded, selected_video)
+    assert windowed_state["previous_latent"]["samples"][1] is immediate_audio
 finally:
     chain._st_load = original_loader
     chain._streams_from_latent = original_streams
@@ -482,17 +561,23 @@ composed_revision = chain._checkpoint_plan_revision({
     "seed": "5", "steps": 8, "raw_frames": 90,
     "segment": "scene_5.mp4",
     "visual_context_source_id": "three",
+    "visual_context_start_frame": 8,
     "visual_context_lead_source_id": "four",
     "visual_context_lead_frames": 5,
+    "visual_context_lead_start_frame": 9,
 })
 assert composed_revision["visual_context_source"] == "three"
+assert composed_revision["visual_context_start_frame"] == 8
 assert composed_revision["visual_context_lead_source"] == "four"
 assert composed_revision["visual_context_lead_frames"] == 5
+assert composed_revision["visual_context_lead_start_frame"] == 9
 
 scene3_frames = torch.full((39, 2, 2, 3), 3.0)
 scene4_frames = torch.full((39, 2, 2, 3), 4.0)
-scene3_video = torch.full((1, 24, 12, 2, 2), 30.0)
-scene4_video = torch.full((1, 24, 12, 2, 2), 40.0)
+scene3_video = (30.0 + torch.arange(27, dtype=torch.float32)).reshape(
+    1, 1, 27, 1, 1).expand(1, 24, 27, 2, 2).clone()
+scene4_video = (40.0 + torch.arange(27, dtype=torch.float32)).reshape(
+    1, 1, 27, 1, 1).expand(1, 24, 27, 2, 2).clone()
 full_immediate_audio = torch.full((1, 32, 2, 80), 44.0)
 
 def composed_loader(path):
@@ -525,29 +610,72 @@ try:
     assert torch.all(frames[:5] == 4.0)
     assert torch.all(frames[5:] == 3.0)
     assert video.shape[2] == 12
-    assert torch.all(video[:, :, :2] == 40.0)
-    assert torch.all(video[:, :, 2:] == 30.0)
+    assert torch.all(video[:, :, 0] == 65.0)
+    assert torch.all(video[:, :, 1] == 66.0)
+    assert torch.all(video[:, :, 2] == 47.0)
+    assert torch.all(video[:, :, -1] == 56.0)
     assert audio_latent is full_immediate_audio
     assert composed_state["visual_context_source_segment"]["index"] == 3
     assert composed_state["visual_context_lead_segment"]["index"] == 4
 
-    # The inverse ordered split is equally authorable. Because its first run
-    # begins on the opposite H3 temporal phase, latent consumers receive one
-    # VAE-normalized prefix instead of a phase-shifted raw splice.
+    # Each side of an addition can independently select a native latent crop.
+    # An unavailable RGB mirror is decoded from the assembled crop, never
+    # re-encoded into a replacement latent.
+    windowed_composed_plan = json.loads(json.dumps(composed_plan))
+    windowed_composed_plan["shots"][4]["visual_context_start_frame"] = 0
+    windowed_composed_plan["shots"][4][
+        "visual_context_lead_start_frame"] = 12
+
+    class WindowedCompositionVAE:
+        def __init__(self):
+            self.decoded = None
+
+        def decode(self, video):
+            self.decoded = video.detach().clone()
+            return torch.full((39, 2, 2, 3), 8.0)
+
+        def encode(self, _frames):
+            raise AssertionError(
+                "native composed context must not re-encode RGB")
+
+    windowed_composition_vae = WindowedCompositionVAE()
+    windowed_composed_state = chain._visual_context_state({
+        "plan": windowed_composed_plan, "index": 5,
+        "previous_frames": scene4_frames,
+        "previous_latent": {
+            "samples": [scene4_video, full_immediate_audio]},
+        "segments": [
+            {"index": scene,
+             "id": windowed_composed_plan["shots"][scene - 1]["id"],
+             "checkpoint": "scene_%d.safetensors" % scene,
+             "revision": "r%d" % scene,
+             "checkpoint_sha256": "h%d" % scene,
+             "raw_frames": 90,
+             "delivered_frames": 90 if scene == 1 else 51}
+            for scene in range(1, 5)
+        ],
+    }, vae=windowed_composition_vae)
+    assert windowed_composed_state["previous_frames"].shape[0] == 0
+    windowed_video = windowed_composed_state[
+        "previous_latent"]["samples"][0]
+    assert windowed_video.shape[2] == 12
+    assert torch.all(windowed_video[:, :, 0] == 55.0)
+    assert torch.all(windowed_video[:, :, 1] == 56.0)
+    assert torch.all(windowed_video[:, :, 2] == 42.0)
+    assert torch.all(windowed_video[:, :, -1] == 51.0)
+    windowed_frames = chain._previous_context_frames(
+        windowed_composed_state, windowed_composition_vae, 39)
+    assert torch.all(windowed_frames == 8.0)
+    assert torch.equal(windowed_composition_vae.decoded, windowed_video)
+
+    # The inverse ordered split is equally authorable. Its latest aligned lead
+    # crop intentionally stops before the physical tail so both saved latent
+    # blocks match their target temporal phases.
     reverse_plan = json.loads(json.dumps(composed_plan))
     reverse_plan["shots"][4]["visual_context_lead_frames"] = 17
     assert chain._shot_visual_context_lead_frames(
         reverse_plan["shots"][4], 39) == 17
 
-    class ReverseCompositionVAE:
-        def __init__(self):
-            self.encoded = None
-
-        def encode(self, frames):
-            self.encoded = frames
-            return torch.full((1, 24, 12, 2, 2), 70.0)
-
-    reverse_vae = ReverseCompositionVAE()
     reverse_state = chain._visual_context_state({
         "plan": reverse_plan, "index": 5,
         "previous_frames": scene4_frames,
@@ -560,13 +688,15 @@ try:
              "checkpoint_sha256": "h%d" % scene}
             for scene in range(1, 5)
         ],
-    }, vae=reverse_vae)
+    })
     reverse_frames = reverse_state["previous_frames"]
     reverse_video = reverse_state["previous_latent"]["samples"][0]
     assert torch.all(reverse_frames[:17] == 4.0)
     assert torch.all(reverse_frames[17:] == 3.0)
-    assert torch.equal(reverse_vae.encoded, reverse_frames)
-    assert torch.all(reverse_video == 70.0)
+    assert torch.all(reverse_video[:, :, 0] == 60.0)
+    assert torch.all(reverse_video[:, :, 4] == 64.0)
+    assert torch.all(reverse_video[:, :, 5] == 50.0)
+    assert torch.all(reverse_video[:, :, -1] == 56.0)
     assert reverse_state["previous_latent"]["samples"][1] is full_immediate_audio
 finally:
     chain._st_load = original_loader
@@ -617,10 +747,16 @@ finally:
     chain._streams_from_latent = original_streams
 
 for invalid_patch, expected in (
+        # This start fits inside the movie, but it bisects an H3 temporal
+        # latent block and therefore cannot be represented as a direct crop.
+        ({"visual_context_start_frame": 11}, "native temporal latent lattice"),
         ({"visual_context_lead_source": "three",
           "visual_context_lead_frames": 5}, "different from"),
         ({"visual_context_lead_source": "four",
           "visual_context_lead_frames": 6}, "must be one of"),
+        ({"visual_context_lead_source": "four",
+          "visual_context_lead_frames": 5,
+          "visual_context_lead_start_frame": 47}, "must be between"),
         ({"visual_context_lead_source": "four",
           "visual_context_lead_frames": 5,
           "video_blend_frames": 2}, "video_blend_frames must be 0")):

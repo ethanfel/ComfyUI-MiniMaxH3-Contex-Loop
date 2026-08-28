@@ -4,6 +4,33 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Tagged Ref2VA now has an opt-in `external_refmod` conditioning backend for
+  testing ComfyUI-MiniMaxH3Mod without duplicating native references. It keeps
+  scene-local `@tag` selection and video slicing, emits text-only H3
+  conditioning/latent, and exposes the active pictures/videos as the upstream
+  `H3_REF_LIST` contract through `refmod_sources`. Native Ref2VA remains the
+  default. Active semantic `#anchors` now use a hybrid path: ordinary `@visuals`
+  remain compressed RefMods, while an anchor-only Qwen presentation preserves
+  each anchor's timestamp and storyboard mode without re-encoding all ordinary
+  reference media. Active reference audio still fails explicitly because the
+  external format is visual-only. External Extract/Apply settings remain
+  outside Plan fingerprinting and native deferred-upscale caching.
+
+- Plan Studio's generated track is now an editorial timeline rather than a
+  delayed view of generation order. Absolute scene placements can move any
+  scene—including the terminal scene—before or after other clips; collisions
+  resolve as non-overlapping inserts, uncovered time stays black, and raw
+  placement requests are no longer rewritten during layout. Playback, motion
+  references, source-audio waveforms, generated scene audio, and final video
+  assembly share the resolved editorial order. Generation lineage and saved
+  checkpoints remain unchanged, while boundaries whose generation predecessor
+  changed assemble as safe hard cuts.
+
+- Audio assets in the Project Asset Carousel now open a lyrics workspace beside
+  the audio player. Lyrics can be pasted or edited in place, are persisted in
+  both the project catalog and its H3-chain backup, and remain presentation-only:
+  they do not alter prompts, reference fingerprints, or generation behavior.
+
 - Chapter sections in Checkpoint Manager's **All scenes** view can now be
   collapsed from their headers. Expanded/collapsed state is remembered per
   run and chapter in workflow presentation state, and collapsed chapters skip

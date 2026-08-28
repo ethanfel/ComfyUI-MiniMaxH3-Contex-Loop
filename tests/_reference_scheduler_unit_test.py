@@ -637,6 +637,31 @@ try:
     assert storyboard_status == (
         "2 approximate storyboard cues across 1 tagged pictures")
 
+    hybrid_clip = FakeSemanticClip()
+    hybrid_result, hybrid_status = (
+        chain._replace_conditioning_presentation(
+            base_conditioning, hybrid_clip, "hybrid prompt", {
+                "version": chain.SEMANTIC_PRESENTATION_VERSION,
+                "width": 64,
+                "height": 32,
+                "length": 22,
+                "ref_image_size": "match",
+                "semantic_anchor_size": "384",
+                "semantic_anchor_mode": "timestamped_video",
+                "pictures": [],
+                "videos": [],
+                "standalone_audio_count": 0,
+                "anchors": [{
+                    "tag": "face",
+                    "image": anchor_picture,
+                    "timestamps": (chain.Fraction("0.00"),),
+                }],
+            }))
+    assert [item["type"] for item in hybrid_clip.items] == ["video"]
+    assert hybrid_clip.items[0]["timestamps"] == [0.0, 0.0]
+    assert hybrid_result[0][1]["minimax_refs"] == ["native-ref-payload"]
+    assert hybrid_status == "1 semantic checkpoints across 1 tagged pictures"
+
     high_resolution = chain._h3_semantic_anchor_image(
         anchor_picture, "1280")
     assert tuple(high_resolution.shape) == (1, 1824, 896, 3)
@@ -720,6 +745,85 @@ try:
     assert semantic_expansion["result"][0] == ["SemanticAnchors", 0]
     assert semantic_expansion["result"][1] == ["TaggedRef2VA", 1]
     assert semantic_expansion["result"][4] != tagged["fingerprint"]
+
+    refmod_expansion = chain.MiniMaxH3TaggedReferenceToVideo().apply(
+        "clip", "video-vae", "audio-vae", tagged, 1, 1,
+        "Use @look through the external RefMod path.",
+        64, 32, 22, "match", conditioning_backend="external_refmod")
+    refmod_graph = refmod_expansion["expand"]
+    assert set(refmod_graph) == {"TaggedRefModBase"}
+    assert refmod_graph["TaggedRefModBase"]["class_type"] == (
+        "MiniMaxH3ImageToVideo")
+    assert refmod_graph["TaggedRefModBase"]["inputs"] == {
+        "clip": "clip",
+        "vae": "video-vae",
+        "prompt": "Use look through the external RefMod path.",
+        "width": 64,
+        "height": 32,
+        "length": 22,
+    }
+    assert refmod_expansion["result"][0] == ["TaggedRefModBase", 0]
+    assert refmod_expansion["result"][1] == ["TaggedRefModBase", 1]
+    assert len(refmod_expansion["result"][5]) == 1
+    assert chain.torch.equal(
+        refmod_expansion["result"][5][0], tagged_picture)
+    assert "text-only conditioning" in refmod_expansion["result"][3]
+    assert chain._generation_fingerprint_value(
+        refmod_expansion["result"][4])[0] != tagged["fingerprint"]
+
+    hybrid_expansion = chain.MiniMaxH3TaggedReferenceToVideo().apply(
+        "clip", "video-vae", "audio-vae", tagged, 1, 1,
+        "Use @look through RefMod and #face[0.00s] semantically.",
+        64, 32, 22, "match", conditioning_backend="external_refmod",
+        semantic_anchor_size="384")
+    hybrid_graph = hybrid_expansion["expand"]
+    assert set(hybrid_graph) == {"TaggedRefModBase", "SemanticAnchors"}
+    hybrid_prompt = (
+        "Use look through RefMod and <Video 1> semantically.")
+    assert hybrid_graph["TaggedRefModBase"]["inputs"]["prompt"] == (
+        hybrid_prompt)
+    hybrid_inputs = hybrid_graph["SemanticAnchors"]["inputs"]
+    assert hybrid_inputs["positive"] == ["TaggedRefModBase", 0]
+    assert hybrid_inputs["prompt"] == hybrid_prompt
+    assert hybrid_inputs["presentation"]["pictures"] == []
+    assert hybrid_inputs["presentation"]["videos"] == []
+    assert hybrid_inputs["presentation"]["standalone_audio_count"] == 0
+    assert [item["tag"] for item in hybrid_inputs[
+        "presentation"]["anchors"]] == ["face"]
+    assert len(hybrid_expansion["result"][5]) == 1
+    assert chain.torch.equal(
+        hybrid_expansion["result"][5][0], tagged_picture)
+    assert hybrid_expansion["result"][2] == hybrid_prompt
+    assert "RefMod @look" in hybrid_expansion["result"][3]
+    assert "#face -> <Video 1>" in hybrid_expansion["result"][3]
+    assert "hybrid Qwen: 1 semantic anchor source(s) only" in (
+        hybrid_expansion["result"][3])
+
+    hybrid_storyboard = chain.MiniMaxH3TaggedReferenceToVideo().apply(
+        "clip", "video-vae", "audio-vae", tagged, 1, 1,
+        "Use @look and #face[0.00s].",
+        64, 32, 22, "match", conditioning_backend="external_refmod",
+        semantic_anchor_mode="picture_storyboard")
+    hybrid_storyboard_inputs = hybrid_storyboard["expand"][
+        "SemanticAnchors"]["inputs"]
+    assert hybrid_storyboard_inputs["prompt"] == (
+        "For the target video, around 0 seconds into this scene, <Picture 1> "
+        "is an approximate visual storyboard reference.\n\n"
+        "Use look and <Picture 1>.")
+    assert hybrid_storyboard_inputs["presentation"]["pictures"] == []
+    assert hybrid_storyboard_inputs["presentation"]["anchors"][0][
+        "tag"] == "face"
+
+    try:
+        chain.MiniMaxH3TaggedReferenceToVideo().apply(
+            "clip", "video-vae", "audio-vae", tagged, 1, 1,
+            "Use @voice through RefMod.", 64, 32, 22, "match",
+            conditioning_backend="external_refmod")
+    except ValueError as exc:
+        assert "visual-only" in str(exc)
+        assert "standalone tagged audio" in str(exc)
+    else:
+        raise AssertionError("external RefMod accepted active tagged audio")
 
     storyboard_expansion = chain.MiniMaxH3TaggedReferenceToVideo().apply(
         "clip", "video-vae", "audio-vae", tagged, 1, 1,
@@ -925,6 +1029,17 @@ assert chain.MiniMaxH3TaggedReferenceToVideo.VALIDATE_INPUTS(
         "picture_storyboard; got 'unsupported'.")
 assert tagged_optional["semantic_anchor_size"][0] == [
     "384", "512", "768", "1024", "1280", "source"]
+assert tagged_optional["conditioning_backend"][0] == [
+    "native_ref2va", "external_refmod"]
+assert tagged_optional["conditioning_backend"][1]["default"] == (
+    "native_ref2va")
+assert chain.MiniMaxH3TaggedReferenceToVideo.RETURN_NAMES[-1] == (
+    "refmod_sources")
+assert chain.MiniMaxH3TaggedReferenceToVideo.RETURN_TYPES[-1] == "H3_REF_LIST"
+assert chain.MiniMaxH3TaggedReferenceToVideo.VALIDATE_INPUTS(
+    conditioning_backend="unknown") == (
+        "Tagged conditioning backend must be native_ref2va or "
+        "external_refmod; got 'unknown'.")
 assert "reference_schedule" not in (
     chain.MiniMaxH3TaggedReferenceToVideo.INPUT_TYPES()["required"])
 conditioning = object()

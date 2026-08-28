@@ -130,6 +130,50 @@ With core Ref2VA, the tray previews media and inserts native labels. With core
 Image to Video it exposes first and last frames as `<Picture N>` according to
 the active keyframes.
 
+## External RefMod experiment
+
+Tagged Ref2VA can expose the exact active visual sources selected for the
+current scene to
+[ComfyUI-MiniMaxH3Mod](https://github.com/Luisacaotica/ComfyUI-MiniMaxH3Mod).
+Install that node pack, then set Tagged Ref2VA's `conditioning_backend` to
+`external_refmod` and wire:
+
+```text
+Tagged Ref2VA refmod_sources ─→ Extract H3 RefMod refs_bundle
+Tagged Ref2VA positive ───────→ Apply H3 RefMod conditioning
+Extract H3 RefMod mods ───────→ Apply H3 RefMod mods
+Apply H3 RefMod conditioning ─→ H3 Chain Context conditioning
+Tagged Ref2VA latent ─────────→ H3 Chain Context latent
+```
+
+In this mode Tagged Ref2VA still selects scene-local `@tags`, resolves lazy
+project images, and slices sequential reference videos. It describes those
+RefMods in text using their readable tag names, creates base conditioning and
+a matching empty AV latent through core `MiniMaxH3ImageToVideo`, and skips
+stock Ref2VA. `refmod_sources` uses the external pack's existing `H3_REF_LIST`
+contract, so no direct Python import or patched external node is required.
+Native behavior remains the default.
+
+Semantic `#tag[timestamp]` anchors use a hybrid path. Ordinary active `@visuals`
+remain exclusively in RefMod, while only the active anchor images are presented
+to Qwen and numbered in their own `<Video N>` or `<Picture N>` namespace. This
+preserves the supplied timestamped-video cues and approximate storyboard timing
+without paying Qwen's media-token cost for every ordinary reference again.
+An asset intentionally used as both `@tag` and `#tag[timestamp]` participates in
+both paths.
+
+The external experiment remains unable to carry reference audio. A scene with
+active standalone tagged audio or paired reference-video audio stops with a
+clear error instead of silently losing it. Source Timeline/final audio managed
+outside Tagged Ref2VA remains unaffected.
+
+The reference registry and backend choice participate in the Plan fingerprint,
+but the external Extract/Apply widgets and resulting mod bytes do not. Use a
+new run name when changing RefMod mode, resolution, pooling, frame retention,
+token cap, or strength. Native deferred-upscale reference caching is disabled
+for `external_refmod`; the deferred pass does not yet reconstruct external
+mods automatically.
+
 ## Resume fingerprints
 
 For static loaders, connect `schedule_fingerprint` to Plan's

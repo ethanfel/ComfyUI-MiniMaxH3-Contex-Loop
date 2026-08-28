@@ -11,7 +11,7 @@ import {
     sceneVisualContextLeadSource,
     sceneVisualContextSource,
     sharedPrompt,
-} from "./h3_chain_plan_core.mjs?v=0.5.49";
+} from "./h3_chain_plan_core.mjs?v=0.5.50";
 
 const FPS = 24;
 const MAX_H3_FRAMES = 3592;
@@ -256,6 +256,17 @@ export function applyCheckpointRevisionSet(plan, revisions, {
         } else {
             delete shot.visual_context_source;
         }
+        if (Object.hasOwn(revision, "visual_context_start_frame")) {
+            const start = Number(revision.visual_context_start_frame);
+            if (!Number.isInteger(start) || start < 0) {
+                throw new Error(
+                    `Restored scene ${scene} has an invalid visual context start frame.`,
+                );
+            }
+            shot.visual_context_start_frame = start;
+        } else {
+            delete shot.visual_context_start_frame;
+        }
         if (Object.hasOwn(revision, "visual_context_lead_source")) {
             shot.visual_context_lead_source = String(
                 revision.visual_context_lead_source,
@@ -271,9 +282,25 @@ export function applyCheckpointRevisionSet(plan, revisions, {
                     `Restored scene ${scene} uses the same scene for both composed visual context blocks.`,
                 );
             }
+            if (Object.hasOwn(
+                revision, "visual_context_lead_start_frame",
+            )) {
+                const start = Number(
+                    revision.visual_context_lead_start_frame,
+                );
+                if (!Number.isInteger(start) || start < 0) {
+                    throw new Error(
+                        `Restored scene ${scene} has an invalid composed visual context start frame.`,
+                    );
+                }
+                shot.visual_context_lead_start_frame = start;
+            } else {
+                delete shot.visual_context_lead_start_frame;
+            }
         } else {
             delete shot.visual_context_lead_source;
             delete shot.visual_context_lead_frames;
+            delete shot.visual_context_lead_start_frame;
         }
         if (Object.hasOwn(revision, "continuation_mode")) {
             shot.continuation_mode = String(revision.continuation_mode);

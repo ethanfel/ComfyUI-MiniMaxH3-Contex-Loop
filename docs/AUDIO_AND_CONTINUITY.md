@@ -220,6 +220,24 @@ The raw per-scene implementation and separate visual/audio context fields are
 under Advanced boundary controls. Plan-wide raw 0.4 defaults belong to the
 Legacy 0.4 Policy Adapter.
 
+### Editorial scene placement, gaps, and subtitles
+
+Plan Studio can place each generated scene at an exact 24 fps timeline frame.
+The first legal position is the end of the preceding scene, so scene order and
+generation dependencies remain unchanged and clips never overlap. Moving a
+scene later creates uncovered track time; preview shows that interval as black
+and final Assemble renders the same number of black frames.
+
+Generated clip audio is moved with its scene and silence is inserted in every
+gap. Source Timeline audio instead remains locked to the absolute project clock,
+so a song continues through black. These positions live in the run's
+`editorial.json`, outside the Plan hash, and do not invalidate checkpoints.
+
+An audio asset may also store lyrics. Timestamp lines as LRC (`[MM:SS.xx]`) or
+paste SRT, then select that asset in Plan Studio's Subtitles tab. Subtitle
+preview and exported `.srt` use the same absolute editorial clock and optional
+offset; they do not enter prompts or generation fingerprints.
+
 ### Scheduled boundary spatial proxy
 
 `context_spatial_proxy` is an optional **per-scene incoming-boundary** setting.

@@ -89,6 +89,38 @@ verifies both consumed dependencies independently: the selected visual scene
 and, when enabled, the immediate generated-audio predecessor. Other earlier
 scenes remain assembly-only and do not become false resume blockers.
 
+### Selecting a source segment instead of its tail
+
+Plan Studio's **Context** tab previews the complete delivered video for every
+visual context block. The highlighted zone is the actual fixed-size context
+window: its width is proportional to the configured frame span. Drag that
+zone across the movie, place it near the player's current frame, or play only
+the selected window. The position snaps to H3's native 17-frame / five-latent-
+step temporal lattice. **Tail (default)**, or **Latest aligned (default)**
+when that block's phase cannot end on the physical tail, removes the override.
+
+The stored values are zero-based frame indexes within the source scene's
+delivered video (after that source's own incoming overlap was trimmed):
+
+```json
+{
+  "id": "scene_5",
+  "context_length": 22,
+  "visual_context_source": "scene_3",
+  "visual_context_start_frame": 119,
+  "video_blend_frames": 0
+}
+```
+
+For an untrimmed source this selects delivered frames 119 through 140 from
+scene 3. Valid numeric starts depend on the source's own trimmed incoming
+prefix, so use Plan Studio instead of hand-authoring an arbitrary frame. The
+backend converts both ends to native latent-step boundaries and slices the
+saved video latent directly. It never replaces that crop with an RGB VAE
+re-encode; RGB Guide/mask consumers use retained frames or a decode-only
+mirror. Generated-audio continuity remains the immediate previous scene's
+tail.
+
 ## Composed visual context
 
 A continuation can use two saved picture histories back to back. In Plan or
@@ -123,11 +155,11 @@ Choosing one combination writes that total to the scene's `context_length`
 and the first span to `visual_context_lead_frames`.
 
 The blocks are concatenated in their authored order; they are not blended or
-interpolated. Native-phase layouts such as `22+17` splice the saved latent
-blocks directly. Their inverse layouts such as `17+22` use the exact authored
-RGB tails and, for AV or Latent Guide consumers, normalize the combined prefix
-once through the connected video VAE instead of accepting a phase-shifted raw
-splice. Both sources may be any distinct earlier scenes on the active
+interpolated. Both `22+17` and `17+22` now select source windows on the target
+block's matching temporal phase and concatenate the saved latent crops
+directly. For an inverse layout, the first block's latest aligned crop can end
+before its source movie's physical tail; Plan Studio shows that position.
+Both sources may be any distinct earlier scenes on the active
 branch—the first source does not have to have a lower scene number than the
 second. The composed prefix remains one context, so its normal head trim or AV
 mask uses the selected total exactly once.
@@ -139,6 +171,11 @@ override still works. Final assembly still follows normal scene order and must
 use `video_blend_frames: 0` at this boundary. Checkpoint preflight verifies
 both selected visual revisions plus the immediate audio predecessor when that
 audio continuity is active.
+
+The Context tab exposes one independent aligned range for each composed block. The
+second block uses `visual_context_start_frame`; the first block uses
+`visual_context_lead_start_frame`. Either or both may be omitted to use that
+block's latest phase-aligned native crop.
 
 ## Last-frame destinations
 

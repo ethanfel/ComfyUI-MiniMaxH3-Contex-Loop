@@ -561,6 +561,47 @@ def main():
             color_stabilization="scene_1_anchor")["result"][0]
         assert len(decode(stabilized_hard)) == 9
 
+        # Editorial placement does not alter the saved chain. Assemble inserts
+        # exact black track time before the later scene and keeps its frames.
+        chain._save_run_editorial_document({
+            "run_name": "assembled_hard",
+            "scene_order": [
+                {"scene": 1, "scene_id": "clip_0001"},
+                {"scene": 2, "scene_id": "clip_0002"},
+            ],
+            "chapters": [],
+            "placements": [{
+                "scene": 2, "scene_id": "clip_0002", "start_frame": 8,
+            }],
+        })
+        editorial_output = chain.MiniMaxH3ChainAssemble().assemble(
+            hard_manifest, "none", "editorial_gap", 128)["result"][0]
+        editorial_frames = decode(editorial_output)
+        assert len(editorial_frames) == 12
+        assert all(np.max(frame) == 0 for frame in editorial_frames[5:8])
+        assert np.mean(editorial_frames[8][..., 2]) > 200
+
+        # Reordering has no duration delta, so it must not depend on a black
+        # gap to activate editorial assembly. Scene-owned video follows the
+        # edit order and invalid generation-boundary blends become hard cuts.
+        chain._save_run_editorial_document({
+            "run_name": "assembled_hard",
+            "scene_order": [
+                {"scene": 1, "scene_id": "clip_0001"},
+                {"scene": 2, "scene_id": "clip_0002"},
+            ],
+            "chapters": [],
+            "placements": [{
+                "scene": 2, "scene_id": "clip_0002", "start_frame": 0,
+            }],
+        })
+        reordered_output = chain.MiniMaxH3ChainAssemble().assemble(
+            hard_manifest, "none", "editorial_reordered", 128)["result"][0]
+        reordered_frames = decode(reordered_output)
+        assert len(reordered_frames) == 9
+        assert np.mean(reordered_frames[0][..., 2]) > 200
+        assert np.mean(reordered_frames[-1][..., 0]) > 200
+
     print("H3 video blend: extended context validation, scheduled recovery, "
           "automatic boundary tone matching, scene-one temporal color "
           "stabilization, chained xfade CFR, and frame-exact PyAV/ffmpeg "

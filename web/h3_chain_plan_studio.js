@@ -15,6 +15,8 @@ import {
     makeChapter,
     makeShot,
     moveShot,
+    nativeContextWindowStarts,
+    nearestNativeContextWindowStart,
     parsePlanJson,
     planToJson,
     orderedChapters,
@@ -30,6 +32,7 @@ import {
     sceneVisualContextSource,
     sceneVisualContextLeadFrames,
     sceneVisualContextLeadSource,
+    sceneVisualContextStartFrame,
     sceneVideoBlendFrames,
     setScenePromptSeedMode,
     setSharedPrompt,
@@ -37,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.5.49";
+} from "./h3_chain_plan_core.mjs?v=0.5.50";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.5.49";
+} from "./h3_prompt_history_core.mjs?v=0.5.50";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.5.49";
+} from "./h3_reference_preview_core.mjs?v=0.5.50";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -57,26 +60,37 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.5.49";
+} from "./h3_policy_core.mjs?v=0.5.50";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.5.49";
+} from "./h3_socket_presentation_core.mjs?v=0.5.50";
 import {
-    locateStudioTimelineSecond,
     h3StudioGridMarkers,
+    locateStudioTimelineSegment,
     matchingStudioCheckpoint,
     matchingStudioSourceAudio,
     matchingStudioSourceScene,
+    parseStudioTimecode,
     studioCheckpointSignature,
-    studioSceneStartSeconds,
+    studioContextWindowLayout,
+    studioContextWindowStartAtRatio,
+    parseTimedLyrics,
+    studioEditorialSceneStartSeconds,
+    studioNearestH3FrameLength,
     studioSourceAudioSecond,
     studioSourceSecond,
     studioTimelineLayout,
-    studioWaveformSceneSamples,
-} from "./h3_chain_plan_studio_core.mjs?v=0.5.49";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.49";
+    studioTimelineScrollAnchorSeconds,
+    studioTimelineScrollLeftForAnchor,
+    studioTimelineSegments,
+    studioTimelineTotalSeconds,
+    studioRulerTicks,
+    studioWaveformIntervalSamples,
+    timedLyricAtSecond,
+} from "./h3_chain_plan_studio_core.mjs?v=0.5.50";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.50";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -158,15 +172,20 @@ function injectStyles() {
         .h3studio-timeline-zoom { width:118px !important; padding:0 !important; }
         .h3studio-timeline-grid { display:grid; grid-template-columns:78px minmax(0,1fr); gap:5px; min-width:0; }
         .h3studio-timeline-labels,.h3studio-timeline-content { display:grid;
-            grid-template-rows:18px 76px 76px 34px; row-gap:4px; align-items:stretch; }
+            grid-template-rows:30px 76px 76px 34px 30px; row-gap:4px; align-items:stretch; }
         .h3studio-timeline-labels { color:var(--hs-muted); font-size:9px; font-weight:750;
             letter-spacing:.06em; text-align:right; }
         .h3studio-timeline-labels span { display:flex; align-items:center; justify-content:flex-end; }
         .h3studio-timeline-viewport { min-width:0; overflow-x:auto; overflow-y:hidden; padding-bottom:2px; }
         .h3studio-timeline-content { min-width:100%; }
-        .h3studio-ruler { position:relative; height:18px; width:100%; border-bottom:1px solid var(--hs-border);
-            color:var(--hs-muted); font-size:10px; overflow:hidden; cursor:pointer; }
-        .h3studio-timeline { position:relative; display:flex; gap:3px; width:100%; min-width:0; min-height:0; overflow:hidden; }
+        .h3studio-ruler { position:relative; height:30px; width:100%; border-bottom:1px solid var(--hs-border);
+            color:var(--hs-muted); font-size:10px; overflow:visible; cursor:crosshair; touch-action:none; }
+        .h3studio-ruler-tick { position:absolute; bottom:0; width:1px; height:7px; background:var(--hs-border); pointer-events:none; }
+        .h3studio-ruler-tick.h3studio-major { height:13px; background:color-mix(in srgb,var(--hs-text) 55%,transparent); }
+        .h3studio-ruler-tick span { position:absolute; left:3px; bottom:12px; white-space:nowrap; font-variant-numeric:tabular-nums; }
+        .h3studio-ruler-hover { position:absolute; z-index:12; top:1px; padding:2px 5px; border-radius:4px;
+            color:#fff; background:rgba(7,9,14,.88); pointer-events:none; font-variant-numeric:tabular-nums; transform:translateX(-50%); }
+        .h3studio-timeline { position:relative; display:flex; gap:0; width:100%; min-width:0; min-height:0; overflow:hidden; }
         .h3studio-generated-timeline { overflow:visible; }
         .h3studio-chapter-marker { position:absolute; z-index:8; top:-2px; bottom:0; width:0;
             padding:0 !important; border:0 !important; border-left:2px solid #e8bd68 !important;
@@ -180,13 +199,38 @@ function injectStyles() {
         .h3studio-card { --scene:#84aaff; position:relative; isolation:isolate;
             flex:0 0 var(--h3-scene-width,138px); min-width:0;
             height:70px; overflow:hidden; padding:0 !important; text-align:left; border:1px solid var(--scene) !important;
+            border-radius:5px; color:var(--hs-text); cursor:grab; font:inherit; user-select:none; touch-action:none;
             background:color-mix(in srgb,var(--scene) 13%,var(--comfy-input-bg,#15171d)) !important; }
+        .h3studio-card.h3studio-moving { cursor:grabbing; }
         .h3studio-card.h3studio-selected { box-shadow:0 0 0 2px var(--scene) inset; }
         .h3studio-card video, .h3studio-card-thumbnail { position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
             opacity:.58; z-index:-1; background:#08090c; pointer-events:none; }
         .h3studio-card::after { content:""; position:absolute; inset:0; z-index:-1;
             background:linear-gradient(180deg,transparent 10%,rgba(5,7,12,.88)); }
         .h3studio-card-copy { position:absolute; inset:auto 7px 6px; overflow:hidden; }
+        .h3studio-drag-handle { position:absolute; z-index:3; left:4px; top:4px; padding:1px 4px;
+            border-radius:3px; color:#fff; background:rgba(5,7,12,.72); cursor:grab; user-select:none; }
+        .h3studio-drag-handle:active { cursor:grabbing; }
+        .h3studio-lock-handle { position:absolute; z-index:4; left:29px; top:4px; width:22px; height:19px;
+            padding:0 !important; border:1px solid rgba(255,255,255,.24) !important; border-radius:3px; color:#fff;
+            background:rgba(5,7,12,.72) !important; cursor:pointer; user-select:none; }
+        .h3studio-lock-handle.h3studio-is-locked { color:#ffd995;
+            border-color:#c59745 !important; }
+        .h3studio-lock-icon { position:relative; display:block; width:12px; height:13px; margin:auto; }
+        .h3studio-lock-icon::after { content:""; position:absolute; left:2px; bottom:1px; width:8px; height:7px;
+            box-sizing:border-box; border:1.5px solid currentColor; border-radius:2px; }
+        .h3studio-lock-icon::before { content:""; position:absolute; left:3.5px; top:0; width:5px; height:7px;
+            box-sizing:border-box; border:1.5px solid currentColor; border-bottom:0; border-radius:5px 5px 0 0; }
+        .h3studio-lock-handle:not(.h3studio-is-locked) .h3studio-lock-icon::before {
+            left:7px; transform:rotate(24deg); transform-origin:left bottom; }
+        .h3studio-resize-handle { position:absolute; z-index:5; top:0; right:0; width:8px; height:100%;
+            border-right:2px solid color-mix(in srgb,var(--scene) 78%,#fff); cursor:ew-resize;
+            touch-action:none; opacity:.72; }
+        .h3studio-resize-handle:hover, .h3studio-resize-handle:active { width:12px; opacity:1;
+            background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--scene) 28%,transparent)); }
+        .h3studio-card.h3studio-locked { border-style:dashed !important; cursor:pointer; }
+        .h3studio-card.h3studio-locked .h3studio-drag-handle,
+        .h3studio-card.h3studio-locked .h3studio-resize-handle { cursor:not-allowed; opacity:.38; }
         .h3studio-card-title { display:block; font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .h3studio-card-meta { display:block; color:#dce5f7; font-size:10px; }
         .h3studio-render-dot { position:absolute; right:6px; top:6px; width:8px; height:8px; border-radius:50%;
@@ -206,7 +250,18 @@ function injectStyles() {
         .h3studio-waveform { position:absolute; inset:3px 34px 3px 4px; width:calc(100% - 38px); height:28px; }
         .h3studio-audio-mute { position:absolute; z-index:2; right:3px; top:3px; width:28px; height:26px;
             padding:0 !important; display:grid; place-items:center; font-size:13px; }
-        .h3studio-playhead { position:absolute; top:0; bottom:0; width:1px; background:#ff626a; pointer-events:none; }
+        .h3studio-playhead { position:absolute; z-index:20; top:0; width:1px; height:262px;
+            background:#ff626a; box-shadow:0 0 0 1px rgba(82,12,17,.28); pointer-events:none; }
+        .h3studio-gap { flex:0 0 var(--h3-scene-width,0); min-width:0; height:100%; overflow:hidden;
+            color:#b7bdc8; background:#030405; border:1px dashed #697080; cursor:pointer; }
+        .h3studio-gap-copy { display:flex; height:100%; align-items:center; justify-content:center;
+            padding:4px; text-align:center; font-size:10px; white-space:nowrap; overflow:hidden; }
+        .h3studio-gap-spacer { flex:0 0 var(--h3-scene-width,0); min-width:0; height:100%;
+            background:repeating-linear-gradient(135deg,rgba(160,170,188,.07) 0 4px,transparent 4px 8px); }
+        .h3studio-subtitle-timeline { position:relative; min-height:30px; }
+        .h3studio-subtitle-cue { position:absolute; top:2px; bottom:2px; overflow:hidden; padding:4px 6px;
+            border:1px solid #8c6bd7; border-radius:4px; color:#eee5ff; background:rgba(76,45,124,.48);
+            font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
         .h3studio-panel { flex:1 1 auto; min-height:0; overflow:auto; padding:9px;
             border:1px solid var(--hs-border); border-radius:7px; background:var(--hs-panel); }
         .h3studio-scene-head { margin-bottom:7px; }
@@ -264,7 +319,53 @@ function injectStyles() {
             background:rgba(5,7,12,.7); color:#fff; font-size:10px; pointer-events:none; }
         .h3studio-compare-label-generated { right:7px; }
         .h3studio-compare-label-source { left:7px; }
+        .h3studio-subtitle-overlay { position:absolute; z-index:5; left:7%; right:7%; bottom:7%;
+            padding:6px 10px; color:#fff; background:rgba(0,0,0,.72); border-radius:5px;
+            text-align:center; font-size:clamp(15px,2.1vw,25px); font-weight:700; line-height:1.3;
+            text-shadow:0 1px 2px #000; white-space:pre-wrap; pointer-events:none; }
+        .h3studio-subtitle-settings { display:grid; grid-template-columns:minmax(220px,1fr) 160px 160px;
+            gap:9px; align-items:end; }
+        .h3studio-subtitle-list { display:flex; flex-direction:column; gap:4px; margin-top:10px; }
+        .h3studio-subtitle-row { display:grid; grid-template-columns:150px minmax(0,1fr); gap:8px;
+            padding:5px 7px; border-bottom:1px solid var(--hs-border); }
         .h3studio-player-controls input[type=range] { flex:1; padding:0; }
+        .h3studio-context-selector { display:flex; flex-direction:column; gap:9px; }
+        .h3studio-context-help { color:var(--hs-muted); }
+        .h3studio-context-blocks { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:9px; }
+        .h3studio-context-block { min-width:0; padding:8px; border:1px solid var(--hs-border);
+            border-radius:7px; background:var(--hs-bg); }
+        .h3studio-context-block-head { display:flex; align-items:baseline; justify-content:space-between;
+            gap:8px; margin-bottom:7px; }
+        .h3studio-context-block-head span { color:var(--hs-muted); overflow:hidden;
+            text-overflow:ellipsis; white-space:nowrap; }
+        .h3studio-context-video { display:block; width:100%; min-height:180px; max-height:330px;
+            object-fit:contain; background:#050608; border-radius:6px; }
+        .h3studio-context-empty { display:grid; place-items:center; width:100%; min-height:180px;
+            padding:18px; color:var(--hs-muted); text-align:center; border:1px dashed var(--hs-border);
+            border-radius:6px; background:#050608; }
+        .h3studio-context-range { display:flex; flex-direction:column; gap:5px; margin-top:7px; }
+        .h3studio-context-movie-track { position:relative; width:100%; height:38px; overflow:hidden;
+            border:1px solid var(--hs-border); border-radius:6px; cursor:pointer; touch-action:none;
+            background:repeating-linear-gradient(90deg,#151922 0,#151922 11px,#0e1118 11px,#0e1118 13px); }
+        .h3studio-context-movie-track:focus-visible { outline:2px solid #79a7ff; outline-offset:2px; }
+        .h3studio-context-window { position:absolute; top:3px; bottom:3px; min-width:1px;
+            box-sizing:border-box; border:2px solid #7ec8ff; border-radius:5px;
+            background:rgba(47,143,220,.42); box-shadow:0 0 0 1px rgba(0,0,0,.55) inset;
+            display:grid; place-items:center; overflow:hidden; color:#fff; font-size:10px;
+            font-variant-numeric:tabular-nums; cursor:grab; user-select:none; }
+        .h3studio-context-movie-track.h3studio-dragging .h3studio-context-window { cursor:grabbing; }
+        .h3studio-context-window::before,.h3studio-context-window::after { content:"";
+            position:absolute; top:6px; bottom:6px; width:2px; background:rgba(255,255,255,.78); }
+        .h3studio-context-window::before { left:4px; }
+        .h3studio-context-window::after { right:4px; }
+        .h3studio-context-playhead { position:absolute; z-index:2; top:0; bottom:0; width:2px;
+            pointer-events:none; background:#ff9a3c; transform:translateX(-1px); }
+        .h3studio-context-range-readout { display:flex; justify-content:space-between; gap:8px; }
+        .h3studio-context-movie-length { color:var(--hs-muted); font-variant-numeric:tabular-nums; }
+        .h3studio-context-range-label { min-width:150px; color:var(--hs-muted);
+            font-variant-numeric:tabular-nums; text-align:right; }
+        .h3studio-context-actions { display:flex; align-items:center; gap:6px; margin-top:7px;
+            flex-wrap:wrap; }
         .h3studio-compare-controls { display:grid; grid-template-columns:auto minmax(100px,1fr) auto; gap:6px; align-items:center; }
         .h3studio-compare-controls.h3studio-no-motion { grid-template-columns:1fr; }
         .h3studio-audio-mix { display:flex; align-items:center; justify-content:flex-end; gap:8px; flex-wrap:wrap; }
@@ -287,7 +388,7 @@ function injectStyles() {
         .h3studio-ref-preview audio { width:100%; height:36px; }
         @media(max-width:760px) { .h3studio-form,.h3studio-advanced-grid,.h3studio-plan-settings,
             .h3studio-audio-overrides { grid-template-columns:1fr 1fr; }
-        }
+            .h3studio-defaults,.h3studio-context-blocks { grid-template-columns:1fr; } }
     `;
     document.head.appendChild(style);
 }
@@ -451,7 +552,7 @@ function mount(node) {
         lastSettingsSignature:"",
         active:Math.max(0, Number(node.properties[ACTIVE_PROPERTY]) || 0),
         activeChapterId:String(node.properties[ACTIVE_CHAPTER_PROPERTY] ?? ""),
-        view:["scene","shared","settings","player","json"].includes(node.properties[VIEW_PROPERTY])
+        view:["scene","shared","settings","context","player","subtitles","json"].includes(node.properties[VIEW_PROPERTY])
             ? node.properties[VIEW_PROPERTY] : "scene",
         timelineZoom:normalizedTimelineZoom(
             node.properties[TIMELINE_ZOOM_PROPERTY]),
@@ -466,11 +567,20 @@ function mount(node) {
         sourceAudioTimelineHost:null, sourceTrack:null, sourceAudioTrack:null,
         timelineViewport:null, timelineContent:null, timelineRuler:null,
         timelineZoomInput:null, timelineZoomLabel:null,
-        timelineResizeObserver:null, timelineWidths:[],
+        timelineResizeObserver:null, timelineWidths:[], timelineSegments:[],
+        timelineRenderedActive:null,
+        timelineWorkspaceEndFrame:0, timelineSceneEndFrame:0,
+        timelineExtending:false, timelineDragging:false,
+        subtitleTimelineHost:null,
         panelHost:null,
         planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
+        editorialReady:false, editorialRun:"",
+        editorial:{placements:[], locked_scene_ids:[], subtitles:{}},
+        subtitleAssets:[], subtitleAssetsRun:"", subtitleAssetsToken:0,
         playhead:null, player:null, playerAudio:null, sourceAudioPlayer:null,
-        sourcePlayer:null, sourceLayer:null,
+        sourcePlayer:null, sourceLayer:null, subtitleOverlay:null,
+        editorialClockFrame:null, playerSegmentKey:"",
+        contextPlayers:[],
         playerSlider:null, playerIndex:-1,
         playerPreloadVideo:null, playerPreloadAudio:null,
         primePlayerNext:null, playPlayerTransport:null,
@@ -494,6 +604,7 @@ function mount(node) {
     const pausePlayerMonitors = () => {
         for (const media of [
             state.playerAudio, state.sourceAudioPlayer, state.sourcePlayer,
+            ...state.contextPlayers,
         ]) {
             try { media?.pause(); } catch (_error) {}
         }
@@ -608,6 +719,197 @@ function mount(node) {
         return calculatePlanTiming(state.plan, settings());
     }
 
+    function normalizedEditorial(value = {}) {
+        const knownIds = new Set((state.plan?.shots ?? []).map((shot, index) => (
+            safeShotId(shot?.id, `clip_${String(index + 1).padStart(4, "0")}`)
+        )));
+        const placements = [];
+        const seen = new Set();
+        for (const item of Array.isArray(value?.placements) ? value.placements : []) {
+            const sceneId = String(item?.scene_id ?? "").trim();
+            const startFrame = Math.max(0, Math.min(
+                864000, Math.round(Number(item?.start_frame) || 0),
+            ));
+            if (!sceneId || !knownIds.has(sceneId) || seen.has(sceneId)) continue;
+            seen.add(sceneId);
+            placements.push({
+                scene_id:sceneId,
+                start_frame:startFrame,
+            });
+        }
+        const rawSubtitles = value?.subtitles && typeof value.subtitles === "object"
+            ? value.subtitles : {};
+        const mode = ["off", "preview_srt"].includes(rawSubtitles.mode)
+            ? rawSubtitles.mode : "off";
+        const offset = Number(rawSubtitles.offset_seconds);
+        const lockedSceneIds = [...new Set(
+            (Array.isArray(value?.locked_scene_ids)
+                ? value.locked_scene_ids : [])
+                .map((sceneId) => String(sceneId ?? "").trim())
+                .filter((sceneId) => knownIds.has(sceneId)),
+        )];
+        return {
+            placements,
+            locked_scene_ids:lockedSceneIds,
+            subtitles:{
+                mode,
+                asset_id:String(rawSubtitles.asset_id ?? ""),
+                offset_seconds:Number.isFinite(offset)
+                    ? Math.max(-3600, Math.min(3600, offset)) : 0,
+            },
+        };
+    }
+
+    function timelineModel() {
+        const result = timing();
+        const sceneSegments = studioTimelineSegments(
+            result.shots, state.editorial.placements,
+        );
+        const sceneEndFrame = Math.max(
+            1,
+            Math.round(studioTimelineTotalSeconds(sceneSegments) * FPS),
+        );
+        const sourceDescriptor = state.sourcePreview?.source_audio;
+        const sourceEndFrame = sourceDescriptor?.available
+            ? Math.max(
+                Number(sourceDescriptor.available_frame_count) || 0,
+                Number(sourceDescriptor.frame_count) || 0,
+            ) : 0;
+        const subtitleOffset = Number(
+            state.editorial.subtitles?.offset_seconds,
+        ) || 0;
+        const subtitleEndFrame = subtitleCues().reduce(
+            (latest, cue) => Math.max(
+                latest,
+                Math.ceil((Number(cue?.endSeconds) + subtitleOffset) * FPS),
+            ),
+            0,
+        );
+        const workspaceEndFrame = Math.min(864000, Math.max(
+            sceneEndFrame * 2,
+            sourceEndFrame,
+            subtitleEndFrame,
+            Number(state.timelineWorkspaceEndFrame) || 0,
+        ));
+        state.timelineSceneEndFrame = sceneEndFrame;
+        state.timelineWorkspaceEndFrame = workspaceEndFrame;
+        const segments = studioTimelineSegments(
+            result.shots, state.editorial.placements, workspaceEndFrame,
+        );
+        return {
+            result, segments,
+            totalSeconds:studioTimelineTotalSeconds(segments),
+            sceneEndSeconds:sceneEndFrame / FPS,
+            workspaceEndFrame,
+        };
+    }
+
+    function sceneLocked(index) {
+        const row = timing().shots[index];
+        return Boolean(row && state.editorial.locked_scene_ids.includes(
+            String(row.id),
+        ));
+    }
+
+    function setSceneLocked(index, locked) {
+        const row = timing().shots[index];
+        if (!row) return;
+        const sceneId = String(row.id);
+        const next = new Set(state.editorial.locked_scene_ids);
+        if (locked) next.add(sceneId);
+        else next.delete(sceneId);
+        state.editorial.locked_scene_ids = [...next];
+        scheduleEditorialSave();
+        renderShell();
+    }
+
+    function unlockAllScenes() {
+        if (!state.editorial.locked_scene_ids.length) return;
+        state.editorial.locked_scene_ids = [];
+        scheduleEditorialSave();
+        renderShell();
+    }
+
+    function placementForScene(index) {
+        const row = timing().shots[index];
+        const placement = state.editorial.placements.find(
+            (placement) => placement.scene_id === String(row?.id ?? ""),
+        ) ?? null;
+        return placement ? {...placement} : null;
+    }
+
+    function setScenePlacement(index, startFrame) {
+        const row = timing().shots[index];
+        if (!row || sceneLocked(index)) return;
+        state.editorial.placements = state.editorial.placements.filter(
+            (placement) => placement.scene_id !== String(row.id),
+        );
+        if (startFrame != null && String(startFrame).trim() !== "") {
+            const requestedStart = Math.max(0, Math.min(
+                864000, Math.round(Number(startFrame) || 0),
+            ));
+            state.editorial.placements.push({
+                scene_id:String(row.id),
+                start_frame:requestedStart,
+            });
+        }
+        scheduleEditorialSave();
+        renderShell();
+        if (state.sourcePreview?.source_audio?.available) {
+            void loadSourceWaveform(state.sourcePreview);
+        }
+    }
+
+    function selectedSubtitleAsset() {
+        const assetId = String(state.editorial.subtitles?.asset_id ?? "");
+        return state.subtitleAssets.find(
+            (asset) => String(asset?.id ?? "") === assetId,
+        ) ?? null;
+    }
+
+    function subtitleCues() {
+        const asset = selectedSubtitleAsset();
+        return state.editorial.subtitles?.mode === "preview_srt" && asset
+            ? parseTimedLyrics(asset.lyrics) : [];
+    }
+
+    function updateSubtitleOverlay(seconds = state.timelinePosition ?? 0) {
+        if (!state.subtitleOverlay) return;
+        const cue = timedLyricAtSecond(
+            subtitleCues(), seconds,
+            state.editorial.subtitles?.offset_seconds,
+        );
+        state.subtitleOverlay.textContent = cue?.text ?? "";
+        state.subtitleOverlay.hidden = !cue;
+    }
+
+    async function loadSubtitleAssets() {
+        const currentRun = runName();
+        if (!currentRun || state.disposed) return;
+        const token = ++state.subtitleAssetsToken;
+        try {
+            const response = await api.fetchApi(
+                `/minimax_h3_context_loop/project-assets?project=${encodeURIComponent(currentRun)}`,
+            );
+            const payload = await response.json();
+            if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
+            if (state.disposed || token !== state.subtitleAssetsToken
+                    || currentRun !== runName()) return;
+            state.subtitleAssetsRun = currentRun;
+            state.subtitleAssets = (payload.assets ?? []).filter(
+                (asset) => asset?.kind === "audio" && String(asset?.lyrics ?? "").trim(),
+            );
+            renderSubtitleTimeline();
+            if (state.view === "subtitles") renderPanel();
+            updateSubtitleOverlay();
+        } catch (error) {
+            if (token === state.subtitleAssetsToken) {
+                state.subtitleAssets = [];
+                console.warn("H3 Plan Studio could not load timed lyrics:", error);
+            }
+        }
+    }
+
     function promptEditorsSignature(editors = state.promptEditors) {
         return editors.map((editor) => `${nodeType(editor)}:${String(editor.id ?? "")}`).sort().join("|");
     }
@@ -658,11 +960,52 @@ function mount(node) {
                 text:chapter.text ?? "",
             })),
             scene_order:sceneOrder,
+            placements:state.editorial.placements.map((placement) => ({
+                scene_id:placement.scene_id,
+                scene:sceneById.get(placement.scene_id),
+                start_frame:placement.start_frame,
+            })),
+            locked_scene_ids:[...state.editorial.locked_scene_ids],
+            subtitles:{...state.editorial.subtitles},
         };
+    }
+
+    function applyEditorialPayload(payload) {
+        const currentRun = runName();
+        if (!payload || String(payload.run_name ?? "") !== currentRun) return false;
+        const next = normalizedEditorial(payload);
+        const previous = JSON.stringify(state.editorial);
+        state.editorial = next;
+        state.editorialRun = currentRun;
+        state.editorialReady = true;
+        state.lastEditorialSignature = JSON.stringify({
+            run_name:currentRun,
+            chapters:(payload.chapters ?? []).map((chapter) => ({
+                id:chapter.id, title:chapter.title,
+                start_scene_id:chapter.start_scene_id,
+                start_scene:chapter.start_scene,
+                text:chapter.text ?? "",
+            })),
+            scene_order:(payload.scene_order ?? []).map((row) => ({
+                scene:row.scene, scene_id:row.scene_id,
+            })),
+            placements:next.placements.map((placement) => ({
+                scene_id:placement.scene_id,
+                scene:(payload.scene_order ?? []).find(
+                    (row) => row.scene_id === placement.scene_id,
+                )?.scene,
+                start_frame:placement.start_frame,
+            })),
+            locked_scene_ids:[...next.locked_scene_ids],
+            subtitles:{...next.subtitles},
+        });
+        scheduleEditorialSave();
+        return previous !== JSON.stringify(next);
     }
 
     function scheduleEditorialSave() {
         if (!state.plan) return;
+        if (!state.editorialReady || state.editorialRun !== runName()) return;
         const payload = editorialPayload();
         const signature = JSON.stringify(payload);
         if (signature === state.lastEditorialSignature) return;
@@ -860,11 +1203,16 @@ function mount(node) {
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
             if (state.disposed || token !== state.checkpointToken || currentRun !== runName()) return;
+            const editorialChanged = applyEditorialPayload(payload.editorial);
             const records = payload.checkpoints ?? [];
             const signature = studioCheckpointSignature(currentRun, records);
             const recoveredFromError = Boolean(state.checkpointError);
             state.checkpointError = "";
             if (signature === state.checkpointSignature) {
+                if (editorialChanged) {
+                    renderStatus(); renderTimeline();
+                    if (["player", "subtitles"].includes(state.view)) renderPanel();
+                }
                 if (recoveredFromError) renderStatus();
                 return;
             }
@@ -877,6 +1225,7 @@ function mount(node) {
             return;
         }
         refreshTimelineCheckpoints(); renderStatus();
+        if (state.view === "context") renderPanel();
         if (state.view === "player" && state.player?.paused) {
             const media = playerCheckpoint(state.playerIndex);
             const desired = media?.video ? videoUrl(media.video) : "";
@@ -909,14 +1258,18 @@ function mount(node) {
     function renderStatus() {
         const host = root.querySelector(".h3studio-statusline");
         if (!host || !state.plan) return;
-        const result = timing();
+        const {result, totalSeconds, sceneEndSeconds} = timelineModel();
         const ready = result.shots.filter(
             (row, index) => matchingStudioCheckpoint(state.checkpoints, index, row),
         ).length;
         host.replaceChildren();
         host.append(
             element("strong", "", `${result.shots.length} scenes`),
-            document.createTextNode(`${result.totalFrames} delivered frames · ${formatClock(result.totalSeconds)}`),
+            document.createTextNode(
+                `${result.totalFrames} generated frames · ` +
+                `${formatClock(sceneEndSeconds)} placed · ` +
+                `blank track open to ${formatClock(totalSeconds)}`,
+            ),
             document.createTextNode(`${settings().contextLength}f overlap · ${ready}/${result.shots.length} rendered`),
         );
         if (result.errors.length) host.append(element("span", "h3studio-error", `${result.errors.length} plan issue${result.errors.length === 1 ? "" : "s"}`));
@@ -925,25 +1278,71 @@ function mount(node) {
 
     function renderRuler(ruler, totalSeconds) {
         ruler.replaceChildren();
-        const intervals = totalSeconds > 90 ? 30 : totalSeconds > 35 ? 10 : 5;
-        for (let second = 0; second <= totalSeconds + .001; second += intervals) {
-            const label = element("span", "", formatClock(second));
-            label.style.position = "absolute";
-            label.style.left = `${totalSeconds ? second / totalSeconds * 100 : 0}%`;
-            label.style.transform = second ? "translateX(-50%)" : "";
-            ruler.append(label);
+        const width = Math.max(
+            Number(state.timelineContent?.dataset.timelineWidth) || 0,
+            ruler.clientWidth,
+        );
+        for (const tick of studioRulerTicks(totalSeconds, width)) {
+            const marker = element(
+                "span",
+                `h3studio-ruler-tick${tick.major ? " h3studio-major" : ""}`,
+            );
+            marker.style.left = `${totalSeconds ? tick.seconds / totalSeconds * 100 : 0}%`;
+            if (tick.major) marker.append(
+                element("span", "", formatClock(tick.seconds)),
+            );
+            ruler.append(marker);
         }
         const playhead = element("span", "h3studio-playhead");
-        playhead.style.left = "0%";
+        playhead.style.left = `${totalSeconds
+            ? (state.timelinePosition ?? 0) / totalSeconds * 100 : 0}%`;
         ruler.append(playhead);
         state.playhead = playhead;
-        ruler.addEventListener("click", (event) => {
+        const hover = element("span", "h3studio-ruler-hover");
+        hover.hidden = true;
+        ruler.append(hover);
+        const targetAtEvent = (event) => {
             if (!totalSeconds) return;
             const rect = ruler.getBoundingClientRect();
-            const target = Math.max(0, Math.min(totalSeconds, (event.clientX - rect.left) / rect.width * totalSeconds));
+            return Math.max(0, Math.min(
+                totalSeconds,
+                (event.clientX - rect.left) / Math.max(1, rect.width) * totalSeconds,
+            ));
+        };
+        const showHover = (event) => {
+            const target = targetAtEvent(event);
+            if (target == null) return;
+            hover.hidden = false;
+            hover.textContent = formatClock(target);
+            hover.style.left = `${totalSeconds ? target / totalSeconds * 100 : 0}%`;
+        };
+        const scrub = (event) => {
+            const target = targetAtEvent(event);
+            if (target == null) return;
             state.timelinePosition = target;
-            state.view = "player"; persistView(); renderToolbarState(); renderPanel();
-        });
+            if (state.view !== "player") {
+                state.view = "player"; persistView(); renderToolbarState(); renderPanel();
+            } else seekTimeline(target, false);
+            showHover(event);
+        };
+        ruler.onpointerdown = (event) => {
+            if (event.button !== 0) return;
+            event.preventDefault();
+            ruler.setPointerCapture?.(event.pointerId);
+            ruler.dataset.scrubbing = "true";
+            scrub(event);
+        };
+        ruler.onpointermove = (event) => {
+            showHover(event);
+            if (ruler.dataset.scrubbing === "true") scrub(event);
+        };
+        ruler.onpointerup = ruler.onpointercancel = (event) => {
+            delete ruler.dataset.scrubbing;
+            ruler.releasePointerCapture?.(event.pointerId);
+        };
+        ruler.onpointerleave = () => {
+            if (ruler.dataset.scrubbing !== "true") hover.hidden = true;
+        };
     }
 
     function revealActiveTimelineScene() {
@@ -962,8 +1361,30 @@ function mount(node) {
         }
     }
 
+    function timelineScrollSnapshot(anchorRatio = .5) {
+        const viewport = state.timelineViewport;
+        const content = state.timelineContent;
+        const totalSeconds = studioTimelineTotalSeconds(state.timelineSegments);
+        const contentWidth = Math.max(
+            0, Number(content?.dataset.timelineWidth) || content?.scrollWidth || 0,
+        );
+        if (!viewport || !content || !(contentWidth > 0) || !(totalSeconds > 0)) {
+            return null;
+        }
+        const boundedAnchor = Math.max(0, Math.min(
+            1, Number(anchorRatio) || 0,
+        ));
+        return {
+            seconds:studioTimelineScrollAnchorSeconds(
+                viewport.scrollLeft, viewport.clientWidth,
+                contentWidth, totalSeconds, boundedAnchor,
+            ),
+            anchorRatio:boundedAnchor,
+        };
+    }
+
     function layoutTimeline({preserveScroll = true, revealActive = false,
-        anchorRatio = .5} = {}) {
+        anchorRatio = .5, restoreScroll = null} = {}) {
         const viewport = state.timelineViewport;
         const content = state.timelineContent;
         if (!viewport || !content || !state.plan) return;
@@ -972,17 +1393,23 @@ function mount(node) {
             Number(content.dataset.timelineWidth) ||
                 content.scrollWidth || viewport.clientWidth,
         );
-        const boundedAnchor = Math.max(0, Math.min(1, Number(anchorRatio) || 0));
+        const boundedAnchor = Math.max(0, Math.min(
+            1, Number(restoreScroll?.anchorRatio ?? anchorRatio) || 0,
+        ));
+        const restoredSeconds = Number(restoreScroll?.seconds);
         const anchor = preserveScroll
             ? (viewport.scrollLeft + viewport.clientWidth * boundedAnchor) /
                 oldWidth
             : 0;
-        const result = timing();
+        const model = timelineModel();
+        const result = model.result;
         const layout = studioTimelineLayout(
             result.shots, viewport.clientWidth, state.timelineZoom,
+            state.editorial.placements, model.workspaceEndFrame,
         );
         state.timelineZoom = layout.zoom;
         state.timelineWidths = layout.widths;
+        state.timelineSegments = layout.segments;
         content.dataset.timelineWidth = String(layout.contentWidth);
         content.style.width = `${layout.contentWidth}px`;
         for (const host of [
@@ -991,9 +1418,11 @@ function mount(node) {
         ]) {
             if (!host) continue;
             [...host.querySelectorAll(
-                ".h3studio-card,.h3studio-audio-card",
+                "[data-timeline-key]",
             )].forEach((card) => {
-                const index = Number(card.dataset.sceneIndex);
+                const index = layout.segments.findIndex(
+                    (segment) => segment.key === card.dataset.timelineKey,
+                );
                 card.style.setProperty(
                     "--h3-scene-width",
                     `${layout.widths[index] ?? 0}px`,
@@ -1006,9 +1435,17 @@ function mount(node) {
         if (state.timelineZoomLabel) {
             state.timelineZoomLabel.textContent = `${Math.round(layout.zoom * 100)}%`;
         }
+        if (state.timelineRuler) renderRuler(
+            state.timelineRuler, layout.totalSeconds,
+        );
         requestAnimationFrame(() => {
             if (!viewport.isConnected) return;
-            if (preserveScroll) {
+            if (Number.isFinite(restoredSeconds)) {
+                viewport.scrollLeft = studioTimelineScrollLeftForAnchor(
+                    restoredSeconds, viewport.clientWidth,
+                    layout.pixelsPerSecond, boundedAnchor,
+                );
+            } else if (preserveScroll) {
                 viewport.scrollLeft = Math.max(
                     0,
                     anchor * layout.contentWidth -
@@ -1038,6 +1475,39 @@ function mount(node) {
         node.properties[TIMELINE_ZOOM_PROPERTY] = state.timelineZoom;
         layoutTimeline({preserveScroll:true, anchorRatio});
         dirty();
+    }
+
+    function extendTimelineWorkspace(minimumEndFrame = null) {
+        if (state.timelineExtending) return false;
+        const model = timelineModel();
+        if (model.workspaceEndFrame >= 864000) return false;
+        const pageFrames = Math.max(FPS, state.timelineSceneEndFrame);
+        const requested = minimumEndFrame == null
+            ? model.workspaceEndFrame + pageFrames
+            : Number(minimumEndFrame);
+        const next = Math.min(864000, Math.max(
+            model.workspaceEndFrame + 1,
+            Math.ceil(Number(requested) || 0),
+        ));
+        if (next <= model.workspaceEndFrame) return false;
+        state.timelineExtending = true;
+        state.timelineWorkspaceEndFrame = next;
+        const scrollLeft = state.timelineViewport?.scrollLeft ?? 0;
+        renderTimeline({revealActive:false});
+        requestAnimationFrame(() => {
+            if (state.timelineViewport?.isConnected) {
+                state.timelineViewport.scrollLeft = scrollLeft;
+            }
+        });
+        const updated = timelineModel();
+        if (state.playerSlider) {
+            state.playerSlider.max = String(updated.totalSeconds);
+        }
+        const clock = root.querySelector(".h3studio-player-clock");
+        if (clock) clock.textContent = `${formatClock(state.timelinePosition ?? 0)} / ${formatClock(updated.totalSeconds)}`;
+        renderStatus();
+        requestAnimationFrame(() => { state.timelineExtending = false; });
+        return true;
     }
 
     function sourceScene(index) {
@@ -1083,7 +1553,20 @@ function mount(node) {
 
     function sourceWaveformUrl(payload = state.sourcePreview) {
         if (!payload?.source_audio?.available || !payload?.token) return "";
-        const query = new URLSearchParams({token:payload.token});
+        const availableFrames = Number(
+            payload.source_audio.available_frame_count,
+        ) || Math.ceil(timelineModel().totalSeconds * FPS);
+        const requestedFrames = Math.max(
+            Number(payload.source_audio.frame_count) || 0,
+            Math.min(
+                availableFrames,
+                Math.ceil(timelineModel().totalSeconds * FPS),
+            ),
+        );
+        const query = new URLSearchParams({
+            token:payload.token,
+            frame_count:String(requestedFrames),
+        });
         return api.apiURL(`/minimax_h3_context_loop/plan-studio/source-waveform?${query.toString()}`);
     }
 
@@ -1150,11 +1633,12 @@ function mount(node) {
         const token = String(payload?.token ?? "");
         const url = sourceWaveformUrl(payload);
         if (!token || !url) return;
-        if (state.sourceWaveformToken === token && state.sourceWaveform) return;
-        if (state.sourceWaveformToken === token && state.sourceWaveformPromise) {
+        const requestKey = `${token}:${url}`;
+        if (state.sourceWaveformToken === requestKey && state.sourceWaveform) return;
+        if (state.sourceWaveformToken === requestKey && state.sourceWaveformPromise) {
             return state.sourceWaveformPromise;
         }
-        state.sourceWaveformToken = token;
+        state.sourceWaveformToken = requestKey;
         state.sourceWaveform = null;
         const request = (async () => {
             const response = await api.fetchApi(url);
@@ -1162,14 +1646,14 @@ function mount(node) {
             if (!response.ok) throw new Error(
                 waveform.error || `HTTP ${response.status}`,
             );
-            if (state.disposed || state.sourceWaveformToken !== token) return;
+            if (state.disposed || state.sourceWaveformToken !== requestKey) return;
             state.sourceWaveform = waveform;
             renderSourceAudioTimeline();
         })();
         state.sourceWaveformPromise = request;
         try { await request; }
         catch (error) {
-            if (state.sourceWaveformToken === token) {
+            if (state.sourceWaveformToken === requestKey) {
                 state.sourceWaveform = {samples:[], error:error?.message || String(error)};
                 renderSourceAudioTimeline();
             }
@@ -1182,7 +1666,9 @@ function mount(node) {
 
     function applySourcePresentation(payload) {
         if (!payload || String(payload.run_name ?? "") !== runName()) return;
-        if (state.sourceWaveformToken !== String(payload.token ?? "")) {
+        if (!state.sourceWaveformToken.startsWith(
+            `${String(payload.token ?? "")}:`,
+        )) {
             state.sourceWaveform = null;
             state.sourceWaveformToken = "";
             state.sourceWaveformPromise = null;
@@ -1193,8 +1679,8 @@ function mount(node) {
         if (payload.source_audio?.available) void loadSourceWaveform(payload);
         if (state.view === "player" && state.player) {
             seekTimeline(
-                state.timelinePosition ?? studioSceneStartSeconds(
-                    timing().shots, state.active),
+                state.timelinePosition ?? studioEditorialSceneStartSeconds(
+                    timelineModel().segments, state.active),
                 false,
             );
         }
@@ -1267,31 +1753,274 @@ function mount(node) {
         }
     }
 
-    function renderTimeline() {
+    function trailingGapSegment() {
+        return state.timelineSegments.find(
+            (segment) => segment.kind === "gap" && segment.trailing,
+        ) ?? null;
+    }
+
+    function appendTimelineGap(host, segment, interactive = false) {
+        if (!host || !segment) return;
+        const gap = interactive
+            ? button("", segment.trailing
+                ? `Open black timeline after the last scene · ${formatClock(segment.durationSeconds)}`
+                : `Black gap · ${formatClock(segment.durationSeconds)}`, (event) => {
+                const rect = event.currentTarget?.getBoundingClientRect?.();
+                const ratio = rect?.width > 0 ? Math.max(0, Math.min(
+                    1, (event.clientX - rect.left) / rect.width,
+                )) : 0;
+                state.timelinePosition = segment.startSeconds +
+                    segment.durationSeconds * ratio;
+                state.view = "player"; persistView(); renderToolbarState(); renderPanel();
+            })
+            : element("div");
+        gap.className = interactive ? "h3studio-gap" : "h3studio-gap-spacer";
+        gap.dataset.timelineKey = segment.key;
+        gap.dataset.gapId = segment.gapId;
+        const segmentIndex = state.timelineSegments.findIndex(
+            (candidate) => candidate.key === segment.key,
+        );
+        if (state.timelineWidths[segmentIndex] > 0) gap.style.setProperty(
+            "--h3-scene-width", `${state.timelineWidths[segmentIndex]}px`,
+        );
+        if (interactive) gap.append(element(
+            "span", "h3studio-gap-copy",
+            segment.trailing
+                ? `OPEN TIMELINE · ${formatClock(segment.durationSeconds)}`
+                : `EMPTY · ${formatClock(segment.durationSeconds)}`,
+        ));
+        host.append(gap);
+    }
+
+    function enableScenePlacementDrag(card, handle, index) {
+        handle.title = sceneLocked(index)
+            ? "Scene locked · unlock it before moving"
+            : "Drag the clip or its grip to set the editorial start. Empty track space becomes black.";
+        const startDrag = (event) => {
+            if (event.button !== 0 || sceneLocked(index)) return;
+            if (event.target?.closest?.(
+                ".h3studio-lock-handle,.h3studio-resize-handle,button,input,select,textarea",
+            )) return;
+            event.preventDefault(); event.stopPropagation();
+            const model = timelineModel();
+            const scene = model.segments.find(
+                (segment) => segment.kind === "scene" && segment.sceneIndex === index,
+            );
+            if (!scene) return;
+            const contentWidth = Math.max(
+                1, Number(state.timelineContent?.dataset.timelineWidth)
+                    || state.timelineContent?.clientWidth || 1,
+            );
+            const secondsPerPixel = model.totalSeconds / contentWidth;
+            const originX = event.clientX;
+            const viewport = state.timelineViewport;
+            const originScrollLeft = viewport?.scrollLeft ?? 0;
+            const pointerId = event.pointerId;
+            let targetFrame = scene.startFrame;
+            let moved = false;
+            state.timelineDragging = true;
+            card.classList.add("h3studio-moving");
+            card.setPointerCapture?.(pointerId);
+            const onMove = (moveEvent) => {
+                if (moveEvent.pointerId !== pointerId) return;
+                moveEvent.preventDefault();
+                if (viewport) {
+                    const rect = viewport.getBoundingClientRect();
+                    if (moveEvent.clientX > rect.right - 36) viewport.scrollLeft += 18;
+                    else if (moveEvent.clientX < rect.left + 36) viewport.scrollLeft -= 18;
+                }
+                const deltaX = moveEvent.clientX - originX +
+                    ((viewport?.scrollLeft ?? 0) - originScrollLeft);
+                if (Math.abs(deltaX) > 3) moved = true;
+                if (!moved) return;
+                targetFrame = Math.max(
+                    0,
+                    Math.min(864000, Math.round(
+                        scene.startFrame + deltaX * secondsPerPixel * FPS,
+                    )),
+                );
+                const placedDeltaX = (targetFrame - scene.startFrame)
+                    / Math.max(Number.EPSILON, secondsPerPixel * FPS);
+                card.style.transform = `translateX(${placedDeltaX}px)`;
+                card.style.opacity = ".78";
+                handle.textContent = formatClock(targetFrame / FPS);
+            };
+            const finish = (upEvent) => {
+                if (upEvent.pointerId !== pointerId) return;
+                window.removeEventListener("pointermove", onMove, true);
+                window.removeEventListener("pointerup", finish, true);
+                window.removeEventListener("pointercancel", finish, true);
+                if (card.hasPointerCapture?.(pointerId)) {
+                    card.releasePointerCapture(pointerId);
+                }
+                state.timelineDragging = false;
+                card.classList.remove("h3studio-moving");
+                card.style.removeProperty("transform");
+                card.style.removeProperty("opacity");
+                handle.textContent = "⋮⋮";
+                card._h3SuppressClick = moved;
+                if (moved && upEvent.type === "pointerup") {
+                    setScenePlacement(index, targetFrame);
+                }
+            };
+            window.addEventListener("pointermove", onMove, true);
+            window.addEventListener("pointerup", finish, true);
+            window.addEventListener("pointercancel", finish, true);
+        };
+        card.addEventListener("pointerdown", startDrag);
+    }
+
+    function enableSceneDurationDrag(card, handle, index) {
+        const defaultTitle = sceneLocked(index)
+            ? "Scene locked · unlock it before changing its length"
+            : "Drag to set this scene's generated length. It snaps to H3's 17n+5 frame grid.";
+        handle.title = defaultTitle;
+        handle.addEventListener("pointerdown", (event) => {
+            if (event.button !== 0 || sceneLocked(index)) return;
+            event.preventDefault(); event.stopPropagation();
+            const model = timelineModel();
+            const row = model.result.shots[index];
+            const shot = state.plan?.shots?.[index];
+            if (!row || !shot) return;
+            const contentWidth = Math.max(
+                1, Number(state.timelineContent?.dataset.timelineWidth)
+                    || state.timelineContent?.clientWidth || 1,
+            );
+            const secondsPerPixel = model.totalSeconds / contentWidth;
+            const contextFrames = Math.max(
+                0, Number(row.rawFrames) - Number(row.deliveredFrames),
+            );
+            const minimumRaw = studioNearestH3FrameLength(
+                contextFrames + 1, contextFrames + 1, 3592,
+            );
+            const originX = event.clientX;
+            const originWidth = card.getBoundingClientRect().width;
+            let targetRaw = Number(row.rawFrames) || minimumRaw;
+            let moved = false;
+            state.timelineDragging = true;
+            handle.setPointerCapture?.(event.pointerId);
+            const onMove = (moveEvent) => {
+                const deltaX = moveEvent.clientX - originX;
+                if (Math.abs(deltaX) > 2) moved = true;
+                if (!moved) return;
+                targetRaw = studioNearestH3FrameLength(
+                    Number(row.rawFrames) + deltaX * secondsPerPixel * FPS,
+                    minimumRaw, 3592,
+                );
+                const deliveredFrames = Math.max(1, targetRaw - contextFrames);
+                card.style.setProperty(
+                    "--h3-scene-width",
+                    `${deliveredFrames / FPS / secondsPerPixel}px`,
+                );
+                handle.title = `${targetRaw} raw frames · ${(targetRaw / FPS).toFixed(3)}s generation`;
+            };
+            const finish = (upEvent) => {
+                handle.removeEventListener("pointermove", onMove);
+                handle.removeEventListener("pointerup", finish);
+                handle.removeEventListener("pointercancel", finish);
+                handle.releasePointerCapture?.(upEvent.pointerId);
+                state.timelineDragging = false;
+                handle.title = defaultTitle;
+                card.style.setProperty("--h3-scene-width", `${originWidth}px`);
+                if (!moved || targetRaw === Number(row.rawFrames)) return;
+                shot.length = targetRaw;
+                delete shot.frames;
+                delete shot.duration_seconds;
+                writePlan();
+                renderShell();
+            };
+            handle.addEventListener("pointermove", onMove);
+            handle.addEventListener("pointerup", finish);
+            handle.addEventListener("pointercancel", finish);
+        });
+    }
+
+    function renderTimeline({revealActive = false, restoreScroll = null} = {}) {
         const host = state.timelineHost;
         if (!host || !state.plan) return;
         host.replaceChildren();
         const result = timing();
-        for (let index = 0; index < state.plan.shots.length; index += 1) {
-            const shot = state.plan.shots[index];
+        state.timelineSegments = timelineModel().segments;
+        for (const timelineSegment of state.timelineSegments) {
+            if (timelineSegment.kind === "gap") {
+                if (!timelineSegment.trailing) {
+                    appendTimelineGap(host, timelineSegment, true);
+                }
+                continue;
+            }
+            const index = timelineSegment.sceneIndex;
             const row = result.shots[index];
             const checkpoint = matchingStudioCheckpoint(state.checkpoints, index, row);
-            const card = button("", `Scene ${index + 1}: ${row.id}`, () => void selectScene(index));
+            const locked = sceneLocked(index);
+            const card = element("div");
+            card.title = locked
+                ? `Scene ${index + 1}: ${row.id} · locked`
+                : `Scene ${index + 1}: ${row.id} · drag to move`;
+            card.tabIndex = 0;
+            card.setAttribute("role", "button");
+            card.addEventListener("click", (event) => {
+                if (card._h3SuppressClick) {
+                    card._h3SuppressClick = false;
+                    event.preventDefault(); event.stopPropagation();
+                    return;
+                }
+                void selectScene(index);
+            });
+            card.addEventListener("keydown", (event) => {
+                if (event.target !== card || !["Enter", " "].includes(event.key)) return;
+                event.preventDefault();
+                void selectScene(index);
+            });
             card.dataset.sceneIndex = String(index);
-            card.className = `h3studio-card${index === state.active ? " h3studio-selected" : ""}${checkpoint?.ready ? " h3studio-rendered" : ""}`;
+            card.dataset.timelineKey = `scene:${index}`;
+            card.className = `h3studio-card${index === state.active ? " h3studio-selected" : ""}${checkpoint?.ready ? " h3studio-rendered" : ""}${locked ? " h3studio-locked" : ""}`;
             card.style.setProperty("--scene", automaticSceneColor(index));
-            if (state.timelineWidths[index] > 0) {
+            const segmentIndex = state.timelineSegments.findIndex(
+                (segment) => segment.key === card.dataset.timelineKey,
+            );
+            if (state.timelineWidths[segmentIndex] > 0) {
                 card.style.setProperty(
-                    "--h3-scene-width", `${state.timelineWidths[index]}px`,
+                    "--h3-scene-width", `${state.timelineWidths[segmentIndex]}px`,
                 );
             }
             updateTimelineCheckpointCard(card, index, result);
+            const sceneSegment = timelineSegment;
             const copy = element("span", "h3studio-card-copy");
             copy.append(element("span", "h3studio-card-title", `${index + 1}. ${row.id}`),
-                element("span", "h3studio-card-meta", `${formatClock(row.deliveredSeconds)} · ${row.rawFrames || "—"}f raw${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
-            card.append(copy, element("span", "h3studio-render-dot"));
+                element("span", "h3studio-card-meta", `${formatClock(sceneSegment?.startSeconds ?? 0)} → ${formatClock(sceneSegment?.endSeconds ?? row.deliveredSeconds)} · ${row.rawFrames || "—"}f raw${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
+            const dragHandle = element("span", "h3studio-drag-handle", "⋮⋮");
+            dragHandle.title = locked
+                ? "Scene locked · unlock it before moving"
+                : "Move scene on the editorial timeline";
+            enableScenePlacementDrag(card, dragHandle, index);
+            const lockHandle = button(
+                "",
+                locked
+                ? "Unlock scene movement and duration editing"
+                : "Lock scene movement and duration editing",
+                (event) => {
+                    event.preventDefault(); event.stopPropagation();
+                    setSceneLocked(index, !locked);
+                },
+            );
+            lockHandle.className = `h3studio-lock-handle${locked ? " h3studio-is-locked" : ""}`;
+            lockHandle.setAttribute("aria-label", locked ? "Unlock scene" : "Lock scene");
+            const lockIcon = element("span", "h3studio-lock-icon");
+            lockIcon.setAttribute("aria-hidden", "true");
+            lockHandle.append(lockIcon);
+            lockHandle.addEventListener("pointerdown", (event) => event.stopPropagation());
+            const resizeHandle = element("span", "h3studio-resize-handle");
+            resizeHandle.title = locked
+                ? "Scene locked · unlock it before changing its length"
+                : "Resize scene length · snaps to H3's 17n+5 frame grid";
+            enableSceneDurationDrag(card, resizeHandle, index);
+            card.append(
+                copy, dragHandle, lockHandle, resizeHandle,
+                element("span", "h3studio-render-dot"),
+            );
             host.append(card);
         }
+        appendTimelineGap(host, trailingGapSegment(), true);
         for (const chapter of orderedChapters(state.plan)) {
             const index = state.plan.shots.findIndex((shot, offset) => (
                 safeShotId(shot?.id, `clip_${String(offset + 1).padStart(4, "0")}`)
@@ -1309,10 +2038,14 @@ function mount(node) {
         }
         renderSourceTimeline();
         renderSourceAudioTimeline();
+        renderSubtitleTimeline();
         layoutTimeline({
-            preserveScroll:Boolean(state.timelineContent?.dataset.timelineWidth),
-            revealActive:true,
+            preserveScroll:restoreScroll == null
+                && Boolean(state.timelineContent?.dataset.timelineWidth),
+            revealActive,
+            restoreScroll,
         });
+        state.timelineRenderedActive = state.active;
     }
 
     function renderSourceTimeline() {
@@ -1330,7 +2063,14 @@ function mount(node) {
             ));
             return;
         }
-        for (let index = 0; index < state.plan.shots.length; index += 1) {
+        for (const timelineSegment of state.timelineSegments) {
+            if (timelineSegment.kind === "gap") {
+                if (!timelineSegment.trailing) {
+                    appendTimelineGap(host, timelineSegment);
+                }
+                continue;
+            }
+            const index = timelineSegment.sceneIndex;
             const row = result.shots[index];
             const scene = sourceScene(index);
             const reference = scene?.references?.[0] ?? null;
@@ -1339,11 +2079,15 @@ function mount(node) {
                 : `Scene ${index + 1} has no active path-backed motion reference`,
             () => void selectScene(index));
             card.dataset.sceneIndex = String(index);
+            card.dataset.timelineKey = `scene:${index}`;
             card.className = `h3studio-card h3studio-source-card${index === state.active ? " h3studio-selected" : ""}`;
             card.style.setProperty("--scene", automaticSceneColor(index));
-            if (state.timelineWidths[index] > 0) {
+            const segmentIndex = state.timelineSegments.findIndex(
+                (segment) => segment.key === card.dataset.timelineKey,
+            );
+            if (state.timelineWidths[segmentIndex] > 0) {
                 card.style.setProperty(
-                    "--h3-scene-width", `${state.timelineWidths[index]}px`,
+                    "--h3-scene-width", `${state.timelineWidths[segmentIndex]}px`,
                 );
             }
             if (reference && index === state.active && state.view !== "player") {
@@ -1368,6 +2112,7 @@ function mount(node) {
             card.append(copy, element("span", "h3studio-render-dot"));
             host.append(card);
         }
+        appendTimelineGap(host, trailingGapSegment());
     }
 
     function renderSourceAudioTimeline() {
@@ -1388,7 +2133,35 @@ function mount(node) {
             return;
         }
         const result = timing();
-        for (let index = 0; index < result.shots.length; index += 1) {
+        for (const timelineSegment of state.timelineSegments) {
+            if (timelineSegment.kind === "gap") {
+                if (timelineSegment.trailing) continue;
+                const gap = timelineSegment;
+                const gapCard = element("div", "h3studio-audio-card");
+                gapCard.dataset.timelineKey = gap.key;
+                gapCard.title = `Source song continues through ${formatClock(gap.durationSeconds)} of black video`;
+                const gapSegmentIndex = state.timelineSegments.findIndex(
+                    (segment) => segment.key === gap.key,
+                );
+                if (state.timelineWidths[gapSegmentIndex] > 0) gapCard.style.setProperty(
+                    "--h3-scene-width", `${state.timelineWidths[gapSegmentIndex]}px`,
+                );
+                const gapWaveform = element("canvas", "h3studio-waveform");
+                gapWaveform.style.inset = "3px 4px";
+                gapWaveform.style.width = "calc(100% - 8px)";
+                drawSourceWaveform(
+                    gapWaveform,
+                    studioWaveformIntervalSamples(
+                        state.sourceWaveform, gap.startSeconds,
+                        gap.durationSeconds,
+                    ),
+                    "#9aa5b8", false,
+                );
+                gapCard.append(gapWaveform);
+                host.append(gapCard);
+                continue;
+            }
+            const index = timelineSegment.sceneIndex;
             const row = result.shots[index];
             const muted = sourceAudioMuted(index);
             const card = element(
@@ -1396,17 +2169,24 @@ function mount(node) {
                 `h3studio-audio-card${index === state.active ? " h3studio-selected" : ""}${muted ? " h3studio-audio-muted" : ""}`,
             );
             card.dataset.sceneIndex = String(index);
+            card.dataset.timelineKey = `scene:${index}`;
             card.title = `Scene ${index + 1} Source Timeline audio${muted ? " (muted)" : ""}`;
             card.style.setProperty("--scene", automaticSceneColor(index));
-            if (state.timelineWidths[index] > 0) {
+            const segmentIndex = state.timelineSegments.findIndex(
+                (segment) => segment.key === card.dataset.timelineKey,
+            );
+            if (state.timelineWidths[segmentIndex] > 0) {
                 card.style.setProperty(
-                    "--h3-scene-width", `${state.timelineWidths[index]}px`,
+                    "--h3-scene-width", `${state.timelineWidths[segmentIndex]}px`,
                 );
             }
             card.addEventListener("click", () => void selectScene(index));
             const canvas = element("canvas", "h3studio-waveform");
-            const samples = studioWaveformSceneSamples(
-                state.sourceWaveform, result.shots, index,
+            const sceneSegment = timelineSegment;
+            const samples = studioWaveformIntervalSamples(
+                state.sourceWaveform,
+                sceneSegment?.startSeconds ?? 0,
+                sceneSegment?.durationSeconds ?? row.deliveredSeconds,
             );
             drawSourceWaveform(
                 canvas, samples, automaticSceneColor(index), muted,
@@ -1425,8 +2205,52 @@ function mount(node) {
             card.append(canvas, mute);
             host.append(card);
         }
+        const tail = trailingGapSegment();
+        if (tail) {
+            const tailCard = element("div", "h3studio-audio-card");
+            tailCard.dataset.timelineKey = tail.key;
+            tailCard.title = "Source song continues through the open black timeline";
+            const segmentIndex = state.timelineSegments.findIndex(
+                (segment) => segment.key === tail.key,
+            );
+            if (state.timelineWidths[segmentIndex] > 0) tailCard.style.setProperty(
+                "--h3-scene-width", `${state.timelineWidths[segmentIndex]}px`,
+            );
+            const waveform = element("canvas", "h3studio-waveform");
+            waveform.style.inset = "3px 4px";
+            waveform.style.width = "calc(100% - 8px)";
+            drawSourceWaveform(
+                waveform,
+                studioWaveformIntervalSamples(
+                    state.sourceWaveform, tail.startSeconds,
+                    tail.durationSeconds,
+                ),
+                "#9aa5b8", false,
+            );
+            tailCard.append(waveform);
+            host.append(tailCard);
+        }
         if (!state.sourceWaveform && !state.sourceWaveformPromise) {
             void loadSourceWaveform();
+        }
+    }
+
+    function renderSubtitleTimeline() {
+        const host = state.subtitleTimelineHost;
+        if (!host) return;
+        host.replaceChildren();
+        const {totalSeconds} = timelineModel();
+        if (!totalSeconds) return;
+        const offset = Number(state.editorial.subtitles?.offset_seconds) || 0;
+        for (const cue of subtitleCues()) {
+            const start = Math.max(0, Number(cue.startSeconds) + offset);
+            const end = Math.min(totalSeconds, Number(cue.endSeconds) + offset);
+            if (!(end > start)) continue;
+            const item = element("div", "h3studio-subtitle-cue", cue.text);
+            item.title = `${formatClock(start)}–${formatClock(end)} · ${cue.text}`;
+            item.style.left = `${start / totalSeconds * 100}%`;
+            item.style.width = `${(end - start) / totalSeconds * 100}%`;
+            host.append(item);
         }
     }
 
@@ -1458,7 +2282,9 @@ function mount(node) {
         state.activeChapterId = "";
         state.active = Math.max(0, Math.min(state.plan.shots.length - 1, Number(index)));
         if (state.view === "player") {
-            state.timelinePosition = studioSceneStartSeconds(timing().shots, state.active);
+            state.timelinePosition = studioEditorialSceneStartSeconds(
+                timelineModel().segments, state.active,
+            );
         }
         persistView(); renderSourceTimeline(); renderSourceAudioTimeline();
         updateTimelineSelection();
@@ -1598,10 +2424,14 @@ function mount(node) {
     function renderScenePanel() {
         const shot = state.plan.shots[state.active];
         const row = timing().shots[state.active];
+        const timelineLocked = sceneLocked(state.active);
         const panel = element("div");
         const head = element("div", "h3studio-scene-head");
+        const editorialStart = studioEditorialSceneStartSeconds(
+            timelineModel().segments, state.active,
+        );
         head.append(element("strong", "", `Scene ${state.active + 1} of ${state.plan.shots.length}`),
-            element("span", "h3studio-scene-label", `${row.rawFrames || "—"} raw · ${row.deliveredFrames || "—"} delivered · ${row.videoBlendFrames}f incoming blend · starts at ${formatClock(row.generationStartFrame / 24)}`));
+            element("span", "h3studio-scene-label", `${row.rawFrames || "—"} raw · ${row.deliveredFrames || "—"} delivered · ${row.videoBlendFrames}f incoming blend · generation ${formatClock(row.generationStartFrame / 24)} · editorial ${formatClock(editorialStart)}`));
         const grid = h3StudioGridMarkers(
             row.rawFrames, row.contextLength, row.continuationMode,
         );
@@ -1651,6 +2481,12 @@ function mount(node) {
                     chapter.start_scene_id = shot.id;
                 }
             }
+            for (const placement of state.editorial.placements) {
+                if (placement.scene_id === previousId) placement.scene_id = shot.id;
+            }
+            state.editorial.locked_scene_ids = state.editorial.locked_scene_ids.map(
+                (sceneId) => sceneId === previousId ? shot.id : sceneId,
+            );
             writePlan(); renderShell();
         });
         const mode = element("select");
@@ -1659,7 +2495,9 @@ function mount(node) {
         }
         const length = element("input"); length.type = "number";
         function refreshLength() {
-            const selected = shotLengthMode(shot); mode.value = selected; length.disabled = selected === "default";
+            const selected = shotLengthMode(shot); mode.value = selected;
+            mode.disabled = timelineLocked;
+            length.disabled = timelineLocked || selected === "default";
             if (selected === "seconds") { length.value = shot.duration_seconds ?? ""; length.min = ".01"; length.max = String(3592 / 24); length.step = ".01"; }
             else if (selected === "frames") { length.value = shot.length ?? shot.frames ?? ""; length.min = "5"; length.max = "3592"; length.step = "17"; }
             else length.value = "";
@@ -1764,6 +2602,7 @@ function mount(node) {
             if (!allowed.length) {
                 delete shot.visual_context_lead_source;
                 delete shot.visual_context_lead_frames;
+                delete shot.visual_context_lead_start_frame;
                 return;
             }
             try {
@@ -1821,6 +2660,8 @@ function mount(node) {
                 shot.video_blend_frames = nextContext;
             }
             normalizeVisualLeadSpan();
+            delete shot.visual_context_start_frame;
+            delete shot.visual_context_lead_start_frame;
             writePlan();
             renderShell();
         });
@@ -1844,6 +2685,8 @@ function mount(node) {
             else shot.context_length = Number(context.value);
             sceneContextLength(shot, settings().contextLength);
             normalizeVisualLeadSpan();
+            delete shot.visual_context_start_frame;
+            delete shot.visual_context_lead_start_frame;
             refreshBlendControl();
             refreshIncomingTransition();
             writePlan();
@@ -1917,6 +2760,7 @@ function mount(node) {
                 shot.visual_context_source = visualSource.value;
                 shot.video_blend_frames = 0;
             }
+            delete shot.visual_context_start_frame;
             const recentSource = sceneVisualContextSource(
                 state.plan, state.active + 1,
             );
@@ -1926,6 +2770,7 @@ function mount(node) {
             if (leadSource !== null && leadSource === recentSource) {
                 delete shot.visual_context_lead_source;
                 delete shot.visual_context_lead_frames;
+                delete shot.visual_context_lead_start_frame;
             }
             refreshBlendControl();
             writePlan();
@@ -2020,10 +2865,13 @@ function mount(node) {
             if (!visualLeadSource.value) {
                 delete shot.visual_context_lead_source;
                 delete shot.visual_context_lead_frames;
+                delete shot.visual_context_lead_start_frame;
             } else {
                 shot.visual_context_lead_source = visualLeadSource.value;
                 applyVisualComposition();
             }
+            delete shot.visual_context_start_frame;
+            delete shot.visual_context_lead_start_frame;
             refreshBlendControl();
             writePlan();
             renderShell();
@@ -2032,6 +2880,8 @@ function mount(node) {
             if (visualLeadSource.value) {
                 applyVisualComposition();
             }
+            delete shot.visual_context_start_frame;
+            delete shot.visual_context_lead_start_frame;
             refreshBlendControl();
             writePlan();
             renderShell();
@@ -2133,6 +2983,53 @@ function mount(node) {
             writePlan();
             renderStatus();
         });
+        const placement = placementForScene(state.active);
+        const editorialScene = timelineModel().segments.find(
+            (segment) => segment.kind === "scene"
+                && segment.sceneIndex === state.active,
+        );
+        const sceneStart = element("input");
+        sceneStart.type = "text";
+        sceneStart.inputMode = "decimal";
+        sceneStart.value = placement
+            ? formatClock(Number(placement.start_frame) / FPS) : "";
+        sceneStart.placeholder = `Auto · ${formatClock(editorialScene?.startSeconds ?? 0)}`;
+        sceneStart.title = "Editorial-only position. Enter seconds, M:SS, or H:MM:SS. Scenes are resolved by their requested positions; uncovered time becomes black. This may reorder playback, but never changes generation, checkpoints, or branch lineage.";
+        const resetStart = button(
+            "Auto", "Use this scene's natural packed Plan position",
+            () => setScenePlacement(state.active, null),
+        );
+        sceneStart.disabled = timelineLocked;
+        resetStart.disabled = timelineLocked;
+        if (timelineLocked) {
+            sceneStart.title = "Scene locked · unlock it from the timeline before moving it.";
+        }
+        sceneStart.addEventListener("change", () => {
+            try {
+                const seconds = parseStudioTimecode(sceneStart.value);
+                setScenePlacement(
+                    state.active,
+                    seconds == null ? null : Math.round(seconds * FPS),
+                );
+            } catch (error) {
+                sceneStart.setCustomValidity(error.message);
+                sceneStart.reportValidity();
+                sceneStart.value = placement
+                    ? formatClock(Number(placement.start_frame) / FPS) : "";
+            }
+        });
+        sceneStart.addEventListener(
+            "input", () => sceneStart.setCustomValidity(""),
+        );
+        const sceneStartWrap = element("span", "h3studio-length");
+        sceneStartWrap.append(sceneStart, resetStart);
+        const sceneLockControl = button(
+            timelineLocked ? "Unlock scene" : "Lock scene",
+            timelineLocked
+                ? "Allow this scene to be moved, resized, or reordered"
+                : "Protect this scene from timeline movement, resizing, and reordering",
+            () => setSceneLocked(state.active, !timelineLocked),
+        );
         const form = element("div", "h3studio-form");
         form.append(
             field("Scene ID", id), field("Length", lengthControl),
@@ -2140,6 +3037,8 @@ function mount(node) {
             field("Prompt alternatives", promptSeedWrap),
             field("Seed", seedWrap),
             field("LoRA route", loraRoute),
+            field("Timeline lock", sceneLockControl),
+            field("Editorial start", sceneStartWrap),
             field("Incoming transition", incomingTransition),
             field("Final assembly crossfade frames", blendFrames),
         );
@@ -2514,7 +3413,307 @@ function mount(node) {
         };
     }
 
+    function renderContextPanel() {
+        const panel = element("div", "h3studio-context-selector");
+        const result = timing();
+        const row = result.shots[state.active];
+        const shot = state.plan.shots[state.active];
+        const title = element(
+            "div", "h3studio-scene-head",
+            `Scene ${state.active + 1} selected visual context`,
+        );
+        panel.append(title);
+        if (!row || state.active === 0) {
+            panel.append(element(
+                "div", "h3studio-context-empty",
+                "Scene 1 has no saved predecessor. Existing Video Context remains configured by its dedicated workflow input.",
+            ));
+            return panel;
+        }
+        if (!Number(row.contextLength)) {
+            panel.append(element(
+                "div", "h3studio-context-empty",
+                "This scene has 0 visual context. Choose a positive context in Scene settings before selecting a source segment.",
+            ));
+            return panel;
+        }
+        panel.append(element(
+            "div", "h3studio-context-help",
+            "Drag the fixed-width zone between native H3 latent positions. The selector advances on the 17-frame / 5-latent-step lattice and crops saved latent steps directly; it never re-encodes an arbitrary RGB window. Latest aligned is the default. Generated-audio continuity still follows the immediate previous scene.",
+        ));
+        const blocksHost = element("div", "h3studio-context-blocks");
+        const blocks = [];
+        if (row.visualContextLeadSource !== null) {
+            blocks.push({
+                label:"Block 1 · first in composed context",
+                sourceIndex:row.visualContextLeadSource - 1,
+                span:Number(row.visualContextLeadFrames),
+                field:"visual_context_lead_start_frame",
+                lead:true,
+                prefixFrames:0,
+            });
+        }
+        blocks.push({
+            label:row.visualContextLeadSource === null
+                ? "Context block" : "Block 2 · nearest generation",
+            sourceIndex:row.visualContextSource - 1,
+            span:Number(row.contextLength - row.visualContextLeadFrames),
+            field:"visual_context_start_frame",
+            lead:false,
+            prefixFrames:Number(row.visualContextLeadFrames),
+        });
+
+        for (const block of blocks) {
+            const sourceRow = result.shots[block.sourceIndex];
+            const card = element("div", "h3studio-context-block");
+            const head = element("div", "h3studio-context-block-head");
+            head.append(
+                element("strong", "", `${block.label} · ${block.span}f`),
+                element(
+                    "span", "",
+                    sourceRow
+                        ? `Scene ${sourceRow.index} · ${sourceRow.id}`
+                        : "Missing source scene",
+                ),
+            );
+            card.append(head);
+            if (!sourceRow || !Number.isInteger(block.span) || block.span < 1) {
+                card.append(element(
+                    "div", "h3studio-context-empty",
+                    "The selected source or context split is invalid. Fix it in Scene settings.",
+                ));
+                blocksHost.append(card);
+                continue;
+            }
+            const latest = Math.max(0, sourceRow.deliveredFrames - block.span);
+            const validStarts = nativeContextWindowStarts(
+                sourceRow.rawFrames, sourceRow.deliveredFrames, block.span,
+                block.prefixFrames,
+            );
+            if (!validStarts.length) {
+                card.append(element(
+                    "div", "h3studio-context-empty",
+                    "This block has no native latent-aligned position in the selected source scene.",
+                ));
+                blocksHost.append(card);
+                continue;
+            }
+            const defaultStart = validStarts.at(-1);
+            let start = defaultStart;
+            let rangeError = "";
+            try {
+                start = sceneVisualContextStartFrame(
+                    shot, sourceRow.rawFrames, sourceRow.deliveredFrames,
+                    block.span, block.lead, block.prefixFrames,
+                );
+            } catch (error) {
+                rangeError = error?.message || String(error);
+                const raw = Number(shot[block.field]);
+                start = nearestNativeContextWindowStart(
+                    validStarts, Number.isInteger(raw) ? raw : defaultStart,
+                );
+            }
+            const media = playerCheckpoint(block.sourceIndex);
+            let video = null;
+            if (media?.video) {
+                video = element("video", "h3studio-context-video");
+                video.controls = true;
+                video.playsInline = true;
+                video.preload = "metadata";
+                video.muted = true;
+                video.src = videoUrl(media.video);
+                state.contextPlayers.push(video);
+                card.append(video);
+            } else {
+                card.append(element(
+                    "div", "h3studio-context-empty",
+                    `Scene ${sourceRow.index} has no active saved video yet. The frame window can still be planned now.`,
+                ));
+            }
+            const rangeWrap = element("div", "h3studio-context-range");
+            const movieTrack = element("div", "h3studio-context-movie-track");
+            movieTrack.tabIndex = 0;
+            movieTrack.setAttribute("role", "slider");
+            movieTrack.setAttribute("aria-label", `${block.label} position in source movie`);
+            movieTrack.setAttribute("aria-valuemin", "0");
+            movieTrack.setAttribute("aria-valuemax", String(latest));
+            movieTrack.title = `Drag the fixed ${block.span}-frame context zone across ${validStarts.length} native latent-aligned positions`;
+            const selectedZone = element(
+                "div", "h3studio-context-window", `${block.span}f`,
+            );
+            const playhead = element("div", "h3studio-context-playhead");
+            movieTrack.append(selectedZone, playhead);
+            const rangeLabel = element("span", "h3studio-context-range-label");
+            const movieLength = element(
+                "span", "h3studio-context-movie-length",
+                `source movie · ${sourceRow.deliveredFrames}f · ${(sourceRow.deliveredFrames / FPS).toFixed(3)}s`,
+            );
+            const error = element("div", "h3studio-error", rangeError);
+            error.hidden = !rangeError;
+            let selectedStart = start;
+            const updateSelection = () => {
+                const layout = studioContextWindowLayout(
+                    sourceRow.deliveredFrames, block.span, selectedStart,
+                );
+                selectedStart = layout.start;
+                selectedZone.style.left = `${layout.leftFraction * 100}%`;
+                selectedZone.style.width = `${layout.widthFraction * 100}%`;
+                selectedZone.title = `${block.span} context frames · ${layout.start + 1}–${layout.end} · native latent crop`;
+                const slot = validStarts.indexOf(layout.start) + 1;
+                rangeLabel.textContent = `aligned ${slot}/${validStarts.length} · frames ${layout.start + 1}–${layout.end} · ${(layout.start / FPS).toFixed(3)}–${(layout.end / FPS).toFixed(3)}s`;
+                movieTrack.setAttribute("aria-valuenow", String(layout.start));
+                movieTrack.setAttribute(
+                    "aria-valuetext", `frames ${layout.start + 1} through ${layout.end}`,
+                );
+            };
+            const previewStart = () => {
+                if (!video || video.readyState < 1) return;
+                try { video.currentTime = selectedStart / FPS; }
+                catch (_error) {}
+            };
+            const commitStart = () => {
+                if (selectedStart === defaultStart) delete shot[block.field];
+                else {
+                    shot[block.field] = selectedStart;
+                    shot.video_blend_frames = 0;
+                }
+                error.hidden = true;
+                error.textContent = "";
+                writePlan();
+                renderStatus();
+            };
+            const selectStart = (value, {seek = true, commit = false} = {}) => {
+                selectedStart = nearestNativeContextWindowStart(
+                    validStarts, Math.max(0, Math.min(latest, Math.round(value))),
+                );
+                updateSelection();
+                if (seek) previewStart();
+                if (commit) commitStart();
+            };
+            let drag = null;
+            movieTrack.addEventListener("pointerdown", (event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                const bounds = movieTrack.getBoundingClientRect();
+                if (event.target !== selectedZone) {
+                    selectStart(studioContextWindowStartAtRatio(
+                        sourceRow.deliveredFrames,
+                        block.span,
+                        (event.clientX - bounds.left) / Math.max(1, bounds.width),
+                    ));
+                }
+                drag = {
+                    id:event.pointerId,
+                    x:event.clientX,
+                    start:selectedStart,
+                    width:Math.max(1, bounds.width),
+                };
+                movieTrack.classList.add("h3studio-dragging");
+                movieTrack.setPointerCapture(event.pointerId);
+            });
+            movieTrack.addEventListener("pointermove", (event) => {
+                if (!drag || drag.id !== event.pointerId) return;
+                const frameDelta = (
+                    (event.clientX - drag.x) / drag.width
+                ) * sourceRow.deliveredFrames;
+                selectStart(drag.start + frameDelta);
+            });
+            const finishDrag = (event) => {
+                if (!drag || drag.id !== event.pointerId) return;
+                drag = null;
+                movieTrack.classList.remove("h3studio-dragging");
+                try { movieTrack.releasePointerCapture(event.pointerId); }
+                catch (_error) {}
+                commitStart();
+            };
+            movieTrack.addEventListener("pointerup", finishDrag);
+            movieTrack.addEventListener("pointercancel", finishDrag);
+            movieTrack.addEventListener("keydown", (event) => {
+                let next = null;
+                const currentSlot = Math.max(0, validStarts.indexOf(selectedStart));
+                const step = event.shiftKey ? 5 : 1;
+                if (event.key === "ArrowLeft") {
+                    next = validStarts[Math.max(0, currentSlot - step)];
+                } else if (event.key === "ArrowRight") {
+                    next = validStarts[Math.min(validStarts.length - 1, currentSlot + step)];
+                } else if (event.key === "PageUp") {
+                    next = validStarts[Math.max(0, currentSlot - 5)];
+                } else if (event.key === "PageDown") {
+                    next = validStarts[Math.min(validStarts.length - 1, currentSlot + 5)];
+                } else if (event.key === "Home") next = validStarts[0];
+                else if (event.key === "End") next = defaultStart;
+                if (next === null) return;
+                event.preventDefault();
+                selectStart(next, {commit:true});
+            });
+            const rangeReadout = element("div", "h3studio-context-range-readout");
+            rangeReadout.append(movieLength, rangeLabel);
+            rangeWrap.append(movieTrack, rangeReadout);
+            card.append(rangeWrap);
+            updateSelection();
+            if (video) {
+                video.addEventListener("loadedmetadata", previewStart, {once:true});
+            }
+            const actions = element("div", "h3studio-context-actions");
+            const usePlayhead = button(
+                "Start at playhead",
+                "Set the context window's first frame from this player's current position",
+                () => {
+                    if (!video) return;
+                    selectStart(video.currentTime * FPS, {commit:true});
+                },
+            );
+            usePlayhead.disabled = !video;
+            const playSelection = button(
+                "Play selection",
+                "Play only this context window",
+                async () => {
+                    if (!video) return;
+                    for (const item of state.contextPlayers) {
+                        if (item !== video) item.pause();
+                    }
+                    const endSeconds = (
+                        selectedStart + block.span
+                    ) / FPS;
+                    video.dataset.contextEnd = String(endSeconds);
+                    video.currentTime = selectedStart / FPS;
+                    try { await video.play(); } catch (_error) {}
+                },
+            );
+            playSelection.disabled = !video;
+            if (video) {
+                video.addEventListener("timeupdate", () => {
+                    playhead.style.left = `${Math.max(0, Math.min(
+                        1, video.currentTime * FPS / sourceRow.deliveredFrames,
+                    )) * 100}%`;
+                    const end = Number(video.dataset.contextEnd);
+                    if (Number.isFinite(end) && video.currentTime >= end) {
+                        delete video.dataset.contextEnd;
+                        video.pause();
+                        video.currentTime = end;
+                    }
+                });
+            }
+            const tail = button(
+                defaultStart === latest ? "Tail (default)" : "Latest aligned (default)",
+                "Use the latest native latent-aligned crop and remove the stored override",
+                () => {
+                    selectStart(defaultStart, {commit:true});
+                },
+            );
+            actions.append(usePlayhead, playSelection, tail);
+            card.append(actions, error);
+            blocksHost.append(card);
+        }
+        panel.append(blocksHost);
+        return panel;
+    }
+
     function disposePlayer() {
+        if (state.editorialClockFrame != null) {
+            cancelAnimationFrame(state.editorialClockFrame);
+            state.editorialClockFrame = null;
+        }
         const current = state.player;
         const generatedAudio = state.playerAudio;
         const sourceAudioCurrent = state.sourceAudioPlayer;
@@ -2526,6 +3725,10 @@ function mount(node) {
         state.sourceAudioPlayer = null;
         state.sourcePlayer = null;
         state.sourceLayer = null;
+        state.subtitleOverlay = null;
+        state.playerSegmentKey = "";
+        const contextPlayers = state.contextPlayers;
+        state.contextPlayers = [];
         state.playerSlider = null;
         state.playerPreloadVideo = null;
         state.playerPreloadAudio = null;
@@ -2534,7 +3737,7 @@ function mount(node) {
         state.togglePlayerPlayback = null;
         for (const media of [
             current, generatedAudio, sourceAudioCurrent, sourceCurrent,
-            preloadVideo, preloadAudio,
+            preloadVideo, preloadAudio, ...contextPlayers,
         ]) {
             if (!media) continue;
             try { media.pause(); } catch (_error) {}
@@ -2545,15 +3748,18 @@ function mount(node) {
     }
 
     function seekTimeline(seconds, autoplay = false) {
-        const result = timing();
-        const location = locateStudioTimelineSecond(result.shots, seconds);
+        const model = timelineModel();
+        const {result} = model;
+        const location = locateStudioTimelineSegment(model.segments, seconds);
         if (location.index < 0) return;
         const {index, localSeconds, targetSeconds:target} = location;
-        const generatedMedia = playerCheckpoint(index);
-        const generated = generatedMedia?.video;
-        const reference = sourceReference(index);
+        const inGap = location.kind === "gap";
+        const generatedMedia = inGap ? null : playerCheckpoint(index);
+        const generated = inGap ? null : generatedMedia?.video;
+        const reference = inGap ? null : sourceReference(index);
         const source = sourcePreviewUrl(index, reference);
         state.playerIndex = index; state.pendingSeek = localSeconds;
+        state.playerSegmentKey = location.key;
         state.timelinePosition = target;
         if (state.active !== index) {
             state.active = index; persistView(); renderSourceTimeline();
@@ -2563,7 +3769,7 @@ function mount(node) {
             publishActiveScene();
         }
         if (state.playerSlider) state.playerSlider.value = String(target);
-        if (state.playhead) state.playhead.style.left = `${result.totalSeconds ? target / result.totalSeconds * 100 : 0}%`;
+        if (state.playhead) state.playhead.style.left = `${model.totalSeconds ? target / model.totalSeconds * 100 : 0}%`;
         if (!state.player) return;
         if (!generated) {
             delete state.player.dataset.source;
@@ -2663,7 +3869,11 @@ function mount(node) {
             } else applySourceAudioSeek();
         }
         const label = root.querySelector(".h3studio-player-label");
-        if (label) label.textContent = generated
+        if (label) label.textContent = inGap
+            ? location.trailing
+                ? `Open black timeline after scene ${index + 1} · ${formatClock(location.durationSeconds)}`
+                : `Black editorial gap before scene ${index + 1} · ${formatClock(location.durationSeconds)}`
+            : generated
             ? `Scene ${index + 1} · ${timing().shots[index].id}${reference ? ` ↔ @${reference.tag}` : ""}`
             : `Scene ${index + 1} has no saved segment${sourceAudio() ? " · Source track is ready" : ""}${reference ? ` · @${reference.tag} is ready` : ""}.`;
         const motionAudioToggle = root.querySelector(".h3studio-audio-motion");
@@ -2704,7 +3914,8 @@ function mount(node) {
         root.querySelector(".h3studio-audio-generated")?.dispatchEvent(
             new Event("change"),
         );
-        state.primePlayerNext?.(index + 1);
+        updateSubtitleOverlay(target);
+        state.primePlayerNext?.(location.trailing ? -1 : inGap ? index : index + 1);
         if (autoplay && !generated) state.playPlayerTransport?.();
     }
 
@@ -2733,12 +3944,14 @@ function mount(node) {
             "span", "h3studio-compare-label h3studio-compare-label-generated",
             "GENERATED",
         );
+        const subtitleOverlay = element("div", "h3studio-subtitle-overlay");
+        subtitleOverlay.hidden = true;
         wipeLine.hidden = true; sourceLabel.hidden = true;
         generatedLabel.hidden = true;
         sourceLayer.append(sourceVideo);
         stage.append(
             video, handoffFrame, sourceLayer, wipeLine, sourceLabel,
-            generatedLabel,
+            generatedLabel, subtitleOverlay,
         );
         const preloadVideo = element("video");
         preloadVideo.preload = "auto"; preloadVideo.muted = true;
@@ -2813,8 +4026,9 @@ function mount(node) {
             "Play or pause the planned timeline from the current position",
             () => state.togglePlayerPlayback?.(),
         );
-        const slider = element("input"); slider.type = "range"; slider.min = "0"; slider.max = String(timing().totalSeconds); slider.step = String(1 / 24); slider.value = "0";
-        const clock = element("span", "", `0 / ${formatClock(timing().totalSeconds)}`);
+        const initialTimeline = timelineModel();
+        const slider = element("input"); slider.type = "range"; slider.min = "0"; slider.max = String(initialTimeline.totalSeconds); slider.step = String(1 / 24); slider.value = "0";
+        const clock = element("span", "h3studio-player-clock", `0 / ${formatClock(initialTimeline.totalSeconds)}`);
         slider.addEventListener("input", () => seekTimeline(Number(slider.value), false));
         const syncSource = () => {
             const reference = sourceReference(state.playerIndex);
@@ -2838,10 +4052,10 @@ function mount(node) {
             }
         };
         const playerTimelineSecond = () => {
-            const result = timing();
+            const model = timelineModel();
             return Math.min(
-                result.totalSeconds,
-                studioSceneStartSeconds(result.shots, state.playerIndex) +
+                model.totalSeconds,
+                studioEditorialSceneStartSeconds(model.segments, state.playerIndex) +
                     (Number(video.currentTime) || 0),
             );
         };
@@ -2861,26 +4075,85 @@ function mount(node) {
             }
             sourceTimelineAudio.muted =
                 !sourceToggle.checked ||
-                sourceAudioMuted(state.playerIndex);
+                (!state.playerSegmentKey.startsWith("gap:")
+                    && sourceAudioMuted(state.playerIndex));
             if (playAudio && sourceToggle.checked) {
                 void sourceTimelineAudio.play().catch(() => {});
             }
         };
         const updateTransportPosition = (current) => {
-            const result = timing();
+            const model = timelineModel();
             const bounded = Math.max(0, Math.min(
-                result.totalSeconds, Number(current) || 0,
+                model.totalSeconds, Number(current) || 0,
             ));
             state.timelinePosition = bounded;
             slider.value = String(bounded);
-            clock.textContent = `${formatClock(bounded)} / ${formatClock(result.totalSeconds)}`;
-            if (state.playhead) state.playhead.style.left = `${result.totalSeconds ? bounded / result.totalSeconds * 100 : 0}%`;
+            clock.textContent = `${formatClock(bounded)} / ${formatClock(model.totalSeconds)}`;
+            if (state.playhead) state.playhead.style.left = `${model.totalSeconds ? bounded / model.totalSeconds * 100 : 0}%`;
+            updateSubtitleOverlay(bounded);
+        };
+        const stopEditorialClock = () => {
+            if (state.editorialClockFrame == null) return;
+            cancelAnimationFrame(state.editorialClockFrame);
+            state.editorialClockFrame = null;
+        };
+        const startEditorialClock = () => {
+            stopEditorialClock();
+            const originPosition = Number(state.timelinePosition) || 0;
+            const originTime = performance.now();
+            const tick = (now) => {
+                if (!video.isConnected || state.player !== video) return;
+                let model = timelineModel();
+                const unbounded =
+                    originPosition + (now - originTime) / 1000;
+                if (unbounded >= model.totalSeconds - 1 / FPS) {
+                    extendTimelineWorkspace(
+                        model.workspaceEndFrame + state.timelineSceneEndFrame,
+                    );
+                    model = timelineModel();
+                }
+                const current = Math.min(
+                    model.totalSeconds,
+                    unbounded,
+                );
+                const location = locateStudioTimelineSegment(
+                    model.segments, current,
+                );
+                if (location.key !== state.playerSegmentKey) {
+                    state.editorialClockFrame = null;
+                    seekTimeline(current, true);
+                    return;
+                }
+                updateTransportPosition(current);
+                if (current >= model.totalSeconds) {
+                    state.editorialClockFrame = null;
+                    play.textContent = "▶";
+                    return;
+                }
+                state.editorialClockFrame = requestAnimationFrame(tick);
+            };
+            play.textContent = "❚❚";
+            state.editorialClockFrame = requestAnimationFrame(tick);
         };
         const playPlayerTransport = () => {
+            stopEditorialClock();
             if (video.dataset.source) {
                 return video.play().catch(() => {});
             }
-            if (!sourceTimelineAudio.dataset.source) return undefined;
+            if (!sourceTimelineAudio.dataset.source) {
+                startEditorialClock();
+                return undefined;
+            }
+            const timelineAudio = sourceAudio();
+            const availableSeconds = Number(
+                timelineAudio?.available_duration_seconds
+                    ?? timelineAudio?.duration_seconds,
+            ) || 0;
+            if ((Number(state.timelinePosition) || 0) >=
+                    availableSeconds - 1 / FPS) {
+                startEditorialClock();
+                return undefined;
+            }
             synchronizeSourceTimelineAudio(
                 false, state.timelinePosition ?? 0,
             );
@@ -2898,7 +4171,11 @@ function mount(node) {
                 }
                 return;
             }
-            if (!sourceTimelineAudio.dataset.source) return;
+            if (!sourceTimelineAudio.dataset.source) {
+                if (state.editorialClockFrame == null) startEditorialClock();
+                else { stopEditorialClock(); play.textContent = "▶"; }
+                return;
+            }
             if (sourceTimelineAudio.paused) void playPlayerTransport();
             else {
                 sourceTimelineAudio.pause();
@@ -2957,10 +4234,13 @@ function mount(node) {
             synchronizeSourceTimelineAudio(false); syncSource();
         });
         video.addEventListener("timeupdate", () => {
-            const result = timing();
-            let prior = 0;
-            for (let index = 0; index < state.playerIndex; index += 1) prior += result.shots[index].deliveredSeconds;
-            const current = Math.min(result.totalSeconds, prior + video.currentTime);
+            const model = timelineModel();
+            const current = Math.min(
+                model.totalSeconds,
+                studioEditorialSceneStartSeconds(
+                    model.segments, state.playerIndex,
+                ) + video.currentTime,
+            );
             updateTransportPosition(current);
             synchronizeGeneratedAudio(false);
             synchronizeSourceTimelineAudio(false, current); syncSource();
@@ -2974,9 +4254,9 @@ function mount(node) {
                 (Number(sourceTimelineAudio.currentTime) || 0) -
                     Math.max(0, Number(descriptor.seek_seconds) || 0),
             );
-            const result = timing();
-            const location = locateStudioTimelineSecond(result.shots, current);
-            if (location.index >= 0 && location.index !== state.playerIndex) {
+            const model = timelineModel();
+            const location = locateStudioTimelineSegment(model.segments, current);
+            if (location.index >= 0 && location.key !== state.playerSegmentKey) {
                 seekTimeline(current, !sourceTimelineAudio.paused);
                 return;
             }
@@ -2984,20 +4264,27 @@ function mount(node) {
         });
         sourceTimelineAudio.addEventListener("ended", () => {
             if (video.dataset.source) return;
-            updateTransportPosition(timing().totalSeconds);
-            play.textContent = "▶";
+            const descriptor = sourceAudio();
+            const current = Math.max(0, Number(
+                descriptor?.available_duration_seconds
+                    ?? descriptor?.duration_seconds,
+            ) || state.timelinePosition || 0);
+            updateTransportPosition(current);
+            startEditorialClock();
         });
         video.addEventListener("ended", () => {
             captureHandoffFrame();
             generatedAudio.pause(); sourceVideo.pause();
-            const next = state.playerIndex + 1;
-            if (next >= state.plan.shots.length) {
+            const model = timelineModel();
+            const currentSegment = model.segments.findIndex(
+                (segment) => segment.key === state.playerSegmentKey,
+            );
+            const next = model.segments[currentSegment + 1];
+            if (!next) {
                 sourceTimelineAudio.pause();
                 return;
             }
-            const result = timing();
-            const start = studioSceneStartSeconds(result.shots, next);
-            seekTimeline(start, true);
+            seekTimeline(next.startSeconds, true);
         });
         const compareControls = element("div", "h3studio-compare-controls");
         const wipeLabel = element("span", "h3studio-wipe-label", "Wipe");
@@ -3068,7 +4355,8 @@ function mount(node) {
             generatedAudio.muted = !generatedToggle.checked;
             sourceVideo.muted = !motionToggle.checked;
             sourceTimelineAudio.muted = !sourceToggle.checked ||
-                sourceAudioMuted(state.playerIndex);
+                (!state.playerSegmentKey.startsWith("gap:")
+                    && sourceAudioMuted(state.playerIndex));
             if (generatedToggle.checked) {
                 synchronizeGeneratedAudio(!video.paused);
             } else {
@@ -3091,7 +4379,8 @@ function mount(node) {
         state.player = video; state.playerAudio = generatedAudio;
         state.sourceAudioPlayer = sourceTimelineAudio;
         state.sourcePlayer = sourceVideo;
-        state.sourceLayer = sourceLayer; state.playerSlider = slider;
+        state.sourceLayer = sourceLayer; state.subtitleOverlay = subtitleOverlay;
+        state.playerSlider = slider;
         controls.append(play, slider, clock, button("Refresh", "Rescan saved checkpoints and segments", async () => {
             await refreshCheckpoints(); renderPanel();
         }));
@@ -3105,11 +4394,102 @@ function mount(node) {
             if (state.player !== video || !video.isConnected) return;
             const result = timing();
             const start = state.timelinePosition == null
-                ? studioSceneStartSeconds(result.shots, state.active)
+                ? studioEditorialSceneStartSeconds(
+                    timelineModel().segments, state.active,
+                )
                 : state.timelinePosition;
             seekTimeline(start, false);
         }, 0);
         return wrapper;
+    }
+
+    function renderSubtitlesPanel() {
+        const panel = element("div");
+        const head = element("div", "h3studio-scene-head");
+        head.append(
+            element("strong", "", "Timed lyrics / subtitles"),
+            element("span", "h3studio-scene-label",
+                "Editorial only · previewed here and exported as SRT beside final assembly"),
+        );
+        const settingsHost = element("div", "h3studio-subtitle-settings");
+        const assetSelect = element("select");
+        const none = element("option", "", state.subtitleAssets.length
+            ? "Choose an audio asset with timed lyrics" : "No timed-lyrics audio assets found");
+        none.value = ""; assetSelect.append(none);
+        for (const asset of state.subtitleAssets) {
+            const cues = parseTimedLyrics(asset.lyrics);
+            const option = element(
+                "option", "",
+                `@${asset.tag || "audio"} · ${cues.length} timed cue${cues.length === 1 ? "" : "s"}`,
+            );
+            option.value = String(asset.id ?? "");
+            assetSelect.append(option);
+        }
+        assetSelect.value = String(state.editorial.subtitles?.asset_id ?? "");
+        assetSelect.title = "Audio assets become available here when their Lyrics field contains LRC timestamps such as [01:23.45] or SRT cue blocks.";
+        const mode = element("select");
+        for (const [value, label] of [
+            ["off", "Off"],
+            ["preview_srt", "Preview + SRT sidecar"],
+        ]) {
+            const option = element("option", "", label);
+            option.value = value; mode.append(option);
+        }
+        mode.value = state.editorial.subtitles?.mode ?? "off";
+        mode.title = "Preview + SRT shows timed lyrics in Plan Studio and writes a matching .srt file beside each final assembled video. It does not burn text into pixels.";
+        const offset = element("input");
+        offset.type = "number"; offset.min = "-3600"; offset.max = "3600";
+        offset.step = String(1 / FPS);
+        offset.value = String(state.editorial.subtitles?.offset_seconds ?? 0);
+        offset.title = "Shift every subtitle on the editorial timeline. Positive values display later; negative values display earlier.";
+        const save = () => {
+            state.editorial.subtitles = {
+                mode:mode.value,
+                asset_id:assetSelect.value,
+                offset_seconds:Math.max(-3600, Math.min(
+                    3600, Number(offset.value) || 0,
+                )),
+            };
+            scheduleEditorialSave();
+            renderSubtitleTimeline();
+            updateSubtitleOverlay();
+        };
+        mode.addEventListener("change", () => { save(); renderPanel(); });
+        assetSelect.addEventListener("change", () => { save(); renderPanel(); });
+        offset.addEventListener("change", () => { save(); renderPanel(); });
+        settingsHost.append(
+            field("Lyrics asset", assetSelect),
+            field("Output", mode),
+            field("Timeline offset (s)", offset),
+        );
+        const actions = element("div", "h3studio-prompt-tools");
+        actions.append(
+            button("Refresh assets", "Reload lyrics from Project Asset Carousel", () => {
+                void loadSubtitleAssets();
+            }),
+            element("span", "h3studio-hint",
+                "Use [MM:SS.xx] at the beginning of lyric lines, or paste SRT. The Asset Carousel player includes a Stamp line button for live timing."),
+        );
+        const cues = subtitleCues();
+        const list = element("div", "h3studio-subtitle-list");
+        if (!selectedSubtitleAsset()) list.append(element(
+            "div", "h3studio-message",
+            "Choose an audio asset whose Lyrics field contains timestamps.",
+        ));
+        else if (!cues.length) list.append(element(
+            "div", "h3studio-error",
+            "This Lyrics field has no LRC or SRT timestamps yet.",
+        ));
+        else for (const cue of cues.slice(0, 500)) {
+            list.append(element("div", "h3studio-subtitle-row", ""));
+            list.lastElementChild.append(
+                element("span", "h3studio-hint",
+                    `${formatClock(cue.startSeconds)} → ${formatClock(cue.endSeconds)}`),
+                element("span", "", cue.text),
+            );
+        }
+        panel.append(head, settingsHost, actions, list);
+        return panel;
     }
 
     function renderJsonPanel() {
@@ -3135,7 +4515,9 @@ function mount(node) {
             ? renderChapterPanel()
             : state.view === "shared" ? renderSharedPanel()
             : state.view === "settings" ? renderPlanSettingsPanel()
+            : state.view === "context" ? renderContextPanel()
             : state.view === "player" ? renderPlayerPanel()
+            : state.view === "subtitles" ? renderSubtitlesPanel()
               : state.view === "json" ? renderJsonPanel() : renderScenePanel();
         state.panelHost.replaceChildren(content);
     }
@@ -3147,6 +4529,10 @@ function mount(node) {
     }
 
     function renderShell() {
+        const timelineScroll = timelineScrollSnapshot();
+        const revealTimelineActive = timelineScroll == null
+            || (state.timelineRenderedActive != null
+                && state.timelineRenderedActive !== state.active);
         disposePlayer();
         state.timelineResizeObserver?.disconnect();
         state.timelineResizeObserver = null;
@@ -3201,34 +4587,42 @@ function mount(node) {
             if (state.plan.shots.length <= 1 || !confirm(`Delete scene ${state.active + 1}?`)) return;
             await flushHistoryDraft();
             removePlanShot(state.plan, state.active);
+            state.editorial = normalizedEditorial(state.editorial);
             state.active = Math.min(state.active, state.plan.shots.length - 1);
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
         });
         remove.disabled = !state.activeChapterId && state.plan.shots.length <= 1;
         const left = button("←", "Move selected scene earlier", async () => {
-            if (!state.active) return; await flushHistoryDraft();
+            if (!state.active || sceneLocked(state.active)) return; await flushHistoryDraft();
             moveShot(state.plan.shots, state.active, state.active - 1); state.active -= 1;
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
-        }); left.disabled = Boolean(state.activeChapterId) || !state.active;
+        }); left.disabled = Boolean(state.activeChapterId) || !state.active
+            || sceneLocked(state.active);
         const right = button("→", "Move selected scene later", async () => {
-            if (state.active >= state.plan.shots.length - 1) return; await flushHistoryDraft();
+            if (state.active >= state.plan.shots.length - 1
+                    || sceneLocked(state.active)) return; await flushHistoryDraft();
             moveShot(state.plan.shots, state.active, state.active + 1); state.active += 1;
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();
         }); right.disabled = Boolean(state.activeChapterId)
-            || state.active >= state.plan.shots.length - 1;
+            || state.active >= state.plan.shots.length - 1
+            || sceneLocked(state.active);
         toolbar.append(add, addChapter, duplicate, remove, left, right, element("span", "h3studio-spacer"));
         const sceneViewLabel = state.activeChapterId
             ? "Chapter notes"
             : state.promptEditors.length ? "Scene settings" : "Scene prompt";
         for (const [value,label] of [["scene",sceneViewLabel],["shared","Shared prompt"],
-            ["settings","Plan settings"],["player","Player"],["json","JSON"]]) {
+            ["settings","Plan settings"],["context","Context"],
+            ["player","Player"],["subtitles","Subtitles"],["json","JSON"]]) {
             const item = button(label, `Open ${label.toLowerCase()} view`, () => {
                 void flushHistoryDraft();
                 if (value === "player" && state.timelinePosition == null) {
-                    state.timelinePosition = studioSceneStartSeconds(timing().shots, state.active);
+                    state.timelinePosition = studioEditorialSceneStartSeconds(
+                        timelineModel().segments, state.active,
+                    );
                 }
                 state.view = value; persistView(); renderToolbarState();
                 renderSourceTimeline(); renderSourceAudioTimeline(); renderPanel();
+                if (value === "subtitles") void loadSubtitleAssets();
             });
             item.dataset.studioView = value; toolbar.append(item);
         }
@@ -3262,8 +4656,16 @@ function mount(node) {
         const fit = button("Fit", "Fit timeline to the available width", () => {
             setTimelineZoom(1);
         });
+        const lockedCount = state.editorial.locked_scene_ids.length;
+        const unlockAll = button(
+            `Unlock all (${lockedCount})`,
+            "Unlock every scene without changing its current editorial position",
+            unlockAllScenes,
+        );
+        unlockAll.hidden = !lockedCount;
         timelineTools.append(
             element("strong", "", "Timeline"),
+            unlockAll,
             element("span", "h3studio-spacer"),
             zoomOut, zoomInput, zoomLabel, zoomIn, fit,
         );
@@ -3274,6 +4676,7 @@ function mount(node) {
             element("span", "", "GENERATED"),
             element("span", "", "MOTION REF"),
             element("span", "", "SOURCE AUDIO"),
+            element("span", "", "SUBTITLES"),
         );
         const timelineViewport = element("div", "h3studio-timeline-viewport");
         const timelineContent = element("div", "h3studio-timeline-content");
@@ -3283,8 +4686,12 @@ function mount(node) {
         const sourceAudioTimelineHost = element(
             "div", "h3studio-timeline h3studio-audio-timeline",
         );
+        const subtitleTimelineHost = element(
+            "div", "h3studio-subtitle-timeline",
+        );
         timelineContent.append(
             ruler, timelineHost, sourceTimelineHost, sourceAudioTimelineHost,
+            subtitleTimelineHost,
         );
         timelineViewport.append(timelineContent);
         timelineGrid.append(timelineLabels, timelineViewport);
@@ -3292,6 +4699,7 @@ function mount(node) {
         state.timelineHost = timelineHost;
         state.sourceTimelineHost = sourceTimelineHost;
         state.sourceAudioTimelineHost = sourceAudioTimelineHost;
+        state.subtitleTimelineHost = subtitleTimelineHost;
         state.sourceTrack = sourceTimelineHost;
         state.sourceAudioTrack = sourceAudioTimelineHost;
         state.timelineViewport = timelineViewport;
@@ -3314,6 +4722,12 @@ function mount(node) {
                 timelineViewport.scrollLeft += event.deltaY;
             }
         }, {passive:false});
+        timelineViewport.addEventListener("scroll", () => {
+            if (state.timelineDragging || state.timelineExtending) return;
+            if (timelineViewport.scrollLeft + timelineViewport.clientWidth <
+                    timelineViewport.scrollWidth - 32) return;
+            extendTimelineWorkspace();
+        }, {passive:true});
         if (typeof ResizeObserver === "function") {
             state.timelineResizeObserver = new ResizeObserver(() => {
                 layoutTimeline({preserveScroll:true});
@@ -3322,7 +4736,13 @@ function mount(node) {
         }
         const panelHost = element("div", "h3studio-panel"); state.panelHost = panelHost;
         root.append(head, toolbar, status, shell, panelHost);
-        renderRuler(ruler, timing().totalSeconds); renderToolbarState(); renderStatus(); renderTimeline(); renderPanel();
+        renderRuler(ruler, timelineModel().totalSeconds);
+        renderToolbarState(); renderStatus();
+        renderTimeline({
+            revealActive:revealTimelineActive,
+            restoreScroll:timelineScroll,
+        });
+        renderPanel();
     }
 
     function showFailure(message) {
@@ -3370,6 +4790,18 @@ function mount(node) {
             if (runChanged) {
                 state.checkpoints = new Map(); state.checkpointSignature = "";
                 state.checkpointError = ""; state.timelinePosition = null;
+                state.editorialReady = false; state.editorialRun = "";
+                state.editorial = {placements:[], locked_scene_ids:[], subtitles:{
+                    mode:"off", asset_id:"", offset_seconds:0,
+                }};
+                state.timelineWorkspaceEndFrame = 0;
+                state.timelineSceneEndFrame = 0;
+                state.timelineRenderedActive = null;
+                state.timelineViewport = null;
+                state.timelineContent = null;
+                state.lastEditorialSignature = "";
+                state.subtitleAssets = []; state.subtitleAssetsRun = "";
+                state.subtitleAssetsToken += 1;
                 state.presentationToken += 1;
                 state.sourcePreview = null;
                 state.sourceWaveform = null; state.sourceWaveformToken = "";
@@ -3379,7 +4811,10 @@ function mount(node) {
             if (Object.hasOwn(state.plan, "chapters")) scheduleEditorialSave();
             renderShell();
             void refreshCheckpoints();
-            if (runChanged && currentRun) void restoreSourcePresentation();
+            if (runChanged && currentRun) {
+                void restoreSourcePresentation();
+                void loadSubtitleAssets();
+            }
         } catch (error) {
             showFailure(`${planNode ? "Connected Plan" : "Standalone Plan Studio"} JSON is invalid:\n${error.message}`);
         }
