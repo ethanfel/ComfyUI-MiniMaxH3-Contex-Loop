@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Audio assets in the Project Asset Carousel now open a lyrics workspace beside
+  the audio player. Lyrics can be pasted or edited in place, are persisted in
+  both the project catalog and its H3-chain backup, and remain presentation-only:
+  they do not alter prompts, reference fingerprints, or generation behavior.
+
 - Chapter sections in Checkpoint Manager's **All scenes** view can now be
   collapsed from their headers. Expanded/collapsed state is remembered per
   run and chapter in workflow presentation state, and collapsed chapters skip

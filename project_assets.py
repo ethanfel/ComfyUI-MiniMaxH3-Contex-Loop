@@ -52,6 +52,7 @@ ALL_MEDIA_EXTENSIONS = IMAGE_EXTENSIONS | VIDEO_EXTENSIONS | AUDIO_EXTENSIONS
 MAX_CATALOG_ASSETS = 512
 MAX_REFERENCE_SLOTS = 512
 MAX_ASSET_FOLDERS = 128
+MAX_ASSET_LYRICS_CHARACTERS = 100_000
 MAX_DERIVED_IMAGE_PIXELS = 268_435_456
 MAX_INPUT_RESULTS = 2000
 INPUT_BROWSER_EXCLUDED_DIRECTORIES = frozenset((
@@ -925,6 +926,19 @@ class ProjectAssetStore:
                 raise FileNotFoundError(
                     "Asset folder %s was not found." % folder_id)
             entry["folder_id"] = folder_id
+        if "lyrics" in changes:
+            if kind != "audio":
+                raise ValueError("Lyrics can only be attached to audio assets.")
+            lyrics = str(changes["lyrics"] or "").replace(
+                "\r\n", "\n").replace("\r", "\n")
+            if len(lyrics) > MAX_ASSET_LYRICS_CHARACTERS:
+                raise ValueError(
+                    "Asset lyrics cannot exceed %d characters." %
+                    MAX_ASSET_LYRICS_CHARACTERS)
+            if lyrics:
+                entry["lyrics"] = lyrics
+            else:
+                entry.pop("lyrics", None)
         if "options" in changes:
             if not isinstance(changes["options"], dict):
                 raise ValueError("Asset options must be a JSON object.")

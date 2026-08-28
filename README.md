@@ -119,6 +119,10 @@ expand or collapse their assets inline, or drag an asset onto a folder card to
 move it there. Expansion state, folder names, membership, and order do not
 affect prompts or fingerprints.
 
+Selecting an audio asset opens an editable **Lyrics** workspace beside its
+player. Lyrics are saved with the project catalog and recovery backup, but are
+notes only: they do not enter prompts, reference fingerprints, or generation.
+
 ## Choose a workflow
 
 | I want to… | Start here |

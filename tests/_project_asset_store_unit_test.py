@@ -70,6 +70,25 @@ def main():
         assert changed["asset"]["role"] == "semantic_anchor"
         assert changed["asset"]["tag"] == "hero_semantic"
         assert changed["catalog"]["revision"] != first["catalog"]["revision"]
+        revision_before_lyrics = changed["catalog"]["revision"]
+        lyrics = store.update(
+            "episode_1", second["asset"]["id"],
+            {"lyrics": "First line\r\nSecond line"})
+        assert lyrics["asset"]["lyrics"] == "First line\nSecond line"
+        assert lyrics["catalog"]["revision"] == revision_before_lyrics
+        assert store.load("episode_1")["assets"][1]["lyrics"] == (
+            "First line\nSecond line")
+        backup_catalog = output_root / "h3_chains" / "episode_1" / (
+            "project_assets/catalog.json")
+        assert "First line\\nSecond line" in backup_catalog.read_text(
+            encoding="utf-8")
+        try:
+            store.update(
+                "episode_1", first["asset"]["id"], {"lyrics": "No"})
+        except ValueError as exc:
+            assert "only be attached to audio assets" in str(exc)
+        else:
+            raise AssertionError("Lyrics were attached to a non-audio asset")
         reordered = store.reorder("episode_1", [
             second["asset"]["id"], first["asset"]["id"],
         ])
