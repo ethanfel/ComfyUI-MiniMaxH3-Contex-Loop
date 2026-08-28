@@ -98,18 +98,35 @@ export function studioTimelineSegments(
         if (!sceneId || startFrame == null) continue;
         bySceneId.set(sceneId, startFrame);
     }
-    const segments = [];
-    let cursorFrame = 0;
+    const orderedScenes = [];
+    let naturalStartFrame = 0;
     scenes.forEach((row, sceneIndex) => {
         const sceneId = String(row?.id ?? "");
         const durationFrames = Math.max(
             0, Math.round(Number(row?.deliveredFrames) ||
                 (Number(row?.deliveredSeconds) || 0) * 24),
         );
-        const requestedStart = bySceneId.get(sceneId);
+        const explicit = bySceneId.has(sceneId);
+        orderedScenes.push({
+            row, sceneIndex, sceneId, durationFrames, explicit,
+            requestedStart:explicit
+                ? bySceneId.get(sceneId) : naturalStartFrame,
+        });
+        naturalStartFrame += durationFrames;
+    });
+    orderedScenes.sort((left, right) => (
+        left.requestedStart - right.requestedStart
+        || Number(right.explicit) - Number(left.explicit)
+        || left.sceneIndex - right.sceneIndex
+    ));
+    const segments = [];
+    let cursorFrame = 0;
+    orderedScenes.forEach((item) => {
+        const {sceneIndex, sceneId, durationFrames, explicit} = item;
+        const requestedStart = item.requestedStart;
         const startFrame = Math.max(
             cursorFrame,
-            requestedStart == null ? cursorFrame : requestedStart,
+            requestedStart,
         );
         if (startFrame > cursorFrame) {
             segments.push({
@@ -129,16 +146,17 @@ export function studioTimelineSegments(
             startSeconds:startFrame / 24,
             durationSeconds:durationFrames / 24,
             endSeconds:(startFrame + durationFrames) / 24,
-            explicitStartFrame:requestedStart == null ? null : requestedStart,
+            explicitStartFrame:explicit ? requestedStart : null,
         });
         cursorFrame = startFrame + durationFrames;
     });
     const requestedWorkspaceEnd = normalizedStartFrame(workspaceEndFrame);
     if (requestedWorkspaceEnd != null && requestedWorkspaceEnd > cursorFrame) {
-        const sceneIndex = Math.max(0, scenes.length - 1);
+        const lastScene = orderedScenes.at(-1);
+        const sceneIndex = Math.max(0, Number(lastScene?.sceneIndex) || 0);
         segments.push({
             kind:"gap", key:"gap:tail", sceneIndex,
-            sceneId:String(scenes.at(-1)?.id ?? ""), gapId:"tail",
+            sceneId:String(lastScene?.sceneId ?? ""), gapId:"tail",
             trailing:true,
             startFrame:cursorFrame,
             durationFrames:requestedWorkspaceEnd - cursorFrame,

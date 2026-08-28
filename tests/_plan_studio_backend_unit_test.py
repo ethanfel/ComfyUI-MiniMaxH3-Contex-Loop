@@ -204,6 +204,46 @@ async def check():
             ..., 340 * samples_per_frame:500 * samples_per_frame] == 0)
         assert chain.torch.all(spaced_waveform[
             ..., 500 * samples_per_frame:] == 2)
+
+        # An absolute placement can move a later generated scene earlier in
+        # the edit without changing manifest/generation order. Its owned
+        # generated audio follows the same resolved editorial order.
+        chain._save_run_editorial_document({
+            "run_name": "studio",
+            "scene_order": [
+                {"scene": 1, "scene_id": "intro"},
+                {"scene": 2, "scene_id": "outro"},
+            ],
+            "chapters": [],
+            "placements": [{
+                "scene": 2, "scene_id": "outro", "start_frame": 0,
+            }],
+        })
+        _, reordered_records, reordered_frames = (
+            chain._editorial_timeline_records("studio", [
+                {"index": 1, "id": "intro", "delivered_frames": 340},
+                {"index": 2, "id": "outro", "delivered_frames": 340},
+            ]))
+        assert [item["scene_id"] for item in reordered_records] == [
+            "outro", "intro"]
+        assert reordered_frames == 680
+        reordered_audio_result = chain._audio_with_editorial_timeline(
+            {
+                "waveform": waveform,
+                "sample_rate": sample_rate,
+                chain.AUDIO_WITH_OVERLAP_WAVEFORM_KEY: waveform[..., :10],
+                chain.AUDIO_WITH_OVERLAP_FRAMES_KEY: 1,
+                chain.AUDIO_TRIM_FRAMES_KEY: 1,
+            },
+            reordered_records, 680, reordered_frames,
+            "reordered editorial unit audio")
+        reordered_audio = reordered_audio_result["waveform"]
+        assert chain.torch.all(reordered_audio[
+            ..., :340 * samples_per_frame] == 2)
+        assert chain.torch.all(reordered_audio[
+            ..., 340 * samples_per_frame:] == 1)
+        assert (chain.AUDIO_WITH_OVERLAP_WAVEFORM_KEY
+                not in reordered_audio_result)
         report = {"scenes": [{
             "index": 1, "id": "intro", "references": [{
                 "tag": "motion", "kind": "video",

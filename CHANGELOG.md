@@ -4,6 +4,16 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Plan Studio's generated track is now an editorial timeline rather than a
+  delayed view of generation order. Absolute scene placements can move any
+  scene—including the terminal scene—before or after other clips; collisions
+  resolve as non-overlapping inserts, uncovered time stays black, and raw
+  placement requests are no longer rewritten during layout. Playback, motion
+  references, source-audio waveforms, generated scene audio, and final video
+  assembly share the resolved editorial order. Generation lineage and saved
+  checkpoints remain unchanged, while boundaries whose generation predecessor
+  changed assemble as safe hard cuts.
+
 - Audio assets in the Project Asset Carousel now open a lyrics workspace beside
   the audio player. Lyrics can be pasted or edited in place, are persisted in
   both the project catalog and its H3-chain backup, and remain presentation-only:

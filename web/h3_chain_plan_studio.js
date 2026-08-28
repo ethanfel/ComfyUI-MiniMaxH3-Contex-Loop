@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.63";
+} from "./h3_chain_plan_core.mjs?v=0.6.64";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.63";
+} from "./h3_prompt_history_core.mjs?v=0.6.64";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.63";
+} from "./h3_reference_preview_core.mjs?v=0.6.64";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.63";
+} from "./h3_policy_core.mjs?v=0.6.64";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.63";
+} from "./h3_socket_presentation_core.mjs?v=0.6.64";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -89,8 +89,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.63";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.63";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.64";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.64";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -738,23 +738,6 @@ function mount(node) {
                 start_frame:startFrame,
             });
         }
-        const placementById = new Map(
-            placements.map((placement) => [placement.scene_id, placement]),
-        );
-        const meaningfulPlacements = [];
-        let editorialCursor = 0;
-        for (const row of timing().shots) {
-            const placement = placementById.get(String(row.id));
-            const requested = Number(placement?.start_frame);
-            if (placement && requested > editorialCursor) {
-                meaningfulPlacements.push(placement);
-            }
-            const start = placement
-                ? Math.max(editorialCursor, requested) : editorialCursor;
-            editorialCursor = start + Math.max(
-                0, Number(row.deliveredFrames) || 0,
-            );
-        }
         const rawSubtitles = value?.subtitles && typeof value.subtitles === "object"
             ? value.subtitles : {};
         const mode = ["off", "preview_srt"].includes(rawSubtitles.mode)
@@ -767,7 +750,7 @@ function mount(node) {
                 .filter((sceneId) => knownIds.has(sceneId)),
         )];
         return {
-            placements:meaningfulPlacements,
+            placements,
             locked_scene_ids:lockedSceneIds,
             subtitles:{
                 mode,
@@ -853,12 +836,7 @@ function mount(node) {
         const placement = state.editorial.placements.find(
             (placement) => placement.scene_id === String(row?.id ?? ""),
         ) ?? null;
-        if (!placement) return null;
-        const resolved = timelineModel().segments.find(
-            (segment) => segment.kind === "scene"
-                && segment.sceneIndex === index,
-        );
-        return {...placement, start_frame:resolved?.startFrame ?? placement.start_frame};
+        return placement ? {...placement} : null;
     }
 
     function setScenePlacement(index, startFrame) {
@@ -868,33 +846,13 @@ function mount(node) {
             (placement) => placement.scene_id !== String(row.id),
         );
         if (startFrame != null && String(startFrame).trim() !== "") {
-            const previousEnd = timelineModel().segments.find(
-                (segment) => segment.kind === "scene"
-                    && segment.sceneIndex === index - 1,
-            )?.endFrame ?? 0;
             const requestedStart = Math.max(0, Math.min(
-                864000, Math.max(previousEnd,
-                    Math.round(Number(startFrame) || 0)),
+                864000, Math.round(Number(startFrame) || 0),
             ));
-            // A scene naturally starts at previousEnd. Persist only a real
-            // black gap; otherwise later duration edits can turn a harmless
-            // no-op drag into an unexpected stale placement.
-            if (requestedStart > previousEnd) {
-                state.editorial.placements.push({
-                    scene_id:String(row.id),
-                    start_frame:requestedStart,
-                });
-            }
-        }
-        const resolved = studioTimelineSegments(
-            timing().shots, state.editorial.placements,
-        );
-        for (const placement of state.editorial.placements) {
-            const scene = resolved.find(
-                (segment) => segment.kind === "scene"
-                    && segment.sceneId === placement.scene_id,
-            );
-            if (scene) placement.start_frame = scene.startFrame;
+            state.editorial.placements.push({
+                scene_id:String(row.id),
+                start_frame:requestedStart,
+            });
         }
         scheduleEditorialSave();
         renderShell();
@@ -993,11 +951,6 @@ function mount(node) {
             ),
         }));
         const sceneById = new Map(sceneOrder.map((row) => [row.scene_id, row.scene]));
-        const resolvedStarts = new Map(studioTimelineSegments(
-            timing().shots, state.editorial.placements,
-        ).filter((segment) => segment.kind === "scene").map(
-            (segment) => [segment.sceneId, segment.startFrame],
-        ));
         return {
             run_name:runName(),
             chapters:orderedChapters(state.plan).map((chapter) => ({
@@ -1011,8 +964,7 @@ function mount(node) {
             placements:state.editorial.placements.map((placement) => ({
                 scene_id:placement.scene_id,
                 scene:sceneById.get(placement.scene_id),
-                start_frame:resolvedStarts.get(placement.scene_id)
-                    ?? placement.start_frame,
+                start_frame:placement.start_frame,
             })),
             locked_scene_ids:[...state.editorial.locked_scene_ids],
             subtitles:{...state.editorial.subtitles},
@@ -1802,12 +1754,6 @@ function mount(node) {
         }
     }
 
-    function gapSegmentBefore(index) {
-        return state.timelineSegments.find(
-            (segment) => segment.kind === "gap" && segment.sceneIndex === index,
-        ) ?? null;
-    }
-
     function trailingGapSegment() {
         return state.timelineSegments.find(
             (segment) => segment.kind === "gap" && segment.trailing,
@@ -1862,9 +1808,6 @@ function mount(node) {
                 (segment) => segment.kind === "scene" && segment.sceneIndex === index,
             );
             if (!scene) return;
-            const previous = [...model.segments].reverse().find(
-                (segment) => segment.kind === "scene" && segment.sceneIndex < index,
-            );
             const contentWidth = Math.max(
                 1, Number(state.timelineContent?.dataset.timelineWidth)
                     || state.timelineContent?.clientWidth || 1,
@@ -1891,9 +1834,8 @@ function mount(node) {
                     ((viewport?.scrollLeft ?? 0) - originScrollLeft);
                 if (Math.abs(deltaX) > 3) moved = true;
                 if (!moved) return;
-                const minimum = Number(previous?.endFrame) || 0;
                 targetFrame = Math.max(
-                    minimum,
+                    0,
                     Math.min(864000, Math.round(
                         scene.startFrame + deltaX * secondsPerPixel * FPS,
                     )),
@@ -2000,9 +1942,14 @@ function mount(node) {
         host.replaceChildren();
         const result = timing();
         state.timelineSegments = timelineModel().segments;
-        for (let index = 0; index < state.plan.shots.length; index += 1) {
-            appendTimelineGap(host, gapSegmentBefore(index), true);
-            const shot = state.plan.shots[index];
+        for (const timelineSegment of state.timelineSegments) {
+            if (timelineSegment.kind === "gap") {
+                if (!timelineSegment.trailing) {
+                    appendTimelineGap(host, timelineSegment, true);
+                }
+                continue;
+            }
+            const index = timelineSegment.sceneIndex;
             const row = result.shots[index];
             const checkpoint = matchingStudioCheckpoint(state.checkpoints, index, row);
             const locked = sceneLocked(index);
@@ -2038,10 +1985,7 @@ function mount(node) {
                 );
             }
             updateTimelineCheckpointCard(card, index, result);
-            const sceneSegment = state.timelineSegments.find(
-                (segment) => segment.kind === "scene"
-                    && segment.sceneIndex === index,
-            );
+            const sceneSegment = timelineSegment;
             const copy = element("span", "h3studio-card-copy");
             copy.append(element("span", "h3studio-card-title", `${index + 1}. ${row.id}`),
                 element("span", "h3studio-card-meta", `${formatClock(sceneSegment?.startSeconds ?? 0)} → ${formatClock(sceneSegment?.endSeconds ?? row.deliveredSeconds)} · ${row.rawFrames || "—"}f raw${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
@@ -2120,8 +2064,14 @@ function mount(node) {
             ));
             return;
         }
-        for (let index = 0; index < state.plan.shots.length; index += 1) {
-            appendTimelineGap(host, gapSegmentBefore(index));
+        for (const timelineSegment of state.timelineSegments) {
+            if (timelineSegment.kind === "gap") {
+                if (!timelineSegment.trailing) {
+                    appendTimelineGap(host, timelineSegment);
+                }
+                continue;
+            }
+            const index = timelineSegment.sceneIndex;
             const row = result.shots[index];
             const scene = sourceScene(index);
             const reference = scene?.references?.[0] ?? null;
@@ -2184,9 +2134,10 @@ function mount(node) {
             return;
         }
         const result = timing();
-        for (let index = 0; index < result.shots.length; index += 1) {
-            const gap = gapSegmentBefore(index);
-            if (gap) {
+        for (const timelineSegment of state.timelineSegments) {
+            if (timelineSegment.kind === "gap") {
+                if (timelineSegment.trailing) continue;
+                const gap = timelineSegment;
                 const gapCard = element("div", "h3studio-audio-card");
                 gapCard.dataset.timelineKey = gap.key;
                 gapCard.title = `Source song continues through ${formatClock(gap.durationSeconds)} of black video`;
@@ -2209,7 +2160,9 @@ function mount(node) {
                 );
                 gapCard.append(gapWaveform);
                 host.append(gapCard);
+                continue;
             }
+            const index = timelineSegment.sceneIndex;
             const row = result.shots[index];
             const muted = sourceAudioMuted(index);
             const card = element(
@@ -2230,10 +2183,7 @@ function mount(node) {
             }
             card.addEventListener("click", () => void selectScene(index));
             const canvas = element("canvas", "h3studio-waveform");
-            const sceneSegment = state.timelineSegments.find(
-                (segment) => segment.kind === "scene"
-                    && segment.sceneIndex === index,
-            );
+            const sceneSegment = timelineSegment;
             const samples = studioWaveformIntervalSamples(
                 state.sourceWaveform,
                 sceneSegment?.startSeconds ?? 0,
@@ -3046,9 +2996,9 @@ function mount(node) {
         sceneStart.value = placement
             ? formatClock(Number(placement.start_frame) / FPS) : "";
         sceneStart.placeholder = `Auto · ${formatClock(editorialScene?.startSeconds ?? 0)}`;
-        sceneStart.title = "Editorial-only position. Enter seconds, M:SS, or H:MM:SS. Blank follows the previous clip; uncovered time becomes black. This never changes generation, checkpoints, or branch lineage.";
+        sceneStart.title = "Editorial-only position. Enter seconds, M:SS, or H:MM:SS. Scenes are resolved by their requested positions; uncovered time becomes black. This may reorder playback, but never changes generation, checkpoints, or branch lineage.";
         const resetStart = button(
-            "Auto", "Place this scene immediately after the previous clip",
+            "Auto", "Use this scene's natural packed Plan position",
             () => setScenePlacement(state.active, null),
         );
         sceneStart.disabled = timelineLocked;

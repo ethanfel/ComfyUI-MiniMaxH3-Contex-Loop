@@ -7163,29 +7163,50 @@ def _editorial_timeline_records(
         for item in editorial.get("placements", [])
         if isinstance(item, dict)
     }
-    records: list[dict[str, Any]] = []
-    cursor = 0
+    ordered: list[dict[str, Any]] = []
+    natural_start = 0
     for offset, segment in enumerate(segments, start=1):
         scene_id = str(segment.get("id") or "clip_%04d" % offset)
         delivered = int(segment["delivered_frames"])
-        start = max(cursor, int(requested.get(scene_id, cursor)))
+        explicit = scene_id in requested
+        ordered.append({
+            "segment": segment,
+            "scene": int(segment.get("index", offset)),
+            "scene_id": scene_id,
+            "frame_count": delivered,
+            "source_start_frame": natural_start,
+            "requested_start_frame": int(
+                requested[scene_id] if explicit else natural_start),
+            "explicit": explicit,
+        })
+        natural_start += delivered
+    ordered.sort(key=lambda item: (
+        int(item["requested_start_frame"]),
+        0 if bool(item["explicit"]) else 1,
+        int(item["scene"]),
+    ))
+    records: list[dict[str, Any]] = []
+    cursor = 0
+    for item in ordered:
+        start = max(cursor, int(item["requested_start_frame"]))
         if start > cursor:
             records.append({
                 "kind": "gap",
-                "before_scene": int(segment.get("index", offset)),
-                "before_scene_id": scene_id,
+                "before_scene": int(item["scene"]),
+                "before_scene_id": str(item["scene_id"]),
                 "start_frame": cursor,
                 "frame_count": start - cursor,
             })
         records.append({
             "kind": "scene",
-            "scene": int(segment.get("index", offset)),
-            "scene_id": scene_id,
+            "scene": int(item["scene"]),
+            "scene_id": str(item["scene_id"]),
             "start_frame": start,
-            "frame_count": delivered,
-            "segment": segment,
+            "frame_count": int(item["frame_count"]),
+            "source_start_frame": int(item["source_start_frame"]),
+            "segment": item["segment"],
         })
-        cursor = start + delivered
+        cursor = start + int(item["frame_count"])
     return editorial, records, cursor
 
 
@@ -17909,9 +17930,7 @@ def _audio_with_editorial_timeline(
     editorial_frames: int,
     label: str,
 ) -> dict[str, Any]:
-    """Insert silence where the editorial video track contains empty time."""
-    if int(editorial_frames) == int(generated_frames):
-        return audio
+    """Place scene-owned audio in resolved editorial order and fill gaps."""
     waveform, sample_rate = _audio_waveform_3d(audio, label)
     expected_input = sample_boundary_from_frames(
         int(generated_frames), sample_rate, FPS)
@@ -17924,11 +17943,12 @@ def _audio_with_editorial_timeline(
     output = torch.zeros(
         (*tuple(waveform.shape[:-1]), total_samples),
         dtype=waveform.dtype, device=waveform.device)
-    source_frame = 0
+    placed_frames = 0
     for record in timeline_records:
         if record["kind"] != "scene":
             continue
         frames = int(record["frame_count"])
+        source_frame = int(record.get("source_start_frame", placed_frames))
         source_start = sample_boundary_from_frames(
             source_frame, sample_rate, FPS)
         source_end = sample_boundary_from_frames(
@@ -17945,18 +17965,28 @@ def _audio_with_editorial_timeline(
             source = torch.nn.functional.pad(
                 source, (0, budget - int(source.shape[-1])))
         output[..., target_start:target_end] = source
-        source_frame += frames
-    if source_frame != int(generated_frames):
+        placed_frames += frames
+    if placed_frames != int(generated_frames):
         raise ValueError(
             "Editorial audio placed %d generated frames; expected %d."
-            % (source_frame, int(generated_frames)))
+            % (placed_frames, int(generated_frames)))
     result = {"waveform": output, "sample_rate": sample_rate}
-    for key in (
-            AUDIO_WITH_OVERLAP_WAVEFORM_KEY,
-            AUDIO_WITH_OVERLAP_FRAMES_KEY,
-            AUDIO_TRIM_FRAMES_KEY):
-        if key in audio:
-            result[key] = audio[key]
+    first_scene = next((
+        item for item in timeline_records if item.get("kind") == "scene"
+    ), None)
+    keeps_original_incoming_boundary = bool(
+        timeline_records and timeline_records[0].get("kind") == "scene"
+        and first_scene is timeline_records[0]
+        and int(first_scene.get("source_start_frame", -1)) == 0
+        and int(first_scene.get("start_frame", -1)) == 0
+    )
+    if keeps_original_incoming_boundary:
+        for key in (
+                AUDIO_WITH_OVERLAP_WAVEFORM_KEY,
+                AUDIO_WITH_OVERLAP_FRAMES_KEY,
+                AUDIO_TRIM_FRAMES_KEY):
+            if key in audio:
+                result[key] = audio[key]
     return result
 
 
@@ -18523,50 +18553,90 @@ def _blend_video_records(
         int(item["blend_frames"]) for item in records) else [])
 
 
-def _insert_editorial_gap_records(
+def _apply_editorial_timeline_records(
     records: list[dict[str, Any]],
     timeline_records: list[dict[str, Any]],
     segments: list[dict[str, Any]],
     compatibility: dict[str, Any],
 ) -> list[dict[str, Any]]:
-    gaps = {
-        int(item["before_scene"]): int(item["frame_count"])
-        for item in timeline_records if item.get("kind") == "gap"
-    }
-    if not gaps:
+    timeline_scene_order = [
+        int(item["scene"])
+        for item in timeline_records if item.get("kind") == "scene"
+    ]
+    generated_scene_order = [
+        int(item.get("index", offset))
+        for offset, item in enumerate(segments, start=1)
+    ]
+    reordered = timeline_scene_order != generated_scene_order
+    has_gaps = any(
+        item.get("kind") == "gap" and int(item.get("frame_count", 0)) > 0
+        for item in timeline_records
+    )
+    if not reordered and not has_gaps:
         return records
-    width = int(compatibility.get("width", 0))
-    height = int(compatibility.get("height", 0))
-    if (width < 1 or height < 1) and av is not None:
-        first_path = next((
-            str(item.get("path") or "") for item in records
-            if item.get("kind") != "gap" and item.get("path")
-        ), "")
-        if first_path:
-            with av.open(first_path, mode="r") as container:
-                streams = list(container.streams.video)
-                if len(streams) == 1:
-                    width = int(streams[0].codec_context.width or 0)
-                    height = int(streams[0].codec_context.height or 0)
-    if width < 1 or height < 1:
-        raise ValueError(
-            "Editorial black-gap assembly could not resolve video dimensions.")
+    width = 0
+    height = 0
+    if has_gaps:
+        width = int(compatibility.get("width", 0))
+        height = int(compatibility.get("height", 0))
+        if (width < 1 or height < 1) and av is not None:
+            first_path = next((
+                str(item.get("path") or "") for item in records
+                if item.get("kind") != "gap" and item.get("path")
+            ), "")
+            if first_path:
+                with av.open(first_path, mode="r") as container:
+                    streams = list(container.streams.video)
+                    if len(streams) == 1:
+                        width = int(streams[0].codec_context.width or 0)
+                        height = int(streams[0].codec_context.height or 0)
+        if width < 1 or height < 1:
+            raise ValueError(
+                "Editorial black-gap assembly could not resolve video "
+                "dimensions.")
     segment_by_scene = {
         int(item.get("index", offset)): item
         for offset, item in enumerate(segments, start=1)
     }
-    result: list[dict[str, Any]] = []
-    for record in records:
-        scene = int(record.get("scene_index", 0))
-        gap_frames = gaps.get(scene, 0)
-        if gap_frames:
-            # Empty track space is a hard black interval. It deliberately ends
-            # any incoming xfade/tone boundary before this scene.
-            source = segment_by_scene.get(scene)
-            if source is None:
-                raise ValueError(
-                    "Editorial gap targets missing scene %d." % scene)
-            record = dict(record)
+    record_by_scene = {
+        int(item.get("scene_index", 0)): item
+        for item in records if item.get("kind") == "segment"
+    }
+    result: list[dict[str, Any]] = [
+        item for item in records if item.get("kind") == "prelude"
+    ]
+    gap_before_scene = False
+    for item in timeline_records:
+        if item.get("kind") == "gap":
+            gap_frames = int(item.get("frame_count", 0))
+            if gap_frames < 1:
+                continue
+            result.append({
+                "kind": "gap",
+                "before_scene": int(item["before_scene"]),
+                "input_frames": gap_frames,
+                "delivered_frames": gap_frames,
+                "blend_frames": 0,
+                "skip_frames": 0,
+                "width": width,
+                "height": height,
+            })
+            gap_before_scene = True
+            continue
+        if item.get("kind") != "scene":
+            continue
+        scene = int(item["scene"])
+        record = record_by_scene.get(scene)
+        source = segment_by_scene.get(scene)
+        if record is None or source is None:
+            raise ValueError(
+                "Editorial timeline targets missing scene %d." % scene)
+        record = dict(record)
+        if reordered or gap_before_scene:
+            # Saved incoming overlap belongs to the scene's generation
+            # predecessor. It is invalid after an editorial reorder, and a
+            # black gap also establishes a hard boundary. Use the complete
+            # delivered clip without resampling or touching its checkpoint.
             record.update({
                 "path": _absolute_output_path(source["segment"]),
                 "input_frames": int(source["delivered_frames"]),
@@ -18576,17 +18646,8 @@ def _insert_editorial_gap_records(
             })
             record.pop("tone_match", None)
             record.pop("tone_match_prefix", None)
-            result.append({
-                "kind": "gap",
-                "before_scene": scene,
-                "input_frames": gap_frames,
-                "delivered_frames": gap_frames,
-                "blend_frames": 0,
-                "skip_frames": 0,
-                "width": width,
-                "height": height,
-            })
         result.append(record)
+        gap_before_scene = False
     return result
 
 
@@ -20433,6 +20494,16 @@ class MiniMaxH3ChainAssemble:
         generated_extension_frames = int(manifest["total_delivered_frames"])
         editorial_gap_frames = (
             editorial_extension_frames - generated_extension_frames)
+        generated_scene_order = [
+            int(item.get("index", offset))
+            for offset, item in enumerate(segments, start=1)
+        ]
+        editorial_scene_order = [
+            int(item["scene"])
+            for item in editorial_records if item.get("kind") == "scene"
+        ]
+        editorial_reordered = editorial_scene_order != generated_scene_order
+        editorial_changed = bool(editorial_gap_frames or editorial_reordered)
         tone_match_mode = str(
             boundary_tone_match if boundary_tone_match is not None
             else "off").strip().lower()
@@ -20462,7 +20533,7 @@ class MiniMaxH3ChainAssemble:
                 generated_warning = (
                     "generated audio sidecar unavailable: %s" % exc)
                 _LOG.warning("H3 Chain %s", generated_warning)
-        if generated_track is not None and editorial_gap_frames:
+        if generated_track is not None and editorial_changed:
             generated_track = _audio_with_editorial_timeline(
                 generated_track, editorial_records,
                 generated_extension_frames, editorial_extension_frames,
@@ -20589,7 +20660,11 @@ class MiniMaxH3ChainAssemble:
                 video_vae=blend_video_vae,
                 temporary_paths=scheduled_blend_temps,
                 force_records=(color_stabilization_mode != "off"
-                               or editorial_gap_frames > 0))
+                               or editorial_changed))
+            if editorial_changed:
+                blend_records = _apply_editorial_timeline_records(
+                    blend_records, editorial_records, segments,
+                    manifest.get("compatibility") or {})
             if tone_match_mode == "auto" and blend_records:
                 blend_records = _auto_boundary_tone_match_records(
                     blend_records)
@@ -20597,10 +20672,6 @@ class MiniMaxH3ChainAssemble:
                     blend_records):
                 blend_records = _auto_scene_color_stabilization_records(
                     blend_records)
-            if editorial_gap_frames:
-                blend_records = _insert_editorial_gap_records(
-                    blend_records, editorial_records, segments,
-                    manifest.get("compatibility") or {})
             blend_enabled = bool(blend_records)
             has_visual_blends = any(
                 int(record.get("blend_frames", 0))
@@ -20717,6 +20788,9 @@ class MiniMaxH3ChainAssemble:
             subtitle_status += " + %s" % subtitle_copy
         gap_status = ("; %d black editorial frames" % editorial_gap_frames
                       if editorial_gap_frames else "")
+        order_status = ("; editorial scene order [%s]" % ",".join(
+            str(value) for value in editorial_scene_order)
+            if editorial_reordered else "")
         resolved_blends = [
             int(record["blend_frames"])
             for record in blend_records[1:]
@@ -20740,10 +20814,11 @@ class MiniMaxH3ChainAssemble:
             if color_stabilization_mode == "scene_1_anchor" else "")
         clip_kind = ("HQ clips" if upscale_manifest is not None
                      else "generated clips")
-        status = "assembled %d %s%s with %s%s%s%s%s -> %s%s%s%s" % (
+        status = "assembled %d %s%s with %s%s%s%s%s%s -> %s%s%s%s" % (
             len(segments), clip_kind,
             " + existing-video prelude" if prelude else "",
             backend, blend_status, tone_status, color_status, gap_status,
+            order_status,
             final_path, sidecar_status, copy_status, subtitle_status)
         _LOG.info("H3 Chain %s", status)
         published_video = output_copy or final_path

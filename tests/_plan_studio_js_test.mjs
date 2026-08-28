@@ -86,6 +86,27 @@ assert.equal(locateStudioTimelineSegment(
 assert.equal(locateStudioTimelineSegment(
     placedTimeline, 20,
 ).sceneIndex, 1);
+const reorderedTimeline = studioTimelineSegments(rows, [
+    {scene_id:"three", start_frame:0},
+]);
+assert.deepEqual(reorderedTimeline.filter(
+    (segment) => segment.kind === "scene",
+).map((segment) => segment.sceneId), ["three", "one", "two"]);
+assert.equal(reorderedTimeline[0].startFrame, 0);
+assert.equal(reorderedTimeline[0].sceneIndex, 2);
+assert.equal(reorderedTimeline.at(-1).sceneId, "two");
+for (const count of [8, 7]) {
+    const manyRows = Array.from({length:count}, (_value, index) => ({
+        id:`scene_${index + 1}`,
+        deliveredFrames:100,
+        deliveredSeconds:100 / 24,
+    }));
+    const movedTerminal = studioTimelineSegments(manyRows, [{
+        scene_id:`scene_${count}`, start_frame:0,
+    }]).filter((segment) => segment.kind === "scene");
+    assert.equal(movedTerminal[0].sceneId, `scene_${count}`);
+    assert.notEqual(movedTerminal.at(-1).sceneId, `scene_${count}`);
+}
 const placedLayout = studioTimelineLayout(
     rows, 600, 1, [{scene_id:"two", start_frame:480}],
 );
@@ -336,8 +357,9 @@ assert.match(source, /h3studio-resize-handle/);
 assert.match(source, /17n\+5 frame grid/);
 assert.match(source, /Unlock all/);
 assert.match(source, /Unlock scene/);
-assert.match(source, /requestedStart > previousEnd/);
-assert.match(source, /meaningfulPlacements/);
+assert.doesNotMatch(source, /requestedStart > previousEnd/);
+assert.doesNotMatch(source, /meaningfulPlacements/);
+assert.match(source, /for \(const timelineSegment of state\.timelineSegments\)/);
 assert.match(source, /card\.addEventListener\("pointerdown", startDrag\)/);
 assert.match(source, /window\.addEventListener\("pointermove", onMove, true\)/);
 assert.match(source, /Drag the clip or its grip/);
