@@ -4,6 +4,16 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Tagged Ref2VA now has an opt-in `external_refmod` conditioning backend for
+  testing ComfyUI-MiniMaxH3Mod without duplicating native references. It keeps
+  scene-local `@tag` selection and video slicing, emits text-only H3
+  conditioning/latent, and exposes the active pictures/videos as the upstream
+  `H3_REF_LIST` contract through `refmod_sources`. Native Ref2VA remains the
+  default. Because the external format is visual-only, active reference audio
+  and semantic `#anchors` fail explicitly instead of being silently dropped;
+  external Extract/Apply settings remain outside Plan fingerprinting and native
+  deferred-upscale caching.
+
 - Plan Studio's generated track is now an editorial timeline rather than a
   delayed view of generation order. Absolute scene placements can move any
   scene—including the terminal scene—before or after other clips; collisions

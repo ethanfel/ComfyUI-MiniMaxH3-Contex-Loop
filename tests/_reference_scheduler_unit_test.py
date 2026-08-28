@@ -721,6 +721,42 @@ try:
     assert semantic_expansion["result"][1] == ["TaggedRef2VA", 1]
     assert semantic_expansion["result"][4] != tagged["fingerprint"]
 
+    refmod_expansion = chain.MiniMaxH3TaggedReferenceToVideo().apply(
+        "clip", "video-vae", "audio-vae", tagged, 1, 1,
+        "Use @look through the external RefMod path.",
+        64, 32, 22, "match", conditioning_backend="external_refmod")
+    refmod_graph = refmod_expansion["expand"]
+    assert set(refmod_graph) == {"TaggedRefModBase"}
+    assert refmod_graph["TaggedRefModBase"]["class_type"] == (
+        "MiniMaxH3ImageToVideo")
+    assert refmod_graph["TaggedRefModBase"]["inputs"] == {
+        "clip": "clip",
+        "vae": "video-vae",
+        "prompt": "Use <Picture 1> through the external RefMod path.",
+        "width": 64,
+        "height": 32,
+        "length": 22,
+    }
+    assert refmod_expansion["result"][0] == ["TaggedRefModBase", 0]
+    assert refmod_expansion["result"][1] == ["TaggedRefModBase", 1]
+    assert len(refmod_expansion["result"][5]) == 1
+    assert chain.torch.equal(
+        refmod_expansion["result"][5][0], tagged_picture)
+    assert "text-only conditioning" in refmod_expansion["result"][3]
+    assert chain._generation_fingerprint_value(
+        refmod_expansion["result"][4])[0] != tagged["fingerprint"]
+
+    try:
+        chain.MiniMaxH3TaggedReferenceToVideo().apply(
+            "clip", "video-vae", "audio-vae", tagged, 1, 1,
+            "Use @voice through RefMod.", 64, 32, 22, "match",
+            conditioning_backend="external_refmod")
+    except ValueError as exc:
+        assert "visual-only" in str(exc)
+        assert "standalone tagged audio" in str(exc)
+    else:
+        raise AssertionError("external RefMod accepted active tagged audio")
+
     storyboard_expansion = chain.MiniMaxH3TaggedReferenceToVideo().apply(
         "clip", "video-vae", "audio-vae", tagged, 1, 1,
         "Use @look natively and #face[0.00s] as a storyboard cue.",
@@ -925,6 +961,17 @@ assert chain.MiniMaxH3TaggedReferenceToVideo.VALIDATE_INPUTS(
         "picture_storyboard; got 'unsupported'.")
 assert tagged_optional["semantic_anchor_size"][0] == [
     "384", "512", "768", "1024", "1280", "source"]
+assert tagged_optional["conditioning_backend"][0] == [
+    "native_ref2va", "external_refmod"]
+assert tagged_optional["conditioning_backend"][1]["default"] == (
+    "native_ref2va")
+assert chain.MiniMaxH3TaggedReferenceToVideo.RETURN_NAMES[-1] == (
+    "refmod_sources")
+assert chain.MiniMaxH3TaggedReferenceToVideo.RETURN_TYPES[-1] == "H3_REF_LIST"
+assert chain.MiniMaxH3TaggedReferenceToVideo.VALIDATE_INPUTS(
+    conditioning_backend="unknown") == (
+        "Tagged conditioning backend must be native_ref2va or "
+        "external_refmod; got 'unknown'.")
 assert "reference_schedule" not in (
     chain.MiniMaxH3TaggedReferenceToVideo.INPUT_TYPES()["required"])
 conditioning = object()

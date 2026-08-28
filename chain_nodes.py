@@ -213,6 +213,7 @@ MANIFEST_TYPE = "H3_CHAIN_MANIFEST"
 EXTERNAL_CONTEXT_TYPE = "H3_CHAIN_EXTERNAL_CONTEXT"
 REFERENCE_SCHEDULE_TYPE = "H3_REFERENCE_SCHEDULE"
 TAGGED_REFERENCE_TYPE = "H3_TAGGED_REFERENCES"
+REFMOD_SOURCE_LIST_TYPE = "H3_REF_LIST"
 SEMANTIC_ANCHOR_DRAFT_TYPE = "H3_SEMANTIC_ANCHOR_DRAFT"
 SEMANTIC_PRESENTATION_TYPE = "H3_SEMANTIC_PRESENTATION"
 LAZY_MOTION_SOURCE_TYPE = "H3_LAZY_MOTION_SOURCE"
@@ -773,6 +774,7 @@ _SEMANTIC_ANCHOR_RE = re.compile(
     r"\[([0-9]+(?:\.[0-9]+)?)s?\]",
     flags=re.IGNORECASE)
 REFERENCE_COMPLIANCE_MODES = ("strict", "soft", "disabled")
+TAGGED_CONDITIONING_BACKENDS = ("native_ref2va", "external_refmod")
 REFERENCE_VIDEO_TIMELINE_MODES = (
     "restart_each_scene",
     "sequential",
@@ -798,6 +800,15 @@ def _semantic_anchor_mode(value: Any) -> str:
             "Semantic anchor mode must be timestamped_video or "
             "picture_storyboard; got %r." % value)
     return mode
+
+
+def _tagged_conditioning_backend(value: Any) -> str:
+    backend = str(value or "native_ref2va").strip().lower()
+    if backend not in TAGGED_CONDITIONING_BACKENDS:
+        raise ValueError(
+            "Tagged conditioning backend must be native_ref2va or "
+            "external_refmod; got %r." % value)
+    return backend
 
 
 def _prompt_reference_tags(text: Any) -> set[str]:
@@ -11516,6 +11527,18 @@ class MiniMaxH3TaggedReferenceToVideo:
                            "picture masters for target-resolution pass 2. "
                            "Deferred upscale discovers the cache from the "
                            "source checkpoint fingerprint."}),
+            # Append new widgets so existing serialized positional values keep
+            # their original meaning.
+            "conditioning_backend": (list(TAGGED_CONDITIONING_BACKENDS), {
+                "default": "native_ref2va",
+                "tooltip": "native_ref2va preserves the existing stock H3 "
+                           "reference path. external_refmod emits text-only "
+                           "conditioning plus the active scene pictures/videos "
+                           "through refmod_sources; connect that output to "
+                           "Extract H3 RefMod, then apply the resulting mod to "
+                           "positive before Chain Context. External RefMod is "
+                           "visual-only and intentionally bypasses native "
+                           "Qwen/reference conditioning."}),
         }
         return {"required": ordered, "optional": optional}
 
@@ -11523,10 +11546,12 @@ class MiniMaxH3TaggedReferenceToVideo:
     def VALIDATE_INPUTS(
             cls, reference_policy="strict",
             semantic_anchor_mode="timestamped_video",
-            semantic_anchor_size="512"):
+            semantic_anchor_size="512",
+            conditioning_backend="native_ref2va"):
         try:
             _reference_compliance_mode(reference_policy)
             _semantic_anchor_mode(semantic_anchor_mode)
+            _tagged_conditioning_backend(conditioning_backend)
             if str(semantic_anchor_size) not in SEMANTIC_ANCHOR_SIZES:
                 raise ValueError(
                     "Semantic anchor size must be one of %s." %
@@ -11535,37 +11560,47 @@ class MiniMaxH3TaggedReferenceToVideo:
             return str(exc)
         return True
 
-    RETURN_TYPES = ("CONDITIONING", "LATENT", "STRING", "STRING", "STRING")
+    RETURN_TYPES = (
+        "CONDITIONING", "LATENT", "STRING", "STRING", "STRING",
+        REFMOD_SOURCE_LIST_TYPE)
     RETURN_NAMES = (
         "positive", "latent", "compiled_prompt", "active_references",
-        "reference_fingerprint")
+        "reference_fingerprint", "refmod_sources")
     OUTPUT_TOOLTIPS = (
-        "Positive conditioning produced by stock MiniMax H3 Ref2VA.",
-        "Empty MiniMax H3 AV latent produced by stock Ref2VA.",
+        "Native Ref2VA conditioning, or text-only H3 conditioning when the "
+        "external_refmod backend is selected.",
+        "Matching empty MiniMax H3 AV latent for the selected backend.",
         "Exact prompt sent to H3 after native @tags and semantic #anchors compile.",
         "Scene-local mapping of native references and Qwen-only semantic anchors.",
         "Fingerprint of the complete registered source set for Plan checkpoint safety.",
+        "Active scene pictures and resolved video slices as H3_REF_LIST. "
+        "Connect to Extract H3 RefMod refs_bundle; audio and semantic-only "
+        "anchors are excluded.",
     )
     FUNCTION = "apply"
     CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
-    DESCRIPTION = ("Prompt-driven Ref2VA with no numeric reference schedule. "
+    DESCRIPTION = ("Prompt-driven H3 references with no numeric schedule. "
                    "Each scene activates only registered @tags present in its "
                    "resolved prompt, compactly renumbers those assets to native "
                    "H3 labels, and leaves unrelated @syntax untouched. A "
                    "Tagged Picture can also be written as #tag[2.50s] to add "
                    "either a timestamped Qwen semantic checkpoint or an "
                    "approximate Qwen-only Picture storyboard cue without a "
-                   "VAE reference.")
+                   "VAE reference. The optional external_refmod backend exposes "
+                   "the active visual tensors while producing text-only base "
+                   "conditioning for ComfyUI-MiniMaxH3Mod.")
 
     def apply(self, clip, vae, audio_vae, references, clip_index,
               clip_count, prompt, width, height, length,
               ref_image_size="match", state=None,
               reference_policy="strict", semantic_anchor_size="512",
               semantic_anchor_mode="timestamped_video",
-              cache_for_upscale=True):
+              cache_for_upscale=True,
+              conditioning_backend="native_ref2va"):
         if GraphBuilder is None:
             raise RuntimeError(
                 "Tagged H3 Ref2VA requires ComfyUI GraphBuilder.")
+        backend = _tagged_conditioning_backend(conditioning_backend)
         anchor_bundle = _reference_semantic_anchor_bundle(references)
         if anchor_bundle is not None:
             semantic_anchor_size = anchor_bundle["semantic_anchor_size"]
@@ -11587,28 +11622,30 @@ class MiniMaxH3TaggedReferenceToVideo:
                 "value": _project_asset_image(anchor["entry"]["value"]),
             },
         } for anchor in (bindings.get("semantic_anchors") or [])]
+        semantic_anchors = bindings.get("semantic_anchors") or []
+        if backend == "external_refmod":
+            unsupported = []
+            if semantic_anchors:
+                unsupported.append("semantic #anchors")
+            if bindings["audios"]:
+                unsupported.append("standalone tagged audio")
+            if any(entry.get("audio") is not None
+                   for entry in bindings["videos"]):
+                unsupported.append("paired reference-video audio")
+            if unsupported:
+                raise ValueError(
+                    "Tagged Ref2VA external_refmod is visual-only and cannot "
+                    "preserve active %s. Remove those tags for this test or "
+                    "switch conditioning_backend to native_ref2va." %
+                    ", ".join(unsupported))
+
         graph = GraphBuilder()
-        ref2va = graph.node("MiniMaxH3ReferenceToVideo", "TaggedRef2VA")
-        for key, value in (
-                ("clip", clip), ("vae", vae), ("audio_vae", audio_vae),
-                ("prompt", compiled), ("width", int(width)),
-                ("height", int(height)), ("length", int(length)),
-                ("ref_image_size", ref_image_size)):
-            ref2va.set_input(key, value)
-        for index, entry in enumerate(bindings["pictures"]):
-            ref2va.set_input(
-                "ref_images.ref_image_%d" % index, entry["value"])
         slice_details = []
         presentation_videos = []
         resolved_videos = []
-        for index, entry in enumerate(bindings["videos"]):
+        for entry in bindings["videos"]:
             video, paired_audio, detail = _scheduled_video_reference_slice(
                 entry, state, clip_index, clip_count, length)
-            ref2va.set_input("ref_videos.ref_video_%d" % index, video)
-            if paired_audio is not None:
-                ref2va.set_input(
-                    "ref_video_audios.ref_video_audio_%d" % index,
-                    paired_audio)
             presentation_videos.append({
                 "video": video,
                 "paired_audio": paired_audio is not None,
@@ -11617,32 +11654,87 @@ class MiniMaxH3TaggedReferenceToVideo:
             if detail:
                 slice_details.append(detail)
         resolved_audios = []
-        for index, entry in enumerate(bindings["audios"]):
-            audio, detail = _tagged_audio_reference_value(
-                entry, state, clip_index, clip_count, length)
-            resolved_audios.append(audio)
-            ref2va.set_input(
-                "ref_audios.ref_audio_%d" % index, audio)
-            if detail:
-                slice_details.append(detail)
+        if backend == "native_ref2va":
+            for entry in bindings["audios"]:
+                audio, detail = _tagged_audio_reference_value(
+                    entry, state, clip_index, clip_count, length)
+                resolved_audios.append(audio)
+                if detail:
+                    slice_details.append(detail)
+
+        refmod_sources = [
+            entry["value"] for entry in bindings["pictures"]
+        ] + [item["video"] for item in resolved_videos]
+        if backend == "native_ref2va":
+            conditioner = graph.node(
+                "MiniMaxH3ReferenceToVideo", "TaggedRef2VA")
+            for key, value in (
+                    ("clip", clip), ("vae", vae),
+                    ("audio_vae", audio_vae), ("prompt", compiled),
+                    ("width", int(width)), ("height", int(height)),
+                    ("length", int(length)),
+                    ("ref_image_size", ref_image_size)):
+                conditioner.set_input(key, value)
+            for index, entry in enumerate(bindings["pictures"]):
+                conditioner.set_input(
+                    "ref_images.ref_image_%d" % index, entry["value"])
+            for index, item in enumerate(resolved_videos):
+                conditioner.set_input(
+                    "ref_videos.ref_video_%d" % index, item["video"])
+                if item.get("audio") is not None:
+                    conditioner.set_input(
+                        "ref_video_audios.ref_video_audio_%d" % index,
+                        item["audio"])
+            for index, audio in enumerate(resolved_audios):
+                conditioner.set_input(
+                    "ref_audios.ref_audio_%d" % index, audio)
+        else:
+            if not refmod_sources:
+                raise ValueError(
+                    "Tagged Ref2VA external_refmod needs at least one active "
+                    "visual @tag in the current scene prompt.")
+            conditioner = graph.node(
+                "MiniMaxH3ImageToVideo", "TaggedRefModBase")
+            for key, value in (
+                    ("clip", clip), ("vae", vae), ("prompt", compiled),
+                    ("width", int(width)), ("height", int(height)),
+                    ("length", int(length))):
+                conditioner.set_input(key, value)
+            summary += (
+                "; external RefMod base: %d visual source(s), text-only "
+                "conditioning; Extract/Apply settings are external to the "
+                "Plan fingerprint" % len(refmod_sources))
         if isinstance(references, dict) and references.get("fingerprint"):
             fingerprint_registry = _combined_reference_registry(
                 references, anchor_bundle)
             fingerprint = str(fingerprint_registry["fingerprint"])
             fingerprint_output = _reference_fingerprint_output(
-                fingerprint_registry)
+                fingerprint_registry,
+                wrapper_key=(
+                    "tagged_reference_fingerprint"
+                    if backend == "external_refmod" else ""),
+                wrapper_contract=(
+                    {"conditioning_backend": backend}
+                    if backend == "external_refmod" else None))
+            if backend == "external_refmod":
+                fingerprint = _fingerprint({
+                    "tagged_reference_fingerprint": fingerprint,
+                    "conditioning_backend": backend,
+                })
         elif _reference_compliance_mode(reference_policy) == "disabled":
             fingerprint = _fingerprint({
                 "tagged_references": "ignored",
                 "reference_policy": "disabled",
+                **({"conditioning_backend": backend}
+                   if backend == "external_refmod" else {}),
             })
             fingerprint_output = fingerprint
         else:
             raise ValueError(
                 "Tagged references have no valid reference fingerprint.")
         cache_fingerprint = fingerprint
-        positive = ref2va.out(0)
-        semantic_anchors = bindings.get("semantic_anchors") or []
+        positive = conditioner.out(0)
+        latent = conditioner.out(1)
         presentation = None
         if semantic_anchors:
             anchor_mode = _semantic_anchor_mode(semantic_anchor_mode)
@@ -11692,9 +11784,10 @@ class MiniMaxH3TaggedReferenceToVideo:
                 item.get("audio") is not None for item in resolved_videos)
                  or (callable(getattr(audio_vae, "encode", None))
                      and not isinstance(audio_vae, (str, bytes)))))
-        if bool(cache_for_upscale) and cache_runtime_ready and (
+        if (backend == "native_ref2va" and bool(cache_for_upscale)
+                and cache_runtime_ready and (
                 bindings["pictures"] or resolved_videos or resolved_audios
-                or semantic_anchors):
+                or semantic_anchors)):
             try:
                 cache_status = _cache_reference_scene(
                     fingerprint=cache_fingerprint, scene=clip_index,
@@ -11712,8 +11805,8 @@ class MiniMaxH3TaggedReferenceToVideo:
             summary += "; " + "; ".join(slice_details)
         return {
             "result": (
-                positive, ref2va.out(1), compiled, summary,
-                fingerprint_output),
+                positive, latent, compiled, summary,
+                fingerprint_output, refmod_sources),
             "expand": graph.finalize(),
         }
 
