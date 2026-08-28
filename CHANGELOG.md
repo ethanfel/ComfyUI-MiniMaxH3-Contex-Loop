@@ -9,10 +9,12 @@ Newest first. This file keeps release history out of the onboarding README.
   scene-local `@tag` selection and video slicing, emits text-only H3
   conditioning/latent, and exposes the active pictures/videos as the upstream
   `H3_REF_LIST` contract through `refmod_sources`. Native Ref2VA remains the
-  default. Because the external format is visual-only, active reference audio
-  and semantic `#anchors` fail explicitly instead of being silently dropped;
-  external Extract/Apply settings remain outside Plan fingerprinting and native
-  deferred-upscale caching.
+  default. Active semantic `#anchors` now use a hybrid path: ordinary `@visuals`
+  remain compressed RefMods, while an anchor-only Qwen presentation preserves
+  each anchor's timestamp and storyboard mode without re-encoding all ordinary
+  reference media. Active reference audio still fails explicitly because the
+  external format is visual-only. External Extract/Apply settings remain
+  outside Plan fingerprinting and native deferred-upscale caching.
 
 - Plan Studio's generated track is now an editorial timeline rather than a
   delayed view of generation order. Absolute scene placements can move any

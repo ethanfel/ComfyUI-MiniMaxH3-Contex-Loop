@@ -146,17 +146,26 @@ Apply H3 RefMod conditioning ─→ H3 Chain Context conditioning
 Tagged Ref2VA latent ─────────→ H3 Chain Context latent
 ```
 
-In this mode Tagged Ref2VA still compiles scene-local `@tags`, resolves lazy
-project images, and slices sequential reference videos. It then creates
-text-only conditioning and a matching empty AV latent through core
-`MiniMaxH3ImageToVideo`; stock Ref2VA is not executed. `refmod_sources` uses
-the external pack's existing `H3_REF_LIST` contract, so no direct Python import
-or patched external node is required. Native behavior remains the default.
+In this mode Tagged Ref2VA still selects scene-local `@tags`, resolves lazy
+project images, and slices sequential reference videos. It describes those
+RefMods in text using their readable tag names, creates base conditioning and
+a matching empty AV latent through core `MiniMaxH3ImageToVideo`, and skips
+stock Ref2VA. `refmod_sources` uses the external pack's existing `H3_REF_LIST`
+contract, so no direct Python import or patched external node is required.
+Native behavior remains the default.
 
-The experiment is deliberately visual-only. A scene with an active standalone
-reference audio, paired reference-video audio, or Qwen-only semantic `#anchor`
-stops with a clear error instead of silently losing that conditioning. Source
-Timeline/final audio managed outside Tagged Ref2VA remains unaffected.
+Semantic `#tag[timestamp]` anchors use a hybrid path. Ordinary active `@visuals`
+remain exclusively in RefMod, while only the active anchor images are presented
+to Qwen and numbered in their own `<Video N>` or `<Picture N>` namespace. This
+preserves the supplied timestamped-video cues and approximate storyboard timing
+without paying Qwen's media-token cost for every ordinary reference again.
+An asset intentionally used as both `@tag` and `#tag[timestamp]` participates in
+both paths.
+
+The external experiment remains unable to carry reference audio. A scene with
+active standalone tagged audio or paired reference-video audio stops with a
+clear error instead of silently losing it. Source Timeline/final audio managed
+outside Tagged Ref2VA remains unaffected.
 
 The reference registry and backend choice participate in the Plan fingerprint,
 but the external Extract/Apply widgets and resulting mod bytes do not. Use a

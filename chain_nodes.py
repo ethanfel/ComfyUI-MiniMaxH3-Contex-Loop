@@ -230,6 +230,7 @@ REFERENCE_FINGERPRINT_LINEAGE_VERSION = 1
 SEMANTIC_ANCHOR_REGISTRY_VERSION = 1
 LAZY_MOTION_SOURCE_VERSION = 3
 SEMANTIC_PRESENTATION_VERSION = 1
+EXTERNAL_REFMOD_CONTRACT_VERSION = 2
 BOUNDARY_ANCHOR_VERSION = 1
 BOUNDARY_ANCHOR_LEAD_FRAMES = 5
 BOUNDARY_ANCHOR_SLOT_FRAMES = 17
@@ -3522,6 +3523,78 @@ def _compile_tagged_reference_prompt(
     bindings["compliance_mode"] = mode
     bindings["compliance_warnings"] = warnings
     return compiled, summary, bindings
+
+
+def _refmod_prompt_phrase(entry: dict[str, Any], tag: str) -> str:
+    """Give an active RefMod a readable text anchor, not a fake media label."""
+    if (entry.get("kind") == "video"
+            and entry.get("semantic_role") == "motion"):
+        description = " ".join(str(
+            entry.get("motion_description") or "").split()).rstrip(". ")
+        if description:
+            return description
+    readable = re.sub(r"[_-]+", " ", str(tag)).strip()
+    return readable or str(tag)
+
+
+def _compile_refmod_hybrid_prompt(
+        prompt: Any, bindings: dict[str, Any],
+        semantic_anchors: list[dict[str, Any]],
+        semantic_anchor_mode: str) -> tuple[str, list[dict[str, Any]]]:
+    """Compile RefMod text plus an anchor-only Qwen media namespace.
+
+    External RefMod carries ordinary visual references through conditioning,
+    so presenting those sources to Qwen again would erase most of its speed
+    benefit.  Only semantic anchors receive native H3 media labels here.
+    """
+    normalized = str(prompt or "").replace(
+        "\r\n", "\n").replace("\r", "\n").strip()
+    entries_by_tag = {
+        alias: entry
+        for entry in (
+            list(bindings.get("pictures") or ())
+            + list(bindings.get("videos") or ()))
+        for alias in _reference_entry_tags(entry)
+    }
+
+    def replace_refmod_tag(match: re.Match[str]) -> str:
+        if bindings.get("compliance_mode") == "disabled":
+            return match.group(0)
+        tag = match.group(1)
+        entry = entries_by_tag.get(tag)
+        if entry is None:
+            return match.group(0)
+        return _refmod_prompt_phrase(entry, tag)
+
+    compiled = _REFERENCE_ALIAS_RE.sub(replace_refmod_tag, normalized)
+    anchor_mode = _semantic_anchor_mode(semantic_anchor_mode)
+    label_kind = "Picture" if anchor_mode == "picture_storyboard" else "Video"
+    anchor_items = []
+    labels = {}
+    for ordinal, anchor in enumerate(semantic_anchors, 1):
+        label = "<%s %d>" % (label_kind, ordinal)
+        labels[anchor["tag"]] = label
+        anchor_items.append({**anchor, "hybrid_label": label})
+
+    if labels:
+        compiled = _SEMANTIC_ANCHOR_RE.sub(
+            lambda match: labels.get(match.group(1), match.group(0)),
+            compiled)
+    if anchor_items and anchor_mode == "picture_storyboard":
+        timing_lines = []
+        timed_anchors = sorted(
+            (timestamp, item_index, item)
+            for item_index, item in enumerate(anchor_items)
+            for timestamp in item["timestamps"])
+        for timestamp, _item_index, item in timed_anchors:
+            timestamp_text = ("%.3f" % float(timestamp)).rstrip(
+                "0").rstrip(".")
+            timing_lines.append(
+                "For the target video, around %s seconds into this "
+                "scene, %s is an approximate visual storyboard "
+                "reference." % (timestamp_text, item["hybrid_label"]))
+        compiled = "\n".join(timing_lines) + "\n\n" + compiled
+    return compiled, anchor_items
 
 
 def _h3_aligned_frame_count(length: int) -> int:
@@ -11536,9 +11609,10 @@ class MiniMaxH3TaggedReferenceToVideo:
                            "conditioning plus the active scene pictures/videos "
                            "through refmod_sources; connect that output to "
                            "Extract H3 RefMod, then apply the resulting mod to "
-                           "positive before Chain Context. External RefMod is "
-                           "visual-only and intentionally bypasses native "
-                           "Qwen/reference conditioning."}),
+                           "positive before Chain Context. Active #semantic "
+                           "anchors use a hybrid path: only those timed images "
+                           "are presented to Qwen, while ordinary @visuals "
+                           "remain RefMods."}),
         }
         return {"required": ordered, "optional": optional}
 
@@ -11571,7 +11645,8 @@ class MiniMaxH3TaggedReferenceToVideo:
         "external_refmod backend is selected.",
         "Matching empty MiniMax H3 AV latent for the selected backend.",
         "Exact prompt sent to H3 after native @tags and semantic #anchors compile.",
-        "Scene-local mapping of native references and Qwen-only semantic anchors.",
+        "Scene-local mapping of native references, RefMods, and Qwen-only "
+        "semantic anchors.",
         "Fingerprint of the complete registered source set for Plan checkpoint safety.",
         "Active scene pictures and resolved video slices as H3_REF_LIST. "
         "Connect to Extract H3 RefMod refs_bundle; audio and semantic-only "
@@ -11587,8 +11662,9 @@ class MiniMaxH3TaggedReferenceToVideo:
                    "either a timestamped Qwen semantic checkpoint or an "
                    "approximate Qwen-only Picture storyboard cue without a "
                    "VAE reference. The optional external_refmod backend exposes "
-                   "the active visual tensors while producing text-only base "
-                   "conditioning for ComfyUI-MiniMaxH3Mod.")
+                   "the active @visual tensors while producing text-only base "
+                   "conditioning for ComfyUI-MiniMaxH3Mod; active #anchors "
+                   "remain timed through an anchor-only Qwen hybrid pass.")
 
     def apply(self, clip, vae, audio_vae, references, clip_index,
               clip_count, prompt, width, height, length,
@@ -11623,10 +11699,9 @@ class MiniMaxH3TaggedReferenceToVideo:
             },
         } for anchor in (bindings.get("semantic_anchors") or [])]
         semantic_anchors = bindings.get("semantic_anchors") or []
+        hybrid_anchors = semantic_anchors
         if backend == "external_refmod":
             unsupported = []
-            if semantic_anchors:
-                unsupported.append("semantic #anchors")
             if bindings["audios"]:
                 unsupported.append("standalone tagged audio")
             if any(entry.get("audio") is not None
@@ -11638,6 +11713,30 @@ class MiniMaxH3TaggedReferenceToVideo:
                     "preserve active %s. Remove those tags for this test or "
                     "switch conditioning_backend to native_ref2va." %
                     ", ".join(unsupported))
+            compiled, hybrid_anchors = _compile_refmod_hybrid_prompt(
+                prompt, bindings, semantic_anchors, semantic_anchor_mode)
+            refmod_tags = [
+                "@%s" % entry["tag"]
+                for entry in (
+                    list(bindings.get("pictures") or ())
+                    + list(bindings.get("videos") or ()))
+            ]
+            anchor_mappings = [
+                "#%s -> %s" % (item["tag"], item["hybrid_label"])
+                for item in hybrid_anchors
+            ]
+            summary = "scene %d/%d: %s" % (
+                int(clip_index), int(clip_count),
+                "; ".join(
+                    (["RefMod " + ", ".join(refmod_tags)]
+                     if refmod_tags else [])
+                    + anchor_mappings)
+                or "no tagged references used by prompt")
+            if bindings.get("compliance_warnings"):
+                summary += "; warning-only: %s" % " ".join(
+                    bindings["compliance_warnings"])
+            elif bindings.get("compliance_mode") == "disabled":
+                summary += "; reference policy disabled; @tags passed unchanged"
 
         graph = GraphBuilder()
         slice_details = []
@@ -11714,18 +11813,28 @@ class MiniMaxH3TaggedReferenceToVideo:
                     "tagged_reference_fingerprint"
                     if backend == "external_refmod" else ""),
                 wrapper_contract=(
-                    {"conditioning_backend": backend}
+                    {
+                        "conditioning_backend": backend,
+                        "external_refmod_contract": (
+                            EXTERNAL_REFMOD_CONTRACT_VERSION),
+                    }
                     if backend == "external_refmod" else None))
             if backend == "external_refmod":
                 fingerprint = _fingerprint({
                     "tagged_reference_fingerprint": fingerprint,
                     "conditioning_backend": backend,
+                    "external_refmod_contract": (
+                        EXTERNAL_REFMOD_CONTRACT_VERSION),
                 })
         elif _reference_compliance_mode(reference_policy) == "disabled":
             fingerprint = _fingerprint({
                 "tagged_references": "ignored",
                 "reference_policy": "disabled",
-                **({"conditioning_backend": backend}
+                **({
+                    "conditioning_backend": backend,
+                    "external_refmod_contract": (
+                        EXTERNAL_REFMOD_CONTRACT_VERSION),
+                }
                    if backend == "external_refmod" else {}),
             })
             fingerprint_output = fingerprint
@@ -11747,15 +11856,21 @@ class MiniMaxH3TaggedReferenceToVideo:
                 "ref_image_size": str(ref_image_size),
                 "semantic_anchor_size": anchor_size,
                 "semantic_anchor_mode": anchor_mode,
-                "pictures": [
-                    entry["value"] for entry in bindings["pictures"]],
-                "videos": presentation_videos,
-                "standalone_audio_count": len(bindings["audios"]),
+                # The external hybrid deliberately omits ordinary @media:
+                # Extract/Apply carries those as RefMods.  Qwen sees only the
+                # timed semantic anchors and therefore retains the speed win.
+                "pictures": ([] if backend == "external_refmod" else [
+                    entry["value"] for entry in bindings["pictures"]]),
+                "videos": ([] if backend == "external_refmod"
+                           else presentation_videos),
+                "standalone_audio_count": (
+                    0 if backend == "external_refmod"
+                    else len(bindings["audios"])),
                 "anchors": [{
                     "tag": anchor["tag"],
                     "image": anchor["entry"]["value"],
                     "timestamps": tuple(anchor["timestamps"]),
-                } for anchor in semantic_anchors],
+                } for anchor in hybrid_anchors],
             }
             semantic = graph.node(
                 "MiniMaxH3SemanticAnchorConditioning", "SemanticAnchors")
@@ -11764,6 +11879,10 @@ class MiniMaxH3TaggedReferenceToVideo:
             semantic.set_input("prompt", compiled)
             semantic.set_input("presentation", presentation)
             positive = semantic.out(0)
+            if backend == "external_refmod":
+                summary += (
+                    "; hybrid Qwen: %d semantic anchor source(s) only" %
+                    len(hybrid_anchors))
             fingerprint = _fingerprint({
                 "tagged_reference_fingerprint": fingerprint,
                 "semantic_anchor_mode": anchor_mode,
@@ -11776,6 +11895,11 @@ class MiniMaxH3TaggedReferenceToVideo:
                     wrapper_contract={
                         "semantic_anchor_mode": anchor_mode,
                         "semantic_anchor_size": anchor_size,
+                        **({
+                            "conditioning_backend": backend,
+                            "external_refmod_contract": (
+                                EXTERNAL_REFMOD_CONTRACT_VERSION),
+                        } if backend == "external_refmod" else {}),
                     })
         cache_runtime_ready = (
             callable(getattr(vae, "encode", None))
