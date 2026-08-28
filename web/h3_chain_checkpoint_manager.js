@@ -2,6 +2,7 @@ import {app} from "/scripts/app.js";
 import {api} from "/scripts/api.js";
 import {
     checkpointBranchRows,
+    checkpointChapterBranchRows,
     checkpointDeletionTitle,
     checkpointDependencyText,
     checkpointRevisionKey,
@@ -9,18 +10,18 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.6.52";
+} from "./h3_checkpoint_manager_core.mjs?v=0.6.54";
 import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.6.52";
-import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.52";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.52";
+} from "./h3_chain_plan_core.mjs?v=0.6.54";
+import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.54";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.54";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.52";
+} from "./h3_plan_restore_core.mjs?v=0.6.54";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -178,6 +179,11 @@ function injectStyles() {
       .h3cm-panel-title { display:flex; justify-content:space-between; gap:8px; margin-bottom:7px; font-weight:750; }
       .h3cm-shared-legend { color:var(--h3cm-muted); font-size:10px; font-weight:500; }
       .h3cm-branches { position:relative; }
+      .h3cm-branch-chapter { margin-bottom:12px; padding:7px; border:1px solid color-mix(in srgb,var(--h3cm-border) 62%,transparent);
+        border-radius:8px; background:color-mix(in srgb,var(--h3cm-panel) 70%,transparent); }
+      .h3cm-branch-chapter:last-child { margin-bottom:0; }
+      .h3cm-branch-chapter-title { display:flex; justify-content:space-between; gap:8px; margin:0 2px 7px;
+        color:#ffe0a2; font-size:11px; font-weight:750; }
       .h3cm-branch { position:relative; z-index:1; margin-bottom:8px; padding:6px;
         border:1px solid color-mix(in srgb,var(--h3cm-border) 75%,transparent); border-radius:6px; }
       .h3cm-branch-head { justify-content:space-between; margin-bottom:5px; }
@@ -188,8 +194,6 @@ function injectStyles() {
       .h3cm-branch-active { color:var(--h3cm-accent); font-weight:700; }
       .h3cm-branch-path { position:relative; z-index:3; align-items:stretch; overflow:auto; padding-bottom:2px; }
       .h3cm-arrow { align-self:center; color:var(--h3cm-muted); }
-      .h3cm-prior { align-self:center; padding:3px 6px; border:1px dashed var(--h3cm-border);
-        border-radius:999px; color:var(--h3cm-muted); white-space:nowrap; }
       .h3cm-revision { position:relative; min-width:112px; text-align:left; white-space:nowrap; }
       .h3cm-revision small { display:block; color:var(--h3cm-muted); font-size:10px; }
       .h3cm-revision-empty { border-style:dashed !important; color:var(--h3cm-muted) !important;
@@ -287,8 +291,8 @@ function mount(node) {
     const deletionBody = element("div");
     const deletionActions = element("div", "h3cm-delete-actions");
     const status = element("div", "h3cm-status");
-    const load = button("Load selected branch", "Restore this revision and its complete lineage into the connected Plan", () => void loadSelected());
-    const activate = button("Make branch active", "Promote this revision and its complete lineage, then restore their saved scene settings into the connected Plan", () => void activateSelected());
+    const load = button("Load selected branch", "Restore this revision and its chapter lineage into the connected Plan", () => void loadSelected());
+    const activate = button("Make branch active", "Promote this revision inside its chapter without changing other chapters", () => void activateSelected());
     const remove = button("Delete selected revision", "Delete an inactive leaf or roll back the active branch tip after confirmation", () => void deleteSelected(), "h3cm-delete-button");
     load.disabled = true;
     activate.disabled = true;
@@ -317,7 +321,8 @@ function mount(node) {
             previousChapter !== state.chapterTab;
         if (selectionWidget) {
             const value = checkpointSelectionJson(
-                state.payload, state.runName, state.selected);
+                state.payload, state.runName, state.selected,
+                selectedChapterRange());
             if (selectionWidget.value !== value) {
                 selectionWidget.value = value;
                 selectionWidget.callback?.(value);
@@ -340,13 +345,15 @@ function mount(node) {
     }
 
     function selectedLineage() {
-        return checkpointRevisionLineage(state.payload, state.selected);
+        return checkpointRevisionLineage(
+            state.payload, state.selected, selectedChapterRange());
     }
 
     function canLoadSelected() {
         const lineage = selectedLineage();
+        const scope = selectedChapterRange();
         return Boolean(state.selected?.ready &&
-            lineage.length === Number(state.selected.scene));
+            lineage.length === Number(state.selected.scene) - scope.start + 1);
     }
 
     function canActivateSelected() {
@@ -417,6 +424,20 @@ function mount(node) {
         return chapterRanges().find((chapter) => chapter.id === state.chapterTab) ?? null;
     }
 
+    function selectedChapterRange() {
+        const scene = Number(state.selected?.scene);
+        const ranges = chapterRanges();
+        const selected = ranges.find((range) =>
+            scene >= range.start && scene <= range.end);
+        if (selected) return selected;
+        const maximum = Math.max(
+            1,
+            ...(state.payload?.scenes ?? []).map(
+                (item) => Number(item.scene) || 0),
+        );
+        return {id:"all", title:"All scenes", text:"", start:1, end:maximum};
+    }
+
     function sceneVisible(scene) {
         const range = activeChapterRange();
         const number = Number(scene);
@@ -479,20 +500,9 @@ function mount(node) {
         }
     }
 
-    function renderBranches() {
-        branches.replaceChildren();
-        const allRows = checkpointBranchRows(state.payload);
-        const rows = allRows.map((branch) => ({
-            ...branch,
-            allRevisions:branch.revisions,
-            revisions:branch.revisions.filter((revision) => sceneVisible(revision.scene)),
-        })).filter((branch) => branch.revisions.length);
-        if (!rows.length) {
-            branches.append(element("div", "h3cm-muted", "No versioned checkpoints were found."));
-            return;
-        }
+    function renderBranchRows(container, rows) {
         const occurrences = new Map();
-        for (const branch of allRows) {
+        for (const branch of rows) {
             for (const revision of branch.revisions) {
                 const key = checkpointRevisionKey(revision.scene, revision.revision);
                 occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
@@ -521,16 +531,8 @@ function mount(node) {
             const count = element("span", "h3cm-muted", `${branch.revisions.length} visible scene${branch.revisions.length === 1 ? "" : "s"}`);
             header.append(name, count);
             const path = element("div", "h3cm-branch-path");
-            const prior = branch.allRevisions.filter(
-                (revision) => Number(revision.scene) < Number(branch.revisions[0]?.scene),
-            ).length;
-            if (prior) {
-                path.append(element(
-                    "span", "h3cm-prior", `← ${prior} prior scene${prior === 1 ? "" : "s"}`,
-                ));
-            }
             branch.revisions.forEach((revision, index) => {
-                if (index || prior) path.append(element("span", "h3cm-arrow", "→"));
+                if (index) path.append(element("span", "h3cm-arrow", "→"));
                 const key = checkpointRevisionKey(revision.scene, revision.revision);
                 const sharedCount = occurrences.get(key) ?? 1;
                 const card = button(
@@ -575,7 +577,45 @@ function mount(node) {
                 path.append(empty);
             }
             row.append(header, path);
-            branches.append(row);
+            container.append(row);
+        }
+    }
+
+    function renderBranches() {
+        branches.replaceChildren();
+        const ranges = chapterRanges();
+        if (!ranges.length) {
+            const rows = checkpointBranchRows(state.payload);
+            if (rows.length) renderBranchRows(branches, rows);
+            else branches.append(element(
+                "div", "h3cm-muted", "No versioned checkpoints were found.",
+            ));
+            return;
+        }
+        const visibleRanges = state.chapterTab === "all"
+            ? ranges : ranges.filter((range) => range.id === state.chapterTab);
+        let rendered = 0;
+        for (const range of visibleRanges) {
+            const rows = checkpointChapterBranchRows(state.payload, range);
+            if (!rows.length) continue;
+            if (state.chapterTab === "all") {
+                const section = element("section", "h3cm-branch-chapter");
+                const heading = element("div", "h3cm-branch-chapter-title");
+                heading.append(
+                    element("span", "", range.title),
+                    element("span", "h3cm-muted", `Scenes ${range.start}–${range.end}`),
+                );
+                const body = element("div", "h3cm-branch-chapter-body");
+                renderBranchRows(body, rows);
+                section.append(heading, body);
+                branches.append(section);
+            } else renderBranchRows(branches, rows);
+            rendered += rows.length;
+        }
+        if (!rendered) {
+            branches.append(element(
+                "div", "h3cm-muted", "No versioned checkpoints were found in this chapter.",
+            ));
         }
     }
 
@@ -999,6 +1039,7 @@ function mount(node) {
     async function loadSelected() {
         const record = state.selected;
         const lineage = selectedLineage();
+        const scope = selectedChapterRange();
         if (!record || !canLoadSelected() || state.busy) return;
         const planNode = upstreamPlanNode(node);
         if (!planNode || !widget(planNode, "plan_json")) {
@@ -1008,7 +1049,7 @@ function mount(node) {
         }
         const confirmed = window.confirm(
             `Load ${state.runName} through scene ${record.scene} revision ${record.revision.slice(0, 8)}?\n\n` +
-            "The connected Plan will be restored from this saved run, this lineage will become active, and later active pointers will be cleared. Saved revision files are kept.",
+            `${scope.title} scenes ${scope.start}–${scope.end} will use this branch. Other chapters keep their active checkpoint branches. Saved revision files are kept.`,
         );
         if (!confirmed) return;
         setBusy(true, "Loading saved Plan and checkpoint lineage…");
@@ -1020,9 +1061,10 @@ function mount(node) {
             const runBody = await jsonRequest(
                 `/minimax_h3_context_loop/run?${runQuery.toString()}`,
             );
-            const savedPlan = parsePlanJson(String(
-                runBody.plan_inputs?.plan_json ?? "",
-            ));
+            const sameConnectedRun = activePlanRun() === state.runName;
+            const savedPlan = parsePlanJson(String(sameConnectedRun
+                ? widget(planNode, "plan_json")?.value ?? ""
+                : runBody.plan_inputs?.plan_json ?? ""));
             const chapters = state.payload?.editorial?.chapters ?? [];
             if (chapters.length) {
                 savedPlan.chapters = chapters.map((chapter) => ({
@@ -1049,22 +1091,26 @@ function mount(node) {
                         run_name:state.runName,
                         resume_scene:resumeScene,
                         revisions:lineage,
+                        scope_start_scene:scope.start,
+                        scope_end_scene:scope.end,
                     }),
                 });
-            const activePlan = restoreSavedPlanInputs(
-                {...runBody.plan_inputs, plan_json:planToJson(savedPlan)},
-                restored.policy_inputs ?? runBody.policy_inputs,
-            );
+            const activePlan = sameConnectedRun ? planNode
+                : restoreSavedPlanInputs(
+                    {...runBody.plan_inputs, plan_json:planToJson(savedPlan)},
+                    restored.policy_inputs ?? runBody.policy_inputs,
+                );
             const plan = applyLoadedRevisions(activePlan, restored.restored ?? []);
-            const canResume = resumeScene <= plan.shots.length;
+            const canResume = resumeScene <= plan.shots.length &&
+                resumeScene <= scope.end;
             if (canResume && !prepareResume(resumeScene)) {
                 throw new Error("Loaded the branch, but could not arm H3 Chain Loop Start.");
             }
             await refreshCheckpoints();
             status.className = "h3cm-status";
             status.textContent = canResume
-                ? `Loaded scenes 1–${record.scene}; Loop Start is armed for scene ${resumeScene}.`
-                : `Loaded the completed branch through final scene ${record.scene}.`;
+                ? `Loaded ${scope.title} scenes ${scope.start}–${record.scene}; Loop Start is armed for scene ${resumeScene}.`
+                : `Loaded ${scope.title} through scene ${record.scene}; other chapters were preserved.`;
         } catch (error) {
             status.className = "h3cm-status h3cm-error";
             status.textContent = error.message;
@@ -1076,10 +1122,11 @@ function mount(node) {
     async function activateSelected() {
         const record = state.selected;
         const lineage = selectedLineage();
+        const scope = selectedChapterRange();
         if (!record || !canActivateSelected() || state.busy) return;
         const confirmed = window.confirm(
-            `Make ${state.runName} active through scene ${record.scene} revision ${record.revision.slice(0, 8)}?\n\n` +
-            "This complete lineage will become the run's active checkpoint branch and later active pointers will be cleared. If a Plan is connected, its saved per-scene prompts, seeds, lengths, steps, context, and other checkpointed settings will be restored. No saved revision, workflow, reference, or assembled video is deleted.",
+            `Make ${scope.title} active through scene ${record.scene} revision ${record.revision.slice(0, 8)}?\n\n` +
+            `Only scenes ${scope.start}–${scope.end} are affected. Other chapters keep their active branches. If a Plan is connected, the selected chapter's saved scene settings are restored. No saved revision, workflow, reference, or assembled video is deleted.`,
         );
         if (!confirmed) return;
         setBusy(true, "Promoting selected checkpoint lineage…");
@@ -1092,6 +1139,8 @@ function mount(node) {
                         resume_scene:Number(record.scene) + 1,
                         revisions:lineage,
                         activate_only:true,
+                        scope_start_scene:scope.start,
+                        scope_end_scene:scope.end,
                     }),
                 });
             const planNode = upstreamPlanNode(node);
@@ -1099,8 +1148,8 @@ function mount(node) {
                 applyActivatedRevisions(planNode, payload.restored ?? []));
             await refreshCheckpoints();
             status.className = "h3cm-status";
-            status.textContent = `Scene ${record.scene} revision ${record.revision.slice(0, 8)} is now the active branch tip. ` +
-                `${payload.retired_later_pointers || 0} later active pointer${payload.retired_later_pointers === 1 ? " was" : "s were"} cleared; all immutable revisions were kept` +
+            status.textContent = `${scope.title} scene ${record.scene} revision ${record.revision.slice(0, 8)} is now its active branch tip. ` +
+                `${payload.retired_scope_pointers || 0} later pointer${payload.retired_scope_pointers === 1 ? " was" : "s were"} cleared inside this chapter; other chapters were preserved; all immutable revisions were kept` +
                 `${planUpdated ? "; connected Plan scene settings were restored." : "."}`;
         } catch (error) {
             status.className = "h3cm-status h3cm-error";

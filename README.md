@@ -113,8 +113,11 @@ exact full-image/crop size sent into the model and the final fitted asset size.
 That button queues only the Carousel and its loader dependency and never
 launches the downstream H3 chain. The input is lazy and is not loaded during
 ordinary generation. Asset cards may also be duplicated without copying media
-bytes and organized into presentation-only folders; folder names, membership,
-and order do not affect prompts or fingerprints.
+bytes and organized into presentation-only folders. Folders appear directly
+in the Carousel as Discord-style cards with a four-item miniature; click to
+expand or collapse their assets inline, or drag an asset onto a folder card to
+move it there. Expansion state, folder names, membership, and order do not
+affect prompts or fingerprints.
 
 ## Choose a workflow
 
@@ -176,7 +179,9 @@ Checkpoint Manager identifies saved takes by scene and inferred branch, previews
 saved media and exact video/audio dependencies, and safely deletes inactive
 leaves one revision at a time. When an independent saved take can safely fill
 another branch's next empty scene, the empty graph card can attribute it there
-without regeneration or duplicate media. Its Plan and Source Timeline
+without regeneration or duplicate media. Editorial chapters are independent
+branch scopes: **All scenes** shows one graph per chapter, and activating a take
+in one chapter preserves the active takes in every other chapter. Its Plan and Source Timeline
 pass-throughs can remain connected in generation workflows, while its
 selected-manifest output launches a standalone deferred upscale loop with no
 source Plan. Each profile is isolated under `upscaled/<profile>`, and saving

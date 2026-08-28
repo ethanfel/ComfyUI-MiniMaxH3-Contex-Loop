@@ -130,6 +130,15 @@ assert.match(source, /Presentation only\. Folder membership never changes prompt
 assert.match(source, /without copying media bytes/);
 assert.match(source, /No folder/);
 assert.match(source, /h3pa-folder-tools/);
+assert.match(source, /h3pa-folder-mosaic/);
+assert.match(source, /function folderCard\(folder, previewAssets, totalCount\)/);
+assert.match(source, /h3_project_asset_expanded_folders/);
+assert.match(source, /function setFolderExpanded\(folderId, expanded\)/);
+assert.match(source, /Manage folders…/);
+assert.match(source, /Drag an asset here to move it into this folder/);
+assert.match(source, /updateAsset\(asset, \{folder_id: folderId\}\)/);
+assert.match(source, /carousel\.querySelectorAll/);
+assert.doesNotMatch(source, /All folders/);
 assert.doesNotMatch(source, /const folders = el\("div", "h3pa-folders"\)/);
 assert.match(source, /h3pa-action-primary/);
 assert.match(source, /h3pa-action-manage/);

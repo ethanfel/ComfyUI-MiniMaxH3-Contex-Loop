@@ -154,6 +154,14 @@ following scenes consume. Older checkpoints derive this graph from predecessor
 revision and checkpoint hashes; newly saved checkpoints also carry a stable
 branch id and effective context fields.
 
+Plan chapters are checkpoint-management boundaries. The **All scenes** tab
+shows a separate graph for each chapter. Selecting or activating a Chapter 2
+branch changes only Chapter 2 pointers and connected Plan scene values; Chapter
+1 keeps its current active branch. The chapter-start checkpoint can retain its
+original predecessor as provenance, but that structural edge does not choose
+the preceding chapter. Explicit visual or audio context recorded by a scene is
+still preserved as a generation dependency.
+
 If a branch ends with an empty next-scene slot and a compatible saved candidate
 exists elsewhere, the graph displays a dashed empty card. Click it to preview
 the available candidates and choose **Attach selected candidate**. This is
@@ -166,7 +174,7 @@ uses them is deleted.
 
 If deleting the active branch tip rolls the run back while alternate leaf
 revisions remain, select the surviving branch and click **Make branch active**.
-The manager validates and promotes that revision's complete lineage directly,
+The manager validates and promotes that revision's chapter lineage directly,
 including when no Plan is connected. With an editable Plan connected, it also
 restores the lineage's saved scene prompts, seeds, lengths, steps, context,
 LoRA route, and boundary/audio overrides. Exact saved prompts reactivate their

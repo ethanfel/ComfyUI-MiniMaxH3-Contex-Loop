@@ -145,6 +145,24 @@ class CheckpointGraphManager:
             os.path.getmtime(path), timezone.utc).isoformat(
                 timespec="seconds").replace("+00:00", "Z")
 
+    @classmethod
+    def _chapter_starts(cls, run_dir: str) -> set[int]:
+        """Read editorial branch roots without making notes executable state."""
+        path = os.path.join(run_dir, "editorial.json")
+        try:
+            document = cls._read_json(path)
+            chapters = document.get("chapters")
+            if not isinstance(chapters, list):
+                return set()
+            return {
+                int(chapter.get("start_scene", 0))
+                for chapter in chapters if isinstance(chapter, dict)
+                and int(chapter.get("start_scene", 0)) > 0
+            }
+        except (OSError, TypeError, ValueError, json.JSONDecodeError,
+                AttributeError):
+            return set()
+
     def _effective_context(
             self, scene: int, segment: dict[str, Any],
             compatibility: dict[str, Any]) -> tuple[str, int, int]:
@@ -200,10 +218,74 @@ class CheckpointGraphManager:
                 continue
         return active
 
+    def _recorded_dependency_keys(
+            self, record: dict[str, Any],
+            parent_key: tuple[int, str] | None,
+            records: dict[tuple[int, str], dict[str, Any]],
+            by_hash: dict[tuple[int, str], list[tuple[int, str]]]
+            ) -> list[tuple[int, str]]:
+        """Resolve saved visual and generated-audio dependencies exactly."""
+        segment = record["_segment"]
+        scene = int(record["scene"])
+        found: list[tuple[int, str]] = []
+
+        def add(scene_value: Any, revision_value: Any,
+                hash_value: Any) -> None:
+            try:
+                source_scene = int(scene_value)
+            except (TypeError, ValueError):
+                return
+            revision = str(revision_value or "").lower()
+            key = ((source_scene, revision)
+                   if re.fullmatch(r"[0-9a-f]{32}", revision) else None)
+            if key not in records:
+                digest = str(hash_value or "")
+                candidates = by_hash.get((source_scene, digest), [])
+                key = candidates[0] if digest and len(candidates) == 1 else None
+            if key in records and key not in found:
+                found.append(key)
+
+        visual_frames = max(0, self._integer(record.get("context_length")))
+        if visual_frames:
+            source_scene = self._integer(
+                segment.get("visual_context_source_scene"), scene - 1)
+            if source_scene == scene - 1 and not segment.get(
+                    "visual_context_source_revision"):
+                if parent_key in records:
+                    found.append(parent_key)
+            else:
+                add(source_scene,
+                    segment.get("visual_context_source_revision"),
+                    segment.get("visual_context_source_checkpoint_sha256"))
+            lead_frames = max(0, self._integer(
+                segment.get("visual_context_lead_frames")))
+            if lead_frames:
+                add(segment.get("visual_context_lead_source_scene"),
+                    segment.get("visual_context_lead_source_revision"),
+                    segment.get("visual_context_lead_checkpoint_sha256"))
+
+        dependency = record["_metadata"].get("scene_dependency")
+        scopes = dependency.get("scopes") if isinstance(dependency, dict) else None
+        incoming = (scopes.get("incoming_boundary")
+                    if isinstance(scopes, dict) else None)
+        generated = str(
+            incoming.get("generated_continuity")
+            if isinstance(incoming, dict) else
+            segment.get("generated_continuity") or "off").lower()
+        audio_frames = max(0, self._integer(
+            incoming.get("audio_context_length")
+            if isinstance(incoming, dict) else
+            record.get("audio_context_length")))
+        if generated == "on" and audio_frames and parent_key in records:
+            if parent_key not in found:
+                found.append(parent_key)
+        return found
+
     def _scan(self, run_name: Any) -> dict[str, Any]:
         run_dir, run = self._run_dir(run_name)
         checkpoint_dir = os.path.join(run_dir, "checkpoints")
         review_dir = os.path.join(run_dir, "reviews")
+        chapter_starts = self._chapter_starts(run_dir)
         active = self._active_revisions(checkpoint_dir)
         records: dict[tuple[int, str], dict[str, Any]] = {}
         if os.path.isdir(checkpoint_dir):
@@ -286,8 +368,11 @@ class CheckpointGraphManager:
                         "_segment": segment,
                         "_segment_path": segment_path,
                         "_checkpoint_path": checkpoint_path,
+                        "_chapter_root": scene in chapter_starts,
                         "_parent": None,
                         "_children": [],
+                        "_dependencies": [],
+                        "_dependents": [],
                         "_lineage_issue": "",
                     }
                     records[(scene, revision)] = record
@@ -314,14 +399,32 @@ class CheckpointGraphManager:
                     parent_key = candidates[0]
                     parent = records[parent_key]
             if parent is None:
-                record["_lineage_issue"] = "missing predecessor"
+                dependencies = self._recorded_dependency_keys(
+                    record, None, records, by_hash)
+                for dependency_key in dependencies:
+                    record["_dependencies"].append(dependency_key)
+                    records[dependency_key]["_dependents"].append(key)
+                if not record["_chapter_root"]:
+                    record["_lineage_issue"] = "missing predecessor"
                 continue
             if digest and parent["checkpoint_sha256"] != digest:
                 record["_lineage_issue"] = "predecessor hash mismatch"
                 # Keep the declared revision edge for conservative cleanup:
                 # corrupted lineage must never make its parent look deletable.
-            record["_parent"] = parent_key
-            parent["_children"].append(key)
+            # A chapter start is a branch root even though immutable metadata
+            # keeps its original predecessor as provenance. Preserve a
+            # deletion dependency only when that scene actually consumed
+            # predecessor picture/generated-audio context.
+            dependencies = self._recorded_dependency_keys(
+                record, parent_key, records, by_hash)
+            if not record["_chapter_root"]:
+                record["_parent"] = parent_key
+                parent["_children"].append(key)
+                if parent_key not in dependencies:
+                    dependencies.append(parent_key)
+            for dependency_key in dependencies:
+                record["_dependencies"].append(dependency_key)
+                records[dependency_key]["_dependents"].append(key)
 
         try:
             review_names = os.listdir(review_dir) if os.path.isdir(
@@ -347,6 +450,7 @@ class CheckpointGraphManager:
             "checkpoint_dir": checkpoint_dir,
             "review_dir": review_dir,
             "review_names": review_names,
+            "chapter_starts": chapter_starts,
             "records": records,
             "segment_hash_counts": segment_hash_counts,
             "artifact_path_counts": artifact_path_counts,
@@ -453,6 +557,9 @@ class CheckpointGraphManager:
             leaf_key: tuple[int, str]) -> dict[str, Any] | None:
         leaf = records[leaf_key]
         scene = int(leaf["scene"]) + 1
+        if any(record["scene"] == scene and record["_chapter_root"]
+               for record in records.values()):
+            return None
         already_attached = {
             self._attribution_source(records[key])
             for key in leaf["_children"] if key in records
@@ -511,7 +618,7 @@ class CheckpointGraphManager:
     def _descendant_keys(records: dict[tuple[int, str], dict[str, Any]],
                          start: tuple[int, str]) -> list[tuple[int, str]]:
         found = []
-        queue = deque(records[start]["_children"])
+        queue = deque(records[start]["_dependents"])
         seen = set()
         while queue:
             key = queue.popleft()
@@ -519,8 +626,20 @@ class CheckpointGraphManager:
                 continue
             seen.add(key)
             found.append(key)
-            queue.extend(records[key]["_children"])
+            queue.extend(records[key]["_dependents"])
         return sorted(found, key=lambda item: (item[0], item[1]))
+
+    @staticmethod
+    def _chapter_bounds(scan: dict[str, Any], scene: int) -> tuple[int, int]:
+        records = scan["records"]
+        maximum = max((int(item[0]) for item in records), default=int(scene))
+        starts = sorted({1, *(
+            int(item) for item in scan.get("chapter_starts", set())
+            if int(item) > 0
+        )})
+        start = max((item for item in starts if item <= scene), default=1)
+        following = next((item for item in starts if item > scene), None)
+        return start, (following - 1 if following is not None else maximum)
 
     def _public_graph(self, scan: dict[str, Any]) -> dict[str, Any]:
         records = scan["records"]
@@ -615,10 +734,15 @@ class CheckpointGraphManager:
                     self._output_item(reviews[-1]["_path"]) if reviews else None),
                 "parent": ({"scene": parent[0], "revision": parent[1]}
                            if parent else None),
+                "dependencies": [
+                    {"scene": dependency[0], "revision": dependency[1]}
+                    for dependency in record["_dependencies"]
+                ],
                 "children": children,
                 "descendant_count": len(self._descendant_keys(records, key)),
                 "branches": memberships.get(key, []),
                 "lineage_status": record["_lineage_issue"] or (
+                    "chapter root" if record["_chapter_root"] else
                     "root" if record["scene"] == 1 else "linked"),
                 "metadata_path": os.path.relpath(
                     record["_metadata_path"], self.output_root),
@@ -647,7 +771,9 @@ class CheckpointGraphManager:
         graph_hash = _fingerprint([{
             "scene": item["scene"], "revision": item["revision"],
             "active": item["active"], "ready": item["ready"],
-            "parent": item["parent"], "size_bytes": item["size_bytes"],
+            "parent": item["parent"],
+            "dependencies": item["dependencies"],
+            "size_bytes": item["size_bytes"],
         } for item in public_records])
         return {
             "run_name": scan["run_name"],
@@ -807,6 +933,8 @@ class CheckpointGraphManager:
                     "Scene %d revision %s is no longer available." %
                     (scene_number, token[:8]))
             artifacts = self._artifacts(scan, record)
+            chapter_start, chapter_end = self._chapter_bounds(
+                scan, scene_number)
             descendant_keys = self._descendant_keys(scan["records"], key)
             dependents = []
             for child_key in descendant_keys:
@@ -816,8 +944,8 @@ class CheckpointGraphManager:
                     "scene_id": child["scene_id"],
                     "revision": child["revision"],
                     "active": child["active"],
-                    "direct": child["_parent"] == key,
-                    "leaf": not child["_children"],
+                    "direct": key in child["_dependencies"],
+                    "leaf": not child["_dependents"],
                     "continuation_mode": child["continuation_mode"],
                     "context_length": child["context_length"],
                     "audio_context_length": child["audio_context_length"],
@@ -827,7 +955,8 @@ class CheckpointGraphManager:
             blockers = []
             later_active = sorted(
                 item["scene"] for item in scan["records"].values()
-                if item["active"] and item["scene"] > scene_number)
+                if (item["active"] and item["scene"] > scene_number and
+                    item["scene"] <= chapter_end))
             if dependents:
                 blockers.append(
                     "%d later checkpoint revision%s depend%s on it." %
@@ -868,6 +997,8 @@ class CheckpointGraphManager:
                 "active": record["active"],
                 "rollback": rollback,
                 "rollback_to_scene": scene_number - 1 if rollback else None,
+                "scope_start_scene": chapter_start,
+                "scope_end_scene": chapter_end,
                 "allowed": not blockers,
                 "blockers": blockers,
                 "dependents": dependents,

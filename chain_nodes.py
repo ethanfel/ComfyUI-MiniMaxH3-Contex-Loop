@@ -20877,6 +20877,32 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
             "Checkpoint Manager selected a lineage through scene %d, but the "
             "archived Plan contains only %d scenes." %
             (len(lineage), len(shots)))
+    scope_start_scene = int(selection.get("scope_start_scene", 1))
+    scope_end_scene = int(selection.get(
+        "scope_end_scene", len(shots)))
+    if (scope_start_scene < 1 or scope_start_scene > len(lineage) or
+            scope_end_scene < scope_start_scene or
+            scope_end_scene > len(shots)):
+        raise ValueError(
+            "Checkpoint Manager selection has an invalid chapter scope.")
+    editorial = _load_run_editorial(run_name)
+    chapter_starts = {
+        int(chapter.get("start_scene", 0))
+        for chapter in editorial.get("chapters", [])
+        if isinstance(chapter, dict)
+    }
+    chapter_starts.add(scope_start_scene)
+    selected_revisions = {
+        int(item.get("scene", 0)): str(item.get("revision") or "").lower()
+        for item in lineage if isinstance(item, dict)
+    }
+    dependency_records = {
+        (int(item.get("scene", 0)), str(item.get("revision") or "").lower()):
+            item
+        for item in CheckpointGraphManager(_output_root()).graph(
+            run_name).get("revisions", [])
+        if isinstance(item, dict)
+    }
 
     loaded = []
     compatibility = None
@@ -20888,6 +20914,19 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 "1 through %d." % len(lineage))
         metadata, _metadata_path = _load_checkpoint_revision(
             run_name, index, item.get("revision"))
+        dependency_record = dependency_records.get(
+            (index, str(item.get("revision") or "").lower()), {})
+        for dependency in dependency_record.get("dependencies", []):
+            dependency_scene = int(dependency.get("scene", 0))
+            dependency_revision = str(
+                dependency.get("revision") or "").lower()
+            if (dependency_scene in selected_revisions and
+                    selected_revisions[dependency_scene] !=
+                    dependency_revision):
+                raise ValueError(
+                    "Selected checkpoint scene %d explicitly depends on "
+                    "scene %d revision %s." %
+                    (index, dependency_scene, dependency_revision[:8]))
         current_compatibility = metadata.get("compatibility")
         if not isinstance(current_compatibility, dict):
             raise ValueError(
@@ -20907,7 +20946,7 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         elif current_prefix != prompt_prefix:
             raise ValueError(
                 "Selected checkpoint revisions use different shared prompts.")
-        if loaded:
+        if loaded and index not in chapter_starts:
             predecessor = loaded[-1]["segment"]
             expected_revision = str(
                 segment.get("predecessor_revision") or "")
@@ -20966,6 +21005,10 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         "clip_count": len(segments),
         "planned_clip_count": len(shots),
         "selection_complete": len(segments) == len(shots),
+        "selection_scope": {
+            "start_scene": scope_start_scene,
+            "end_scene": scope_end_scene,
+        },
         "total_delivered_frames": total_frames,
         "duration_seconds": total_frames / float(FPS),
         "segments": segments,
@@ -21053,10 +21096,21 @@ async def _restore_checkpoint_revisions(request):
         if not run_name:
             raise ValueError("A non-empty H3 chain run_name is required.")
         activate_only = body.get("activate_only") is True
-        resume_scene = int(body.get("resume_scene", 0))
-        if resume_scene < 2 or resume_scene > MAX_SHOTS + 1:
+        scope_start_scene = int(body.get("scope_start_scene", 1))
+        scope_end_scene = int(body.get("scope_end_scene", MAX_SHOTS))
+        if (scope_start_scene < 1 or scope_start_scene > MAX_SHOTS or
+                scope_end_scene < scope_start_scene or
+                scope_end_scene > MAX_SHOTS):
             raise ValueError(
-                "Resume scene must be between 2 and %d." % (MAX_SHOTS + 1))
+                "Checkpoint scope must be a valid scene range between 1 and "
+                "%d." % MAX_SHOTS)
+        resume_scene = int(body.get("resume_scene", 0))
+        if (resume_scene <= scope_start_scene or
+                resume_scene > scope_end_scene + 1):
+            raise ValueError(
+                "Resume scene must be between %d and %d for this checkpoint "
+                "scope." % (scope_start_scene + 1,
+                             scope_end_scene + 1))
         selections = body.get("revisions")
         if not isinstance(selections, list):
             raise ValueError("Checkpoint recovery requires a revision list.")
@@ -21068,16 +21122,48 @@ async def _restore_checkpoint_revisions(request):
             if scene in by_scene:
                 raise ValueError("Checkpoint scene %d was selected twice." % scene)
             by_scene[scene] = str(selection.get("revision") or "")
-        expected = set(range(1, resume_scene))
+        expected = set(range(scope_start_scene, resume_scene))
         if set(by_scene) != expected:
             raise ValueError(
-                "Select exactly scenes 1 through %d before restoring this "
-                "resume chain." % (resume_scene - 1))
+                "Select exactly scenes %d through %d before restoring this "
+                "chapter branch." % (scope_start_scene, resume_scene - 1))
 
+        graph = CheckpointGraphManager(_output_root()).graph(run_name)
+        graph_records = {
+            (int(item.get("scene", 0)),
+             str(item.get("revision") or "").lower()): item
+            for item in graph.get("revisions", []) if isinstance(item, dict)
+        }
+        active_revisions = {
+            int(item.get("scene", 0)):
+                str(item.get("revision") or "").lower()
+            for item in graph.get("revisions", [])
+            if isinstance(item, dict) and item.get("active")
+        }
+        for scene, revision in by_scene.items():
+            record = graph_records.get((scene, revision.lower()), {})
+            for dependency in record.get("dependencies", []):
+                dependency_scene = int(dependency.get("scene", 0))
+                if (dependency_scene in by_scene and
+                        dependency_scene == scene - 1 and
+                        scene > scope_start_scene):
+                    # The existing immutable-lineage validation below emits
+                    # the established, more specific predecessor error.
+                    continue
+                dependency_revision = str(
+                    dependency.get("revision") or "").lower()
+                selected_or_active = by_scene.get(
+                    dependency_scene, active_revisions.get(dependency_scene, ""))
+                if str(selected_or_active).lower() != dependency_revision:
+                    raise ValueError(
+                        "Scene %d revision explicitly depends on scene %d "
+                        "revision %s, which is not active in its chapter." %
+                        (scene, dependency_scene,
+                         dependency_revision[:8]))
         loaded = []
         compatibility = None
         prompt_prefix = None
-        for scene in range(1, resume_scene):
+        for scene in range(scope_start_scene, resume_scene):
             metadata, metadata_path = _load_checkpoint_revision(
                 run_name, scene, by_scene[scene])
             current_compatibility = metadata.get("compatibility")
@@ -21122,6 +21208,25 @@ async def _restore_checkpoint_revisions(request):
                         "scene %d checkpoint." % (scene, scene - 1))
             loaded.append((scene, metadata, metadata_path))
 
+        proposed_active = dict(active_revisions)
+        for scene in range(resume_scene, scope_end_scene + 1):
+            proposed_active.pop(scene, None)
+        proposed_active.update({
+            scene: revision.lower() for scene, revision in by_scene.items()})
+        for scene, revision in proposed_active.items():
+            record = graph_records.get((scene, revision), {})
+            for dependency in record.get("dependencies", []):
+                dependency_scene = int(dependency.get("scene", 0))
+                dependency_revision = str(
+                    dependency.get("revision") or "").lower()
+                if proposed_active.get(dependency_scene) != dependency_revision:
+                    raise ValueError(
+                        "Active scene %d explicitly depends on scene %d "
+                        "revision %s. Activate a compatible branch in that "
+                        "chapter first." %
+                        (scene, dependency_scene,
+                         dependency_revision[:8]))
+
         checkpoint_dir = os.path.join(
             _output_root(), "h3_chains", run_name, "checkpoints")
         originals = {}
@@ -21130,12 +21235,16 @@ async def _restore_checkpoint_revisions(request):
         transaction = uuid.uuid4().hex
         with checkpoint_run_lock(_output_root(), run_name):
             try:
-                # Loading an earlier branch is a real rollback. Retire mutable
-                # pointers at and after the resume scene while preserving every
-                # immutable revision file for later branch switching.
+                # Loading an earlier branch is a rollback only inside its
+                # editorial chapter. Retire mutable pointers at and after the
+                # resume scene through the scope end while preserving every
+                # immutable revision file and every other chapter's pointers.
                 for filename in sorted(os.listdir(checkpoint_dir)):
                     match = re.fullmatch(r"clip_(\d{4})\.json", filename)
-                    if match is None or int(match.group(1)) < resume_scene:
+                    pointer_scene = (int(match.group(1))
+                                     if match is not None else -1)
+                    if (match is None or pointer_scene < resume_scene or
+                            pointer_scene > scope_end_scene):
                         continue
                     canonical = os.path.join(checkpoint_dir, filename)
                     temporary = "%s.restore.%s.tmp" % (canonical, transaction)
@@ -21178,8 +21287,12 @@ async def _restore_checkpoint_revisions(request):
             "ok": True,
             "run_name": run_name,
             "resume_scene": resume_scene,
+            "scope_start_scene": scope_start_scene,
+            "scope_end_scene": scope_end_scene,
             "activate_only": activate_only,
             "restored": restored,
+            "retired_scope_pointers": len(retired),
+            # Compatibility alias for older frontends.
             "retired_later_pointers": len(retired),
             # The revision chain is authoritative.  The latest plan.json can
             # legitimately describe newer 0.5 policies than an older revision
@@ -21188,11 +21301,12 @@ async def _restore_checkpoint_revisions(request):
                 "compatibility": compatibility,
             }),
             "message": (
-                "Activated scenes 1 through %d."
+                "Activated chapter scenes %d through %d."
                 if activate_only else
-                "Restored scenes 1 through %d; resume scene %d is ready."
-            ) % ((resume_scene - 1,) if activate_only else
-                 (resume_scene - 1, resume_scene)),
+                "Restored chapter scenes %d through %d; resume scene %d is "
+                "ready."
+            ) % ((scope_start_scene, resume_scene - 1) if activate_only else
+                 (scope_start_scene, resume_scene - 1, resume_scene)),
         })
     except FileNotFoundError as exc:
         return web.json_response({"error": str(exc)}, status=404)

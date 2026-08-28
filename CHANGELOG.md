@@ -4,6 +4,20 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Checkpoint Manager now treats editorial chapters as independent revision
+  scopes. **All scenes** renders a separate branch graph per chapter, and
+  making a branch active rewrites or retires pointers only inside that
+  chapter. Earlier and later chapters retain their active takes; a selected
+  manifest combines the selected chapter with the active takes from preceding
+  chapters without requiring a structural parent edge across the chapter
+  boundary. Explicit visual/audio context metadata remains intact.
+
+- Carousel folders now behave like compact Discord folders. Each folder is a
+  card in the asset strip with a four-item miniature and count; clicking
+  expands or collapses its assets inline, and dropping an asset onto the card
+  moves it into that folder. Expansion persists as workflow presentation state
+  without affecting generation, prompts, or fingerprints.
+
 - Project Asset previews now resolve correctly in both prompt editors. The
   Carousel media URL is retained as a preview record instead of being mistaken
   for a preview object, restoring hover players, inline picture thumbnails,
