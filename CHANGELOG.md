@@ -4,6 +4,18 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Added **Generation Profile**, a two-control replacement for the cryptic Chain
+  Policy switches. Clear scene-continuity and audio choices include continuous
+  or fresh generated audio, source-guided generation, source soundtrack,
+  silence, and exact source-audio lip-sync. The former node remains compatible
+  as deprecated **Manual Chain Policy (Legacy)**.
+
+- Plan Studio's horizontal timeline position is now inert during passive
+  rerenders, workspace growth, and prompt-editor scene synchronization. It
+  restores the exact pixel position, cancels stale layout callbacks, and only
+  reveals a scene after an explicit timeline selection; automatic restoration
+  can no longer recursively grow or throw the scrollbar to either end.
+
 - Tagged Ref2VA now has an opt-in `external_refmod` conditioning backend for
   testing ComfyUI-MiniMaxH3Mod without duplicating native references. It keeps
   scene-local `@tag` selection and video slicing, emits text-only H3

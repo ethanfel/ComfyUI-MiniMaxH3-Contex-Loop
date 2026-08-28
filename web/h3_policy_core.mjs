@@ -6,6 +6,40 @@ export const PRIMARY_TRANSITION_PRESETS = Object.freeze([
     "cut", "guide", "hard_av", "soft_av",
 ]);
 
+export const GENERATION_SCENE_PROFILES = Object.freeze({
+    "Visual continuity": "guide",
+    "Independent scenes": "cut",
+    "Hard picture + protected audio": "hard_av",
+    "Hard picture + smooth audio": "soft_av",
+});
+
+export const GENERATION_AUDIO_PROFILES = Object.freeze({
+    "Generate audio": Object.freeze({
+        finalAudio:"generated", sourceReference:"off",
+        generatedContinuity:"on", sourceAudioTarget:"off",
+    }),
+    "Generate fresh audio per scene": Object.freeze({
+        finalAudio:"generated", sourceReference:"off",
+        generatedContinuity:"off", sourceAudioTarget:"off",
+    }),
+    "Lip-sync to source audio": Object.freeze({
+        finalAudio:"source", sourceReference:"off",
+        generatedContinuity:"off", sourceAudioTarget:"locked",
+    }),
+    "Generate audio from source guide": Object.freeze({
+        finalAudio:"generated", sourceReference:"on",
+        generatedContinuity:"off", sourceAudioTarget:"off",
+    }),
+    "Use source soundtrack only": Object.freeze({
+        finalAudio:"source", sourceReference:"off",
+        generatedContinuity:"off", sourceAudioTarget:"off",
+    }),
+    "No final audio": Object.freeze({
+        finalAudio:"none", sourceReference:"off",
+        generatedContinuity:"off", sourceAudioTarget:"off",
+    }),
+});
+
 export const TRANSITION_PRESETS = Object.freeze({
     cut: Object.freeze({
         continuationMode: "guide", contextLength: 0,

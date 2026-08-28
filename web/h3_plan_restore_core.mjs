@@ -1,12 +1,15 @@
 import {
     ADVANCED_TRANSITION_PRESETS,
+    GENERATION_AUDIO_PROFILES,
+    GENERATION_SCENE_PROFILES,
     LEGACY_AUDIO_POLICIES,
     PRIMARY_TRANSITION_PRESETS,
     transitionPreset,
     transitionPresetName,
-} from "./h3_policy_core.mjs?v=0.5.50";
+} from "./h3_policy_core.mjs?v=0.5.51";
 
 const CHAIN_POLICY_NODE = "MiniMaxH3ChainPolicy";
+const PROFILE_POLICY_NODE = "MiniMaxH3GenerationProfile";
 const ADVANCED_POLICY_NODE = "MiniMaxH3AdvancedPolicy";
 const LEGACY_POLICY_NODE = "MiniMaxH3Legacy04PolicyAdapter";
 
@@ -122,6 +125,38 @@ function restoreCompactAudio(node, policyInputs, applied, unavailable) {
     }
 }
 
+function restoreProfileAudio(node, policyInputs, applied, unavailable) {
+    const audio = policyInputs.audio_policy;
+    if (!audio || typeof audio !== "object") return;
+    const completeAxes = [
+        "final_audio", "source_reference", "generated_continuity",
+    ].every((name) => Object.hasOwn(audio, name));
+    if (!completeAxes) {
+        unavailable.push("audio_policy (incomplete saved audio profile)");
+        return;
+    }
+    const sourceAudioTarget = audio.source_audio_target === "locked"
+        ? "locked" : "off";
+    const selected = Object.entries(GENERATION_AUDIO_PROFILES).find(
+        ([, profile]) => (
+            profile.finalAudio === String(audio.final_audio)
+            && profile.sourceReference === String(audio.source_reference)
+            && profile.generatedContinuity === String(
+                audio.generated_continuity)
+            && profile.sourceAudioTarget === sourceAudioTarget
+        ),
+    )?.[0];
+    if (!selected) {
+        unavailable.push(
+            "audio_policy (saved combination needs the Manual Chain Policy)",
+        );
+        return;
+    }
+    if (writeWidget(
+        node, "audio_profile", selected, unavailable, "audio_policy",
+    )) applied.push("audio_policy");
+}
+
 function restoreCompactTransition(node, policyInputs, planInputs,
                                   applied, unavailable) {
     const transition = policyInputs.transition_policy;
@@ -146,12 +181,39 @@ function restoreCompactTransition(node, policyInputs, planInputs,
     )) applied.push("transition_policy");
 }
 
+function restoreProfileTransition(node, policyInputs, planInputs,
+                                  applied, unavailable) {
+    const transition = policyInputs.transition_policy;
+    if (!transition || typeof transition !== "object") return;
+    const effective = effectiveTransition(transition);
+    const preset = effective ? transitionPresetName(
+        effective.continuationMode, effective.contextLength) : "custom";
+    const selected = Object.entries(GENERATION_SCENE_PROFILES).find(
+        ([, profilePreset]) => profilePreset === preset,
+    )?.[0];
+    const savedAudioContext = Number(planInputs?.audio_context_length);
+    const audioContextMatches = !Number.isInteger(savedAudioContext)
+        || savedAudioContext === effective?.contextLength;
+    if (!selected || !audioContextMatches) {
+        unavailable.push(
+            "transition_policy (saved boundary needs Advanced Policy or the "
+            + "Legacy 0.4 Policy Adapter)",
+        );
+        return;
+    }
+    if (writeWidget(
+        node, "scene_continuity", selected, unavailable,
+        "transition_policy",
+    )) applied.push("transition_policy");
+}
+
 function restoreLegacyAudio(node, policyInputs, applied, unavailable) {
     const audio = policyInputs.audio_policy;
     if (audio && typeof audio === "object") {
         if (audio.source_audio_target === "locked") {
             unavailable.push(
-                "audio_policy (source target lock needs the compact Chain Policy)");
+                "audio_policy (source target lock needs Generation Profile "
+                + "or Manual Chain Policy)");
         } else {
             const completeAxes = [
                 "final_audio", "source_reference", "generated_continuity",
@@ -242,9 +304,15 @@ export function restoreConnectedPolicyInputs(
     graph?.beforeChange?.();
     try {
         const combinedOrigin = linkedInputOrigin(planNode, "chain_policy");
+        const profile = findUpstreamType(
+            combinedOrigin, PROFILE_POLICY_NODE);
         const compact = findUpstreamType(combinedOrigin, CHAIN_POLICY_NODE);
         const legacy = findUpstreamType(combinedOrigin, LEGACY_POLICY_NODE);
-        if (compact) {
+        if (profile) {
+            restoreProfileAudio(
+                profile, policyInputs, applied, unavailable);
+            profile.graph?.setDirtyCanvas?.(true, true);
+        } else if (compact) {
             restoreCompactAudio(
                 compact, policyInputs, applied, unavailable);
             compact.graph?.setDirtyCanvas?.(true, true);
@@ -256,7 +324,8 @@ export function restoreConnectedPolicyInputs(
         const transitionTarget = findFirstUpstreamType(
             combinedOrigin,
             new Set([
-                ADVANCED_POLICY_NODE, LEGACY_POLICY_NODE, CHAIN_POLICY_NODE,
+                ADVANCED_POLICY_NODE, LEGACY_POLICY_NODE,
+                PROFILE_POLICY_NODE, CHAIN_POLICY_NODE,
             ]),
         );
         if (nodeType(transitionTarget) === ADVANCED_POLICY_NODE) {
@@ -267,14 +336,19 @@ export function restoreConnectedPolicyInputs(
             restoreLegacyTransition(
                 transitionTarget, policyInputs, planInputs,
                 applied, unavailable);
+        } else if (nodeType(transitionTarget) === PROFILE_POLICY_NODE) {
+            restoreProfileTransition(
+                transitionTarget, policyInputs, planInputs,
+                applied, unavailable);
         } else if (nodeType(transitionTarget) === CHAIN_POLICY_NODE) {
             restoreCompactTransition(
                 transitionTarget, policyInputs, planInputs,
                 applied, unavailable);
         } else {
             unavailable.push(
-                "chain_policy (connect MiniMax H3 Chain Policy, Advanced "
-                + "Policy, or the Legacy 0.4 Policy Adapter)",
+                "chain_policy (connect MiniMax H3 Generation Profile, "
+                + "Manual Chain Policy, Advanced Policy, or the Legacy 0.4 "
+                + "Policy Adapter)",
             );
         }
     } finally {

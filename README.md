@@ -145,7 +145,7 @@ explains every maintained example and required asset.
 ## How it works
 
 ```text
-Chain Policy → [Advanced] → [Legacy 0.4] → Plan
+Generation Profile → [Advanced] → [Legacy 0.4] → Plan
 Source Timeline ───────────────────────────┘
                                              ↓
                            Preflight → Loop Start → Current Shot

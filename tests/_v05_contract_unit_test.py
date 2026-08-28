@@ -79,6 +79,16 @@ def main():
     assert contracts.ADVANCED_TRANSITION_PRESETS == (
         "cut", "guide", "tone_guide", "latent_guide", "detail_guide",
         "detail_av", "drift_av", "color_drift_av", "hard_av", "soft_av")
+    assert contracts.GENERATION_SCENE_PROFILES == {
+        "Visual continuity": "guide",
+        "Independent scenes": "cut",
+        "Hard picture + protected audio": "hard_av",
+        "Hard picture + smooth audio": "soft_av",
+    }
+    assert contracts.GENERATION_AUDIO_PROFILES[
+        "Generate audio"] == ("generated", "off", "on", False)
+    assert contracts.GENERATION_AUDIO_PROFILES[
+        "Lip-sync to source audio"] == ("source", "off", "off", True)
     assert contracts.LATENT_COLOR_CARRY_RECIPE == {
         "version": "h3_latent_color_delta_v1",
         "context_frames": 39,
