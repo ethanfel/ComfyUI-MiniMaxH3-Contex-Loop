@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.60";
+} from "./h3_chain_plan_core.mjs?v=0.6.61";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.60";
+} from "./h3_prompt_history_core.mjs?v=0.6.61";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.60";
+} from "./h3_reference_preview_core.mjs?v=0.6.61";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.60";
+} from "./h3_policy_core.mjs?v=0.6.61";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.60";
+} from "./h3_socket_presentation_core.mjs?v=0.6.61";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -87,8 +87,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.60";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.60";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.61";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.61";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -197,8 +197,9 @@ function injectStyles() {
         .h3studio-card { --scene:#84aaff; position:relative; isolation:isolate;
             flex:0 0 var(--h3-scene-width,138px); min-width:0;
             height:70px; overflow:hidden; padding:0 !important; text-align:left; border:1px solid var(--scene) !important;
-            border-radius:5px; color:var(--hs-text); cursor:pointer; font:inherit;
+            border-radius:5px; color:var(--hs-text); cursor:grab; font:inherit; user-select:none; touch-action:none;
             background:color-mix(in srgb,var(--scene) 13%,var(--comfy-input-bg,#15171d)) !important; }
+        .h3studio-card.h3studio-moving { cursor:grabbing; }
         .h3studio-card.h3studio-selected { box-shadow:0 0 0 2px var(--scene) inset; }
         .h3studio-card video, .h3studio-card-thumbnail { position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
             opacity:.58; z-index:-1; background:#08090c; pointer-events:none; }
@@ -208,7 +209,7 @@ function injectStyles() {
         .h3studio-drag-handle { position:absolute; z-index:3; left:4px; top:4px; padding:1px 4px;
             border-radius:3px; color:#fff; background:rgba(5,7,12,.72); cursor:grab; user-select:none; }
         .h3studio-drag-handle:active { cursor:grabbing; }
-        .h3studio-lock-handle { position:absolute; z-index:4; left:29px; top:4px; padding:1px 4px;
+        .h3studio-lock-handle { position:absolute; z-index:4; left:43px; top:4px; padding:1px 4px;
             border:1px solid rgba(255,255,255,.24) !important; border-radius:3px; color:#fff;
             background:rgba(5,7,12,.72) !important; cursor:pointer; user-select:none; font-size:9px; }
         .h3studio-lock-handle.h3studio-is-locked { color:#ffd995;
@@ -218,7 +219,7 @@ function injectStyles() {
             touch-action:none; opacity:.72; }
         .h3studio-resize-handle:hover, .h3studio-resize-handle:active { width:12px; opacity:1;
             background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--scene) 28%,transparent)); }
-        .h3studio-card.h3studio-locked { border-style:dashed !important; }
+        .h3studio-card.h3studio-locked { border-style:dashed !important; cursor:pointer; }
         .h3studio-card.h3studio-locked .h3studio-drag-handle,
         .h3studio-card.h3studio-locked .h3studio-resize-handle { cursor:not-allowed; opacity:.38; }
         .h3studio-card-title { display:block; font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
@@ -1809,9 +1810,12 @@ function mount(node) {
     function enableScenePlacementDrag(card, handle, index) {
         handle.title = sceneLocked(index)
             ? "Scene locked · unlock it before moving"
-            : "Drag this clip to an exact editorial start time. Empty track space becomes black.";
-        handle.addEventListener("pointerdown", (event) => {
+            : "Drag the clip or this Move handle to set its editorial start. Empty track space becomes black.";
+        const startDrag = (event) => {
             if (event.button !== 0 || sceneLocked(index)) return;
+            if (event.target?.closest?.(
+                ".h3studio-lock-handle,.h3studio-resize-handle,button,input,select,textarea",
+            )) return;
             event.preventDefault(); event.stopPropagation();
             const model = timelineModel();
             const scene = model.segments.find(
@@ -1829,11 +1833,15 @@ function mount(node) {
             const originX = event.clientX;
             const viewport = state.timelineViewport;
             const originScrollLeft = viewport?.scrollLeft ?? 0;
+            const pointerId = event.pointerId;
             let targetFrame = scene.startFrame;
             let moved = false;
             state.timelineDragging = true;
-            handle.setPointerCapture?.(event.pointerId);
+            card.classList.add("h3studio-moving");
+            card.setPointerCapture?.(pointerId);
             const onMove = (moveEvent) => {
+                if (moveEvent.pointerId !== pointerId) return;
+                moveEvent.preventDefault();
                 if (viewport) {
                     const rect = viewport.getBoundingClientRect();
                     if (moveEvent.clientX > rect.right - 36) viewport.scrollLeft += 18;
@@ -1850,25 +1858,35 @@ function mount(node) {
                         scene.startFrame + deltaX * secondsPerPixel * FPS,
                     )),
                 );
-                card.style.transform = `translateX(${deltaX}px)`;
+                const placedDeltaX = (targetFrame - scene.startFrame)
+                    / Math.max(Number.EPSILON, secondsPerPixel * FPS);
+                card.style.transform = `translateX(${placedDeltaX}px)`;
                 card.style.opacity = ".78";
                 handle.textContent = formatClock(targetFrame / FPS);
             };
             const finish = (upEvent) => {
-                handle.removeEventListener("pointermove", onMove);
-                handle.removeEventListener("pointerup", finish);
-                handle.removeEventListener("pointercancel", finish);
-                handle.releasePointerCapture?.(upEvent.pointerId);
+                if (upEvent.pointerId !== pointerId) return;
+                window.removeEventListener("pointermove", onMove, true);
+                window.removeEventListener("pointerup", finish, true);
+                window.removeEventListener("pointercancel", finish, true);
+                if (card.hasPointerCapture?.(pointerId)) {
+                    card.releasePointerCapture(pointerId);
+                }
                 state.timelineDragging = false;
+                card.classList.remove("h3studio-moving");
                 card.style.removeProperty("transform");
                 card.style.removeProperty("opacity");
-                handle.textContent = "⋮⋮";
-                if (moved) setScenePlacement(index, targetFrame);
+                handle.textContent = "Move";
+                card._h3SuppressClick = moved;
+                if (moved && upEvent.type === "pointerup") {
+                    setScenePlacement(index, targetFrame);
+                }
             };
-            handle.addEventListener("pointermove", onMove);
-            handle.addEventListener("pointerup", finish);
-            handle.addEventListener("pointercancel", finish);
-        });
+            window.addEventListener("pointermove", onMove, true);
+            window.addEventListener("pointerup", finish, true);
+            window.addEventListener("pointercancel", finish, true);
+        };
+        card.addEventListener("pointerdown", startDrag);
     }
 
     function enableSceneDurationDrag(card, handle, index) {
@@ -1949,10 +1967,19 @@ function mount(node) {
             const checkpoint = matchingStudioCheckpoint(state.checkpoints, index, row);
             const locked = sceneLocked(index);
             const card = element("div");
-            card.title = `Scene ${index + 1}: ${row.id}`;
+            card.title = locked
+                ? `Scene ${index + 1}: ${row.id} · locked`
+                : `Scene ${index + 1}: ${row.id} · drag to move`;
             card.tabIndex = 0;
             card.setAttribute("role", "button");
-            card.addEventListener("click", () => void selectScene(index));
+            card.addEventListener("click", (event) => {
+                if (card._h3SuppressClick) {
+                    card._h3SuppressClick = false;
+                    event.preventDefault(); event.stopPropagation();
+                    return;
+                }
+                void selectScene(index);
+            });
             card.addEventListener("keydown", (event) => {
                 if (event.target !== card || !["Enter", " "].includes(event.key)) return;
                 event.preventDefault();
@@ -1978,7 +2005,7 @@ function mount(node) {
             const copy = element("span", "h3studio-card-copy");
             copy.append(element("span", "h3studio-card-title", `${index + 1}. ${row.id}`),
                 element("span", "h3studio-card-meta", `${formatClock(sceneSegment?.startSeconds ?? 0)} → ${formatClock(sceneSegment?.endSeconds ?? row.deliveredSeconds)} · ${row.rawFrames || "—"}f raw${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
-            const dragHandle = element("span", "h3studio-drag-handle", "⋮⋮");
+            const dragHandle = element("span", "h3studio-drag-handle", "Move");
             dragHandle.title = locked
                 ? "Scene locked · unlock it before moving"
                 : "Move scene on the editorial timeline";
