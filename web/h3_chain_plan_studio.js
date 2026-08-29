@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.71";
+} from "./h3_chain_plan_core.mjs?v=0.6.72";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.71";
+} from "./h3_prompt_history_core.mjs?v=0.6.72";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.71";
+} from "./h3_reference_preview_core.mjs?v=0.6.72";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.71";
+} from "./h3_policy_core.mjs?v=0.6.72";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.71";
+} from "./h3_socket_presentation_core.mjs?v=0.6.72";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -89,8 +89,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.71";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.71";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.72";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.72";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -573,6 +573,7 @@ function mount(node) {
         timelineWorkspaceEndFrame:0, timelineSceneEndFrame:0,
         timelineExtending:false, timelineDragging:false,
         timelineScrollIntentUntil:0, timelineLastScrollLeft:0,
+        timelineLayoutFrame:null,
         subtitleTimelineHost:null,
         panelHost:null,
         planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
@@ -1357,10 +1358,15 @@ function mount(node) {
         const end = start + card.offsetWidth;
         const visibleStart = viewport.scrollLeft;
         const visibleEnd = visibleStart + viewport.clientWidth;
-        if (start < visibleStart) viewport.scrollLeft = start;
+        let target = null;
+        if (start < visibleStart) target = start;
         else if (end > visibleEnd) {
-            viewport.scrollLeft = Math.max(0, end - viewport.clientWidth);
+            target = Math.max(0, end - viewport.clientWidth);
         }
+        if (target == null) return;
+        state.timelineScrollIntentUntil = 0;
+        state.timelineLastScrollLeft = target;
+        viewport.scrollLeft = target;
     }
 
     function timelineScrollSnapshot(anchorRatio = .5) {
@@ -1370,17 +1376,17 @@ function mount(node) {
         const contentWidth = Math.max(
             0, Number(content?.dataset.timelineWidth) || content?.scrollWidth || 0,
         );
-        if (!viewport || !content || !(contentWidth > 0) || !(totalSeconds > 0)) {
-            return null;
-        }
+        if (!viewport || !content) return null;
         const boundedAnchor = Math.max(0, Math.min(
             1, Number(anchorRatio) || 0,
         ));
         return {
-            seconds:studioTimelineScrollAnchorSeconds(
-                viewport.scrollLeft, viewport.clientWidth,
-                contentWidth, totalSeconds, boundedAnchor,
-            ),
+            scrollLeft:Math.max(0, Number(viewport.scrollLeft) || 0),
+            seconds:contentWidth > 0 && totalSeconds > 0
+                ? studioTimelineScrollAnchorSeconds(
+                    viewport.scrollLeft, viewport.clientWidth,
+                    contentWidth, totalSeconds, boundedAnchor,
+                ) : null,
             anchorRatio:boundedAnchor,
         };
     }
@@ -1390,23 +1396,15 @@ function mount(node) {
         const viewport = state.timelineViewport;
         const content = state.timelineContent;
         if (!viewport || !content || !state.plan) return;
-        const oldWidth = Math.max(
-            1,
-            Number(content.dataset.timelineWidth) ||
-                content.scrollWidth || viewport.clientWidth,
-        );
         const boundedAnchor = Math.max(0, Math.min(
             1, Number(restoreScroll?.anchorRatio ?? anchorRatio) || 0,
         ));
         const restoredSeconds = restoreScroll == null
             ? Number.NaN : Number(restoreScroll.seconds);
-        const preservedSeconds = preserveScroll
-            ? studioTimelineScrollAnchorSeconds(
-                viewport.scrollLeft, viewport.clientWidth, oldWidth,
-                studioTimelineTotalSeconds(state.timelineSegments),
-                boundedAnchor,
-            )
-            : null;
+        const restoredLeft = restoreScroll == null
+            ? Number.NaN : Number(restoreScroll.scrollLeft);
+        const preservedLeft = preserveScroll
+            ? Math.max(0, Number(viewport.scrollLeft) || 0) : Number.NaN;
         const model = timelineModel();
         const result = model.result;
         const layout = studioTimelineLayout(
@@ -1444,15 +1442,28 @@ function mount(node) {
         if (state.timelineRuler) renderRuler(
             state.timelineRuler, layout.totalSeconds,
         );
-        requestAnimationFrame(() => {
+        if (state.timelineLayoutFrame != null) {
+            cancelAnimationFrame(state.timelineLayoutFrame);
+        }
+        state.timelineLayoutFrame = requestAnimationFrame(() => {
+            state.timelineLayoutFrame = null;
             if (!viewport.isConnected) return;
-            const targetSeconds = Number.isFinite(restoredSeconds)
-                ? restoredSeconds : preservedSeconds;
-            if (Number.isFinite(targetSeconds)) {
-                viewport.scrollLeft = studioTimelineScrollLeftForAnchor(
-                    targetSeconds, viewport.clientWidth,
+            let targetLeft = Number.isFinite(restoredLeft)
+                ? restoredLeft : preservedLeft;
+            if (!Number.isFinite(targetLeft)
+                    && Number.isFinite(restoredSeconds)) {
+                targetLeft = studioTimelineScrollLeftForAnchor(
+                    restoredSeconds, viewport.clientWidth,
                     layout.pixelsPerSecond, boundedAnchor,
                 );
+            }
+            if (Number.isFinite(targetLeft)
+                    && Math.abs(viewport.scrollLeft - targetLeft) > .5) {
+                // Keep programmatic restoration invisible to the edge-growth
+                // listener. Only a user's rightward scroll may grow the open
+                // timeline workspace.
+                state.timelineLastScrollLeft = targetLeft;
+                viewport.scrollLeft = targetLeft;
             }
             if (revealActive) revealActiveTimelineScene();
             layoutChapterMarkers();
@@ -1473,9 +1484,13 @@ function mount(node) {
     }
 
     function setTimelineZoom(value, anchorRatio = .5) {
+        const zoomAnchor = timelineScrollSnapshot(anchorRatio);
+        if (zoomAnchor) delete zoomAnchor.scrollLeft;
         state.timelineZoom = normalizedTimelineZoom(value);
         node.properties[TIMELINE_ZOOM_PROPERTY] = state.timelineZoom;
-        layoutTimeline({preserveScroll:true, anchorRatio});
+        layoutTimeline({
+            preserveScroll:false, anchorRatio, restoreScroll:zoomAnchor,
+        });
         dirty();
     }
 
@@ -2273,7 +2288,7 @@ function mount(node) {
         }
     }
 
-    async function selectScene(index, synchronize = true) {
+    async function selectScene(index, synchronize = true, reveal = true) {
         await flushHistoryDraft();
         state.activeChapterId = "";
         state.active = Math.max(0, Math.min(state.plan.shots.length - 1, Number(index)));
@@ -2284,7 +2299,7 @@ function mount(node) {
         }
         persistView(); renderSourceTimeline(); renderSourceAudioTimeline();
         updateTimelineSelection();
-        revealActiveTimelineScene();
+        if (reveal) revealActiveTimelineScene();
         if (state.view === "player" && state.player) {
             seekTimeline(state.timelinePosition, false);
         } else renderPanel();
@@ -4520,9 +4535,10 @@ function mount(node) {
 
     function renderShell() {
         const timelineScroll = timelineScrollSnapshot();
-        const revealTimelineActive = timelineScroll == null
-            || (state.timelineRenderedActive != null
-                && state.timelineRenderedActive !== state.active);
+        // Rebuilding the Studio must never pan the editorial timeline. Scene
+        // selection already reveals a card when the user explicitly chooses
+        // it; passive rerenders keep the scrollbar exactly where it was.
+        const revealTimelineActive = false;
         disposePlayer();
         state.timelineResizeObserver?.disconnect();
         state.timelineResizeObserver = null;
@@ -4880,7 +4896,9 @@ function mount(node) {
     };
     node._h3PromptCompanionSetActiveScene = (planNode, index) => {
         if (planNode !== state.planNode || !state.plan?.shots?.length) return false;
-        void selectScene(index, false);
+        // Prompt/editor synchronization changes selection, not the user's
+        // horizontal timeline position.
+        void selectScene(index, false, false);
         return true;
     };
     node._h3PromptCompanionSetScenePrompt = (planNode, index, text) => {

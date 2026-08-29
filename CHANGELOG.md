@@ -10,10 +10,11 @@ Newest first. This file keeps release history out of the onboarding README.
   silence, and exact source-audio lip-sync. The former node remains compatible
   as deprecated **Manual Chain Policy (Legacy)**.
 
-- Plan Studio now preserves the visible absolute timeline time when its open
-  workspace grows or the timeline rerenders. It no longer treats horizontal
-  scroll as a percentage of the expanding blank workspace, which could throw
-  the scrollbar far to the right during ordinary editing.
+- Plan Studio's horizontal timeline position is now inert during passive
+  rerenders, workspace growth, and prompt-editor scene synchronization. It
+  restores the exact pixel position, cancels stale layout callbacks, and only
+  reveals a scene after an explicit timeline selection; automatic restoration
+  can no longer recursively grow or throw the scrollbar to either end.
 
 - Both prompt editors now discover tagged and Project Asset references through
   the compact **Current Tagged Ref2VA Scene** node, just as they already did
