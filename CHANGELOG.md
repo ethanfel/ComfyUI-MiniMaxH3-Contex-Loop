@@ -4,6 +4,13 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Semantic pictures now accept bare `#tag` as an untimed Qwen-only visual;
+  append `[time]` only when explicit approximate scene placement is wanted.
+  Prompt completion, reference conversion, rich chips, preflight, native
+  Ref2VA hybrid conditioning, and external RefMod hybrid conditioning share
+  the same syntax. `@tag` remains the native Ref2VA/RefMod namespace, and
+  neither `#` form creates a VAE reference.
+
 - Added optional **Lip-Sync Options** for Generation Profile's exact-source
   audio mode. Scene audio can be encoded with discarded real-song pre-roll and
   lookahead instead of artificial hard boundaries. An aligned isolated vocal

@@ -435,7 +435,7 @@ assert.match(source, /preserveDelegatedPrompts\(\)/);
 assert.match(source, /convertTaggedPictureReference/);
 assert.match(source, /taggedPictureReferenceMode/);
 assert.match(source, /h3studio-ref-mode/);
-assert.match(source, /Use semantic #tag\[time\]/);
+assert.match(source, /Use untimed Qwen-only #tag/);
 assert.match(source, /publishCompanionScene/);
 assert.match(source, /Append a new scene and select it/);
 assert.match(source, /state\.plan\.shots\.push\(makeShot\(state\.plan\.shots\)\)/);

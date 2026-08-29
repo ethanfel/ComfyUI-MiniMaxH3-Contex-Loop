@@ -112,7 +112,7 @@ assert.match(source, /makeRichToken\(part, partStart, partEnd\)/);
 assert.match(source, /popoverPinned/);
 assert.match(source, /taggedPictureReferenceMode/);
 assert.match(source, /h3sp-ref-mode/);
-assert.match(source, /Use semantic #tag\[time\]/);
+assert.match(source, /Use untimed Qwen-only #tag/);
 assert.match(source, /referenceButton\.addEventListener\("pointerdown", rememberPromptSelection\)/);
 assert.match(source, /document\.activeElement === state\.richEditor/);
 assert.match(source, /current\.slice\(0, insertionStart\)/);

@@ -8,7 +8,7 @@ import {
     promptTextToLines,
     promptValueToText,
     sharedPrompt,
-} from "./h3_chain_plan_core.mjs?v=0.6.73";
+} from "./h3_chain_plan_core.mjs?v=0.6.74";
 import {
     PROMPT_ASSIST_DEFAULT_INSTRUCTIONS,
     PROMPT_ASSIST_MODES,
@@ -17,14 +17,14 @@ import {
     makePromptAssistRequest,
     promptSceneKey,
     promptSourceRevision,
-} from "./h3_prompt_assistant_core.mjs?v=0.6.73";
-import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.6.73";
+} from "./h3_prompt_assistant_core.mjs?v=0.6.74";
+import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.6.74";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
     promptRevisionTree,
-} from "./h3_prompt_history_core.mjs?v=0.6.73";
+} from "./h3_prompt_history_core.mjs?v=0.6.74";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
@@ -32,18 +32,18 @@ import {
     replacePromptReferenceOccurrence,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.73";
+} from "./h3_reference_preview_core.mjs?v=0.6.74";
 import {
     PromptUndoHistory,
     promptUndoDirection,
     tokenizeRichPrompt,
-} from "./h3_rich_prompt_editor_core.mjs?v=0.6.73";
-import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.6.73";
-import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.6.73";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.73";
+} from "./h3_rich_prompt_editor_core.mjs?v=0.6.74";
+import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.6.74";
+import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.6.74";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.74";
 import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.73";
+} from "./h3_project_asset_sync_core.mjs?v=0.6.74";
 
 const {publishCompanionScene, rebaseScenePrompt} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -1912,7 +1912,9 @@ function mount(node) {
         timestampInput.type = "number";
         timestampInput.min = "0";
         timestampInput.step = "0.01";
-        timestampInput.value = String(part.timestamp ?? 0);
+        timestampInput.placeholder = "blank = untimed";
+        timestampInput.value = part.timestamp == null
+            ? "" : String(part.timestamp);
         timestampField.append(timestampInput);
 
         const updateModes = (preferred = modeSelect.value) => {
@@ -1926,7 +1928,7 @@ function mount(node) {
                 modeSelect.append(option);
             }
             if (semantic) {
-                const option = element("option", "", "# semantic timestamp");
+                const option = element("option", "", "# semantic (time optional)");
                 option.value = "semantic";
                 modeSelect.append(option);
             }
@@ -1952,7 +1954,9 @@ function mount(node) {
         apply.addEventListener("click", () => {
             const record = candidates[Number(referenceSelect.value)];
             const mode = modeSelect.value;
-            const timestamp = Number(timestampInput.value);
+            const timestampText = timestampInput.value.trim();
+            const timestamp = timestampText === ""
+                ? null : Number(timestampText);
             const current = activePromptText();
             if (current.slice(start, end) !== part.text) {
                 hidePopover(true);
@@ -2106,6 +2110,9 @@ function mount(node) {
 
     function insertPromptText(text, selectSemanticTimestamp = false) {
         const inserted = String(text ?? "");
+        selectSemanticTimestamp = Boolean(
+            selectSemanticTimestamp && inserted.includes("[")
+            && inserted.includes("s]"));
         if (state.decorated && state.richEditor) {
             const current = editorPlainText(state.richEditor);
             const live = document.activeElement === state.richEditor
@@ -2318,7 +2325,8 @@ function mount(node) {
 
         const help = mode === "tagged"
             ? "Prompt-driven references. Picture previews switch and convert between " +
-              "native @tag and semantic #tag[time]. Video and audio stay native-only. " +
+              "native @tag and Qwen-only #tag; add [time] for explicit placement. " +
+              "Video and audio stay native-only. " +
               "Audio never autoplays."
             : mode === "scheduled"
             ? `Scheduled references for scene ${state.active + 1}. Hover to preview; ` +
@@ -2364,7 +2372,7 @@ function mount(node) {
                 const native = button("@", "Use native @tag and convert semantic anchors in this scene", () => {
                     convertReferenceSyntax(record, "native", refs);
                 });
-                const semantic = button("#", "Use semantic #tag[time] and convert native tags in this scene", () => {
+                const semantic = button("#", "Use untimed Qwen-only #tag; add [time] for placement", () => {
                     convertReferenceSyntax(record, "semantic", refs);
                 });
                 native.classList.toggle(

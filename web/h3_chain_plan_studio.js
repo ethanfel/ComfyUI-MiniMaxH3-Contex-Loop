@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.73";
+} from "./h3_chain_plan_core.mjs?v=0.6.74";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.73";
+} from "./h3_prompt_history_core.mjs?v=0.6.74";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.73";
+} from "./h3_reference_preview_core.mjs?v=0.6.74";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.73";
+} from "./h3_policy_core.mjs?v=0.6.74";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.73";
+} from "./h3_socket_presentation_core.mjs?v=0.6.74";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -89,8 +89,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.73";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.73";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.74";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.74";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -2386,7 +2386,8 @@ function mount(node) {
             const chip = button(`${icons[record.kind] ?? "@"} ${displayToken}`, "Insert this connected reference label or alias", () => {
                 const start = textarea.selectionStart ?? textarea.value.length;
                 insertText(textarea, displayToken);
-                if (syntax === "semantic") {
+                if (syntax === "semantic" && displayToken.includes("[")
+                        && displayToken.includes("s]")) {
                     textarea.setSelectionRange(
                         start + displayToken.indexOf("[") + 1,
                         start + displayToken.lastIndexOf("s]"),
@@ -2404,7 +2405,7 @@ function mount(node) {
                         label,
                         target === "native"
                             ? "Use native @tag and convert semantic anchors in this scene"
-                            : "Use semantic #tag[time] and convert native tags in this scene",
+                            : "Use untimed Qwen-only #tag; add [time] for placement",
                         () => {
                             state.referenceSyntax.set(key, target);
                             const next = convertTaggedPictureReference(

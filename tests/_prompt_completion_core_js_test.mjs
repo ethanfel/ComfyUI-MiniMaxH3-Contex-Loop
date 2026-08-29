@@ -13,8 +13,8 @@ import {
 const records = [
     {kind:"picture", token:"@hero", label:"<Picture 1>", active:true},
     {kind:"picture", token:"@costume", label:null, active:false},
-    {kind:"picture", tag:"location", token:"#location[0.00s]",
-        nativeToken:null, semanticToken:"#location[0.00s]",
+    {kind:"picture", tag:"location", token:"#location",
+        nativeToken:null, semanticToken:"#location",
         semanticOnly:true, label:null, active:false},
     {kind:"video", token:"@performance", label:"<Subject 1>", active:true},
     {kind:"audio", token:"@voice", label:"<Audio 1>", active:false},
@@ -44,13 +44,13 @@ assert.deepEqual(scheduledAliases.map((item) => item.label), ["@hero", "@perform
 const semantic = promptCompletionItems(
     promptCompletionQuery("#co", 3), records, {referenceMode:"tagged"},
 );
-assert.deepEqual(semantic.map((item) => item.label), ["#costume[timestamp]"]);
-assert.equal(semantic[0].insertText, "#costume[0.00s]");
+assert.deepEqual(semantic.map((item) => item.label), ["#costume"]);
+assert.equal(semantic[0].insertText, "#costume");
 const allSemantic = promptCompletionItems(
     promptCompletionQuery("#", 1), records, {referenceMode:"tagged"},
 );
 assert.deepEqual(allSemantic.map((item) => item.label), [
-    "#hero[timestamp]", "#costume[timestamp]", "#location[timestamp]",
+    "#hero", "#costume", "#location",
 ]);
 assert.equal(allSemantic[2].detail.startsWith("Semantic Picture Anchor"), true);
 assert.equal(promptCompletionItems(
@@ -58,10 +58,8 @@ assert.equal(promptCompletionItems(
 ).length, 0);
 assert.deepEqual(applyPromptCompletion("Use #co here", promptCompletionQuery(
     "Use #co here", 7), semantic[0]), {
-    text:"Use #costume[0.00s] here",
-    caret:17,
-    selectionStart:13,
-    selectionEnd:17,
+    text:"Use #costume here",
+    caret:12,
 });
 assert.deepEqual(promptCompletionItems(
     promptCompletionQuery("#", 1), records, {referenceMode:"scheduled"},

@@ -472,6 +472,28 @@ assert semantic_face["timestamps"] == [
 assert "#face[0s,2.5s] -> <Video 1> Qwen-only semantic anchors" in (
     semantic_summary)
 
+mixed_semantic, mixed_summary, mixed_bindings = (
+    chain._compile_tagged_reference_prompt(
+        tagged, 1, 1,
+        "Use #face untimed and #face[2.50s] later while @look is native."))
+assert mixed_semantic == (
+    "Use <Picture 2> untimed and <Video 1> later while <Picture 1> is native.")
+assert [(item["label"], item["untimed"], item["timestamps"])
+        for item in mixed_bindings["semantic_anchors"]] == [
+    ("<Picture 2>", True, []),
+    ("<Video 1>", False, [chain.Fraction("2.50")]),
+]
+assert "#face -> <Picture 2> Qwen-only semantic picture" in mixed_summary
+assert "#face[2.5s] -> <Video 1> Qwen-only semantic anchors" in mixed_summary
+hybrid_mixed, hybrid_mixed_anchors = chain._compile_refmod_hybrid_prompt(
+    "Use #face untimed and #face[2.50s] later while @look is native.",
+    mixed_bindings, mixed_bindings["semantic_anchors"],
+    "timestamped_video")
+assert hybrid_mixed == (
+    "Use <Picture 1> untimed and <Video 1> later while look is native.")
+assert [item["hybrid_label"] for item in hybrid_mixed_anchors] == [
+    "<Picture 1>", "<Video 1>"]
+
 storyboard_compiled, storyboard_summary, storyboard_bindings = (
     chain._compile_tagged_reference_prompt(
         tagged, 1, 1,
@@ -499,12 +521,13 @@ assert chronological_storyboard.startswith(
     "For the target video, around 2.5 seconds into this scene, <Picture 1> "
     "is an approximate visual storyboard reference.\n\n")
 assert chain._semantic_anchor_specs(
-    "@look #face[0.00s] and #face[2.50]") == [
+    "@look #face and #face[0.00s] and #face[2.50]") == [
+        {"tag": "face", "timestamp_seconds": None},
         {"tag": "face", "timestamp_seconds": 0.0},
         {"tag": "face", "timestamp_seconds": 2.5},
     ]
 assert chain._prompt_reference_tags(
-    "@look #face[2.50s]") == {"look", "face"}
+    "@look #face") == {"look", "face"}
 
 try:
     chain._compile_tagged_reference_prompt(
@@ -602,6 +625,32 @@ try:
     assert semantic_result[0][1]["minimax_refs"] == ["native-ref-payload"]
     assert semantic_result[0][1]["minimax_token_tags"] == "semantic-tags"
     assert semantic_status == "2 semantic checkpoints across 1 tagged pictures"
+
+    untimed_clip = FakeSemanticClip()
+    _untimed_result, untimed_status = (
+        chain._replace_conditioning_presentation(
+            base_conditioning, untimed_clip, "untimed prompt", {
+                "version": chain.SEMANTIC_PRESENTATION_VERSION,
+                "width": 64,
+                "height": 32,
+                "length": 22,
+                "ref_image_size": "match",
+                "semantic_anchor_size": "384",
+                "semantic_anchor_mode": "timestamped_video",
+                "pictures": [],
+                "videos": [],
+                "standalone_audio_count": 0,
+                "anchors": [{
+                    "tag": "face",
+                    "image": anchor_picture,
+                    "timestamps": (),
+                    "untimed": True,
+                }],
+            }))
+    assert [item["type"] for item in untimed_clip.items] == ["image"]
+    assert "timestamps" not in untimed_clip.items[0]
+    assert untimed_status == (
+        "1 untimed semantic picture across 1 tagged pictures")
 
     storyboard_clip = FakeSemanticClip()
     storyboard_result, storyboard_status = (
