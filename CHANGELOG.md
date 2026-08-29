@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Checkpoint Manager now adopts active checkpoints written before immutable
+  revision sidecars were introduced. It recovers the original transaction id
+  from the existing versioned MP4 and safetensors filenames, writes only the
+  missing lightweight JSON revision records, and links the legacy linear
+  lineage without copying or rewriting media, latents, or active pointers.
+
 - Added **Generation Profile**, a two-control replacement for the cryptic Chain
   Policy switches. Clear scene-continuity and audio choices include Generate
   audio, fresh per-scene audio, source-guided generation, source soundtrack,
