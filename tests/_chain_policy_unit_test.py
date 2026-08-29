@@ -84,6 +84,8 @@ assert "source timeline required" in locked_status
 
 profile_node = chain.MiniMaxH3GenerationProfile()
 profile_inputs = profile_node.INPUT_TYPES()["required"]
+assert profile_node.INPUT_TYPES()["optional"]["lip_sync_options"][0] == (
+    chain.LIP_SYNC_OPTIONS_TYPE)
 assert tuple(profile_inputs["scene_continuity"][0]) == (
     "Visual continuity", "Independent scenes",
     "Hard picture + protected audio",
@@ -110,6 +112,20 @@ assert lip_sync_profile["transition_policy"] == (
     chain._contract_transition_policy("soft_av"))
 assert lip_sync_profile["audio_context_length"] == 39
 assert "source timeline required" in lip_sync_status
+options_node = chain.MiniMaxH3LipSyncOptions()
+lip_options, passthrough_voice, options_status = options_node.build()
+assert passthrough_voice is None
+assert lip_options["version"] == chain.LIP_SYNC_OPTIONS_VERSION
+assert lip_options["preroll_seconds"] == 1.0
+assert lip_options["lookahead_seconds"] == 0.2
+assert "vocal stem not connected" in options_status
+contextual_profile, contextual_status = profile_node.build(
+    "Hard picture + smooth audio", "Lip-sync to source audio", lip_options)
+assert contextual_profile["audio_policy"]["lip_sync_options"] == lip_options
+assert "contextual song options active" in contextual_status
+ignored_options = profile_node.build(
+    "Visual continuity", "Generate audio", lip_options)[0]
+assert "lip_sync_options" not in ignored_options["audio_policy"]
 source_guide_profile = profile_node.build(
     "Independent scenes", "Generate audio from source guide")[0]
 assert source_guide_profile["audio_policy"] == chain._contract_audio_policy(
@@ -131,6 +147,8 @@ assert "advanced override" in drift_status
 assert "audio preserved" in drift_status
 locked_drift = advanced.apply(locked, "drift_av")[0]
 assert locked_drift["audio_policy"] == locked["audio_policy"]
+contextual_drift = advanced.apply(contextual_profile, "drift_av")[0]
+assert contextual_drift["audio_policy"]["lip_sync_options"] == lip_options
 color_drift, color_status = advanced.apply(combined, "color_drift_av")
 assert color_drift["transition_policy"][
     "continuation_mode"] == "color_stable_drift_av"
@@ -139,6 +157,14 @@ assert "Color-Stable Drift AV" in color_status
 
 combined_plan = make_plan(combined=combined)
 assert "chain_policy" not in combined_plan["compatibility"]
+contextual_plan = make_plan(combined=contextual_profile)
+assert contextual_plan["compatibility"]["audio_policy"][
+    "lip_sync_options"] == lip_options
+context_optional = chain.MiniMaxH3ChainContext.INPUT_TYPES()["optional"]
+assert list(context_optional) == [
+    "audio_vae", "model", "drift_sigmas", "boundary_anchors",
+    "visual_cond_noise_aug", "future_end_anchor", "lip_sync_voice"]
+assert context_optional["lip_sync_voice"][0] == "AUDIO"
 
 legacy = chain.MiniMaxH3Legacy04PolicyAdapter()
 legacy_combined, legacy_status = legacy.build(
@@ -172,11 +198,15 @@ assert plan_inputs["optional"]["chain_policy"][0] == chain.CHAIN_POLICY_TYPE
 assert "audio_policy" not in plan_inputs["optional"]
 assert "transition_policy" not in plan_inputs["optional"]
 assert chain.CHAIN_NODE_CLASS_MAPPINGS[
+    "MiniMaxH3LipSyncOptions"] is chain.MiniMaxH3LipSyncOptions
+assert chain.CHAIN_NODE_CLASS_MAPPINGS[
     "MiniMaxH3GenerationProfile"] is chain.MiniMaxH3GenerationProfile
 assert chain.CHAIN_NODE_CLASS_MAPPINGS[
     "MiniMaxH3ChainPolicy"] is chain.MiniMaxH3ChainPolicy
 assert chain.CHAIN_NODE_CLASS_MAPPINGS[
     "MiniMaxH3AdvancedPolicy"] is chain.MiniMaxH3AdvancedPolicy
+assert chain.CHAIN_NODE_DISPLAY_NAME_MAPPINGS[
+    "MiniMaxH3LipSyncOptions"] == "MiniMax H3 Lip-Sync Options"
 assert chain.CHAIN_NODE_DISPLAY_NAME_MAPPINGS[
     "MiniMaxH3GenerationProfile"] == "MiniMax H3 Generation Profile"
 assert chain.CHAIN_NODE_DISPLAY_NAME_MAPPINGS[

@@ -115,6 +115,7 @@ from .contracts_v05 import (
     GENERATION_AUDIO_PROFILES,
     GENERATION_SCENE_PROFILES,
     GENERATED_CONTINUITY_POLICIES,
+    LIP_SYNC_OPTIONS_VERSION,
     PRIMARY_TRANSITION_PRESETS,
     PREFLIGHT_VERSION,
     SCENE_DEPENDENCY_VERSION,
@@ -127,6 +128,7 @@ from .contracts_v05 import (
     compose_chain_policy as _contract_compose_chain_policy,
     migrate_continuation_mode,
     migrate_legacy_audio_mode,
+    masked_song_options as _contract_masked_song_options,
     paired_audio_policy as _contract_paired_audio_policy,
     transition_policy as _contract_transition_policy,
 )
@@ -227,6 +229,7 @@ PROJECT_ASSETS_TYPE = "H3_PROJECT_ASSETS"
 AUDIO_POLICY_TYPE = "H3_AUDIO_POLICY"
 TRANSITION_POLICY_TYPE = "H3_TRANSITION_POLICY"
 CHAIN_POLICY_TYPE = "H3_CHAIN_POLICY"
+LIP_SYNC_OPTIONS_TYPE = "H3_LIP_SYNC_OPTIONS"
 PREFLIGHT_TYPE = "H3_PREFLIGHT_REPORT"
 BOUNDARY_ANCHOR_PREPASS_TYPE = "H3_BOUNDARY_ANCHOR_PREPASS"
 BOUNDARY_ANCHORS_TYPE = "H3_BOUNDARY_ANCHORS"
@@ -259,7 +262,7 @@ def _fingerprint(value: Any) -> str:
     return hashlib.sha256(_canonical_json(value).encode("utf-8")).hexdigest()
 
 
-def _validate_audio_policy(value: Any) -> dict[str, str]:
+def _validate_audio_policy(value: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError(
             "H3 Audio Policy must come from MiniMax H3 Audio Policy.")
@@ -269,10 +272,11 @@ def _validate_audio_policy(value: Any) -> dict[str, str]:
     return _contract_audio_policy(
         value.get("final_audio"), value.get("source_reference"),
         value.get("generated_continuity"),
-        value.get("source_audio_target", "off"))
+        value.get("source_audio_target", "off"),
+        value.get("lip_sync_options"))
 
 
-def _resolved_audio_policy(value: Any) -> dict[str, str]:
+def _resolved_audio_policy(value: Any) -> dict[str, Any]:
     """Resolve an explicit 0.5 policy or faithfully migrate a 0.4 mode."""
     compatibility = (
         value.get("compatibility")
@@ -324,7 +328,7 @@ def _optional_scene_audio_axis(
 
 
 def _resolved_scene_audio_policy(
-        value: Any, shot: Any = None) -> dict[str, str]:
+        value: Any, shot: Any = None) -> dict[str, Any]:
     """Overlay one scene's generation axes on the Plan-wide audio policy.
 
     Final mux choice deliberately remains Plan-wide. Locking the source target
@@ -343,7 +347,19 @@ def _resolved_scene_audio_policy(
         source_reference or policy["source_reference"],
         generated_continuity or policy["generated_continuity"],
         source_audio_target or policy.get("source_audio_target", "off"),
+        policy.get("lip_sync_options"),
     )
+
+
+def _resolved_lip_sync_options(
+        value: Any, shot: Any = None) -> dict[str, Any] | None:
+    """Return the contextual song recipe only for an active locked target."""
+    policy = _resolved_scene_audio_policy(value, shot)
+    if policy.get("source_audio_target", "off") != "locked":
+        return None
+    options = policy.get("lip_sync_options")
+    return (_contract_masked_song_options(options)
+            if options is not None else None)
 
 
 def _audio_policy_locks_source_audio(value: Any, shot: Any = None) -> bool:
@@ -5157,6 +5173,30 @@ def _canonical_source_reference_dependency(
                    if int(index) == 1 and external_lead > 0 else
                    int(shot["raw_frames"]))
     end_frame = start_frame + frame_count
+    target_start_frame = start_frame
+    target_end_frame = end_frame
+    lip_sync_options = _resolved_lip_sync_options(plan, shot)
+    if lip_sync_options is not None and not (
+            int(index) == 1 and external_lead > 0):
+        preroll_frames = int(math.ceil(
+            float(lip_sync_options["preroll_seconds"]) * FPS))
+        lookahead_frames = int(math.ceil(
+            float(lip_sync_options["lookahead_seconds"]) * FPS))
+        start_frame = max(0, start_frame - preroll_frames)
+        if source_timeline is not None:
+            source = _validate_source_timeline(
+                source_timeline, require_runtime=True)
+            maximum_frame = int(source["extent"]["frame_count"])
+        elif source_audio is not None:
+            source_waveform, source_rate = _validate_audio(
+                source_audio, "H3 lip-sync source dependency")
+            maximum_frame = int(math.floor(
+                int(source_waveform.shape[-1]) / float(source_rate) * FPS))
+        else:
+            maximum_frame = int(plan.get(
+                "total_delivered_frames", target_end_frame + lookahead_frames))
+        end_frame = min(maximum_frame, end_frame + lookahead_frames)
+        frame_count = end_frame - start_frame
     if source_timeline is not None:
         audio = _source_timeline_scene_audio(
             source_timeline, start_frame, end_frame)
@@ -5176,7 +5216,7 @@ def _canonical_source_reference_dependency(
         route = "legacy_audio"
     waveform, sample_rate = _validate_audio(
         audio, "Scene %d source-reference dependency" % int(index))
-    return {
+    dependency = {
         "route": route,
         "start_frame": start_frame,
         "end_frame": end_frame,
@@ -5186,6 +5226,13 @@ def _canonical_source_reference_dependency(
         "pcm_sha256": _audio_fingerprint({
             "waveform": waveform, "sample_rate": sample_rate}),
     }
+    if lip_sync_options is not None:
+        dependency.update({
+            "target_start_frame": target_start_frame,
+            "target_end_frame": target_end_frame,
+            "lip_sync_options": lip_sync_options,
+        })
+    return dependency
 
 
 def _scene_dependency_record(
@@ -5294,6 +5341,10 @@ def _scene_dependency_record(
         # Omit the disabled spelling so pre-switch scene-dependency records
         # remain byte-for-byte compatible with unchanged 0.5 runs.
         scopes["global_generation"]["source_audio_target"] = "locked"
+        lip_sync_options = _resolved_lip_sync_options(compatibility, shot)
+        if lip_sync_options is not None:
+            scopes["global_generation"]["lip_sync_options"] = (
+                lip_sync_options)
     if transition in MASKED_CONTINUATION_MODES:
         # v2 separates a masked motion video's delivered-only bank from its
         # paired soundtrack's full raw target window, and obeys Generated
@@ -12605,6 +12656,99 @@ class MiniMaxH3ChainExternalVideo:
         return (external_context, status)
 
 
+class MiniMaxH3LipSyncOptions:
+    """Optional contextual song encoding and vocal-gate controls."""
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "preroll_seconds": ("FLOAT", {
+                    "default": 1.0, "min": 0.0, "max": 4.0,
+                    "step": 0.05, "round": 0.01,
+                    "display_name": "Audio context before scene",
+                    "tooltip": "Encode this much real song before the scene, "
+                               "then discard those leading latent ticks. This "
+                               "gives the kept first ticks their natural audio "
+                               "context. Set 0 for legacy hard-cut encoding."}),
+                "lookahead_seconds": ("FLOAT", {
+                    "default": 0.2, "min": 0.0, "max": 2.0,
+                    "step": 0.05, "round": 0.01,
+                    "display_name": "Audio context after scene",
+                    "tooltip": "Encode this much following song after the "
+                               "scene, then discard it. This prevents the last "
+                               "kept audio ticks from being encoded against an "
+                               "artificial hard end. Set 0 for legacy behavior."}),
+                "audio_denoise": ("FLOAT", {
+                    "default": 0.0, "min": 0.0, "max": 1.0,
+                    "step": 0.01, "round": 0.01,
+                    "display_name": "Voice-region denoise",
+                    "tooltip": "H3 denoise-mask value while the vocal is "
+                               "active. 0 freezes the exact song latent. This "
+                               "value applies to the complete song when no "
+                               "vocal stem is connected to Chain Context."}),
+                "gap_denoise": ("FLOAT", {
+                    "default": 0.15, "min": 0.0, "max": 1.0,
+                    "step": 0.01, "round": 0.01,
+                    "display_name": "Between-phrase denoise",
+                    "tooltip": "Denoise-mask value between detected vocal "
+                               "phrases. It is used only when an isolated vocal "
+                               "stem is connected to Chain Context."}),
+                "gate_hold_seconds": ("FLOAT", {
+                    "default": 0.2, "min": 0.0, "max": 2.0,
+                    "step": 0.05, "round": 0.01,
+                    "display_name": "Voice gate margin",
+                    "tooltip": "Keep the exact-song mask active for this "
+                               "margin around detected vocal ticks. A short "
+                               "fixed release is added after each phrase."}),
+            },
+            "optional": {
+                "voice": ("AUDIO", {
+                    "tooltip": "Optional isolated vocal stem aligned to the "
+                               "project source track. Connect this node's voice "
+                               "output to Chain Context. Its SHA-256 fingerprint "
+                               "is stored in Plan compatibility data."}),
+            },
+        }
+
+    RETURN_TYPES = (LIP_SYNC_OPTIONS_TYPE, "AUDIO", "STRING")
+    RETURN_NAMES = ("lip_sync_options", "voice", "status")
+    OUTPUT_TOOLTIPS = (
+        "Optional settings for Generation Profile. They are active only with "
+        "Lip-sync to source audio.",
+        "Optional unchanged vocal stem to connect to Chain Context's "
+        "lip_sync_voice input.",
+        "Resolved contextual encoding and vocal-gate recipe.",
+    )
+    FUNCTION = "build"
+    CATEGORY = "conditioning/minimax/contex_loop/policies"
+    DESCRIPTION = (
+        "Optional controls for Generation Profile's Lip-sync to source audio "
+        "mode. The source song remains exact; these settings change how its "
+        "latent is encoded and, with a vocal stem on Chain Context, how much "
+        "H3 may regenerate between phrases.")
+
+    def build(self, preroll_seconds=1.0, lookahead_seconds=0.2,
+              audio_denoise=0.0, gap_denoise=0.15,
+              gate_hold_seconds=0.2, voice=None):
+        options = _contract_masked_song_options(
+            preroll_seconds=preroll_seconds,
+            lookahead_seconds=lookahead_seconds,
+            audio_denoise=audio_denoise,
+            gap_denoise=gap_denoise,
+            gate_hold_seconds=gate_hold_seconds,
+            voice_fingerprint=(
+                _audio_fingerprint(voice) if voice is not None else ""),
+        )
+        return options, voice, (
+            "context %.2fs before / %.2fs after; voice %.2f; gaps %.2f; "
+            "gate margin %.2fs; vocal stem %s" % (
+                options["preroll_seconds"], options["lookahead_seconds"],
+                options["audio_denoise"], options["gap_denoise"],
+                options["gate_hold_seconds"],
+                "connected" if voice is not None else "not connected"))
+
+
 class MiniMaxH3GenerationProfile:
     """Normal-user generation intent expressed as two explicit profiles."""
 
@@ -12635,6 +12779,13 @@ class MiniMaxH3GenerationProfile:
                                "does not guide generation. No final audio "
                                "creates a silent assembled MP4."}),
             },
+            "optional": {
+                "lip_sync_options": (LIP_SYNC_OPTIONS_TYPE, {
+                    "tooltip": "Optional contextual song and vocal-gate "
+                               "settings. Connect MiniMax H3 Lip-Sync Options. "
+                               "They are stored only while Audio profile is "
+                               "Lip-sync to source audio."}),
+            },
         }
 
     RETURN_TYPES = (CHAIN_POLICY_TYPE, "STRING")
@@ -12653,7 +12804,7 @@ class MiniMaxH3GenerationProfile:
     )
 
     def build(self, scene_continuity="Visual continuity",
-              audio_profile="Generate audio"):
+              audio_profile="Generate audio", lip_sync_options=None):
         try:
             transition = GENERATION_SCENE_PROFILES[str(scene_continuity)]
         except KeyError as exc:
@@ -12667,15 +12818,20 @@ class MiniMaxH3GenerationProfile:
             raise ValueError(
                 "Unknown H3 audio profile %r." % audio_profile) from exc
         policy = _contract_chain_policy(
-            transition, final, source, continuity, lock)
+            transition, final, source, continuity, lock,
+            lip_sync_options=lip_sync_options)
         source_need = (
             "source timeline required"
             if _audio_policy_requires_source({
                 "audio_policy": policy["audio_policy"]})
             else "no source timeline required")
-        return policy, "%s; %s; %s; %df boundary" % (
+        option_status = (
+            "; contextual song options active"
+            if policy["audio_policy"].get("lip_sync_options") is not None
+            else "")
+        return policy, "%s; %s; %s; %df boundary%s" % (
             str(scene_continuity), str(audio_profile), source_need,
-            int(policy["audio_context_length"]))
+            int(policy["audio_context_length"]), option_status)
 
 
 class MiniMaxH3ChainPolicy:
@@ -15569,6 +15725,8 @@ class MiniMaxH3ChainCurrent:
         source_reference_enabled = _audio_policy_uses_source_reference(
             plan, shot)
         source_audio_locked = _audio_policy_locks_source_audio(plan, shot)
+        lip_sync_options = _resolved_lip_sync_options(plan, shot)
+        target_clip_start_seconds = 0.0
         if source_reference_enabled or source_audio_locked:
             external_lead = int(shot.get("external_context_frames", 0))
             if source_timeline is not None:
@@ -15577,33 +15735,79 @@ class MiniMaxH3ChainCurrent:
                     "H3 Chain Current Shot")
                 if index == 1 and external_lead > 0:
                     delivered = int(shot["delivered_frames"])
+                    lookahead_frames = (
+                        int(math.ceil(float(lip_sync_options[
+                            "lookahead_seconds"]) * FPS))
+                        if lip_sync_options is not None else 0)
+                    extent = int(_validate_source_timeline(
+                        source_timeline, require_runtime=True)["extent"][
+                            "frame_count"])
+                    extension_end = min(
+                        extent, delivered + lookahead_frames)
                     extension_audio = _source_timeline_scene_audio(
-                        source_timeline, 0, delivered)
+                        source_timeline, 0, extension_end)
                     target_audio_slice = _slice_audio_after_external_context(
                         extension_audio, state.get("previous_audio"),
-                        int(shot["raw_frames"]), external_lead,
+                        int(shot["raw_frames"]) + (
+                            extension_end - delivered), external_lead,
                         pad_silence=False)
                 else:
                     source_start = int(round(
                         float(shot["audio_start_seconds"]) * FPS))
                     source_end = source_start + int(shot["raw_frames"])
+                    context_start = source_start
+                    context_end = source_end
+                    if lip_sync_options is not None:
+                        context_start = max(0, source_start - int(math.ceil(
+                            float(lip_sync_options[
+                                "preroll_seconds"]) * FPS)))
+                        extent = int(_validate_source_timeline(
+                            source_timeline, require_runtime=True)["extent"][
+                                "frame_count"])
+                        context_end = min(
+                            extent, source_end + int(math.ceil(float(
+                                lip_sync_options["lookahead_seconds"]) * FPS)))
+                        target_clip_start_seconds = (
+                            source_start - context_start) / float(FPS)
                     target_audio_slice = _source_timeline_scene_audio(
-                        source_timeline, source_start, source_end)
+                        source_timeline, context_start, context_end)
                 alignment_status = "Source Timeline frame-exact"
             else:
                 _validate_source_audio_hash(
                     plan["compatibility"], source_audio,
                     "H3 Chain Current Shot")
                 if index == 1 and external_lead > 0:
+                    lookahead_frames = (
+                        int(math.ceil(float(lip_sync_options[
+                            "lookahead_seconds"]) * FPS))
+                        if lip_sync_options is not None else 0)
                     target_audio_slice = _slice_audio_after_external_context(
                         source_audio, state.get("previous_audio"),
-                        int(shot["raw_frames"]), external_lead,
+                        int(shot["raw_frames"]) + lookahead_frames,
+                        external_lead,
                         pad_silence=bool(plan["compatibility"].get(
                             "source_audio_silent_padding")))
                 else:
+                    target_start = float(shot["audio_start_seconds"])
+                    target_end = (
+                        target_start + float(shot["audio_duration_seconds"]))
+                    context_start = target_start
+                    context_end = target_end
+                    if lip_sync_options is not None:
+                        context_start = max(
+                            0.0, target_start - float(
+                                lip_sync_options["preroll_seconds"]))
+                        waveform, sample_rate = _validate_audio(
+                            source_audio, "H3 Chain Current Shot source audio")
+                        source_duration = (
+                            int(waveform.shape[-1]) / float(sample_rate))
+                        context_end = min(
+                            source_duration, target_end + float(
+                                lip_sync_options["lookahead_seconds"]))
+                        target_clip_start_seconds = target_start - context_start
                     target_audio_slice = _slice_audio(
-                        source_audio, shot["audio_start_seconds"],
-                        shot["audio_duration_seconds"],
+                        source_audio, context_start,
+                        context_end - context_start,
                         pad_silence=bool(plan["compatibility"].get(
                             "source_audio_silent_padding")))
             if source_audio_locked and target_audio_slice is None:
@@ -15659,8 +15863,13 @@ class MiniMaxH3ChainCurrent:
         dependency_state = dict(state)
         if source_audio_locked:
             dependency_state["current_source_audio_target"] = target_audio_slice
+            dependency_state[
+                "current_source_audio_target_clip_start_seconds"] = (
+                    target_clip_start_seconds)
         else:
             dependency_state.pop("current_source_audio_target", None)
+            dependency_state.pop(
+                "current_source_audio_target_clip_start_seconds", None)
         dependency_state["current_source_reference_dependency"] = (
             _canonical_source_reference_dependency(
                 plan, index, source_timeline, source_audio))
@@ -15947,6 +16156,12 @@ class MiniMaxH3ChainContext:
                                "Anchors registry is connected, its scene-"
                                "specific endpoint replaces this copied "
                                "predecessor pose regardless of this toggle."}),
+                "lip_sync_voice": ("AUDIO", {
+                    "tooltip": "Optional isolated vocal stem from MiniMax H3 "
+                               "Lip-Sync Options. Connect that node's voice "
+                               "output here; its companion options output goes "
+                               "to Generation Profile. The stem must align with "
+                               "the Project source track."}),
             }
         }
 
@@ -15985,9 +16200,10 @@ class MiniMaxH3ChainContext:
                    "Context, with optional non-linear visual-source scenes.")
 
     def apply(self, state, conditioning, vae, latent, audio_vae=None,
-              model=None, drift_sigmas=None, boundary_anchors=None,
+              model=None, drift_sigmas=None,
+              boundary_anchors=None,
               visual_cond_noise_aug=VISUAL_COND_NOISE_AUG_DEFAULT,
-              future_end_anchor=False):
+              future_end_anchor=False, lip_sync_voice=None):
         index = int(state["index"])
         plan = state["plan"]
         cfg = plan["compatibility"]
@@ -16005,8 +16221,41 @@ class MiniMaxH3ChainContext:
         if source_audio_locked:
             from .masked_context import apply_locked_source_audio_target
 
+            lip_sync_options = _resolved_lip_sync_options(cfg, shot)
+            expected_voice = str(
+                (lip_sync_options or {}).get("voice_fingerprint") or "")
+            if expected_voice and lip_sync_voice is None:
+                raise ValueError(
+                    "Lip-Sync Options was built with a vocal stem, but Chain "
+                    "Context's lip_sync_voice input is disconnected. Connect "
+                    "the options node's voice output.")
+            if lip_sync_voice is not None:
+                if lip_sync_options is None or not expected_voice:
+                    raise ValueError(
+                        "Chain Context received lip_sync_voice without its "
+                        "matching Lip-Sync Options policy. Route the stem "
+                        "through MiniMax H3 Lip-Sync Options and connect that "
+                        "node to Generation Profile.")
+                actual_voice = _audio_fingerprint(lip_sync_voice)
+                if actual_voice != expected_voice:
+                    raise ValueError(
+                        "Chain Context's lip_sync_voice does not match the "
+                        "vocal stem fingerprint stored by Lip-Sync Options.")
+            external_lead = (
+                int(shot.get("external_context_frames", 0))
+                if index == 1 else 0)
             target_latent = apply_locked_source_audio_target(
-                latent, audio_vae, state.get("current_source_audio_target"))
+                latent, audio_vae, state.get("current_source_audio_target"),
+                lip_sync_options=lip_sync_options,
+                voice=lip_sync_voice,
+                clip_start_seconds=float(state.get(
+                    "current_source_audio_target_clip_start_seconds", 0.0)),
+                voice_clip_start_seconds=(
+                    float(shot["audio_start_seconds"])
+                    - external_lead / float(FPS)),
+                force_active_voice_prefix_seconds=(
+                    external_lead / float(FPS)),
+            )
         explicit_future_anchor = (
             _boundary_anchor_for_state(
                 boundary_anchors, state, target_latent)
@@ -23756,6 +24005,7 @@ if (PromptServer is not None and web is not None and
 
 
 CHAIN_NODE_CLASS_MAPPINGS = {
+    "MiniMaxH3LipSyncOptions": MiniMaxH3LipSyncOptions,
     "MiniMaxH3GenerationProfile": MiniMaxH3GenerationProfile,
     "MiniMaxH3ChainPolicy": MiniMaxH3ChainPolicy,
     "MiniMaxH3AdvancedPolicy": MiniMaxH3AdvancedPolicy,
@@ -23816,6 +24066,7 @@ CHAIN_NODE_CLASS_MAPPINGS = {
 }
 
 CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
+    "MiniMaxH3LipSyncOptions": "MiniMax H3 Lip-Sync Options",
     "MiniMaxH3GenerationProfile": "MiniMax H3 Generation Profile",
     "MiniMaxH3ChainPolicy": "MiniMax H3 Manual Chain Policy (Legacy)",
     "MiniMaxH3AdvancedPolicy": "MiniMax H3 Advanced Policy Override",

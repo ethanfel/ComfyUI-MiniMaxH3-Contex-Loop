@@ -4,6 +4,14 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added optional **Lip-Sync Options** for Generation Profile's exact-source
+  audio mode. Scene audio can be encoded with discarded real-song pre-roll and
+  lookahead instead of artificial hard boundaries. An aligned isolated vocal
+  stem can drive a conservative 40 Hz voice gate so vocal regions remain exact
+  while instrumental gaps receive a configurable amount of denoising. The
+  options and stem fingerprint are stored in generation dependencies; leaving
+  the node disconnected preserves the previous hard-cut/full-freeze result.
+
 - Checkpoint Manager now adopts active checkpoints written before immutable
   revision sidecars were introduced. It recovers the original transaction id
   from the existing versioned MP4 and safetensors filenames, writes only the

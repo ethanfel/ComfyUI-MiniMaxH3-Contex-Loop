@@ -147,11 +147,12 @@ explains every maintained example and required asset.
 
 ```text
 Generation Profile → [Advanced] → [Legacy 0.4] → Plan
+Lip-Sync Options ───→ Generation Profile
 Source Timeline ───────────────────────────┘
                                              ↓
                            Preflight → Loop Start → Current Shot
                                                         ↓
-                                      H3 conditioning → sample → decode
+Lip-Sync Options voice ─────────────→ Chain Context → sample → decode
                                                         ↓
                                       trim → checkpoint → review → Loop End ─↺
 

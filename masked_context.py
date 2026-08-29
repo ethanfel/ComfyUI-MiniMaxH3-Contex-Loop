@@ -398,7 +398,11 @@ def _existing_mask_streams(latent, video, audio):
     return video_mask.float(), audio_mask.float()
 
 
-def apply_locked_source_audio_target(latent, audio_vae, source_audio):
+def apply_locked_source_audio_target(
+        latent, audio_vae, source_audio, *, lip_sync_options=None,
+        voice=None, clip_start_seconds=0.0,
+        voice_clip_start_seconds=None,
+        force_active_voice_prefix_seconds=0.0):
     """Place exact scene-local source audio in H3's protected target stream.
 
     Reuse the standalone master-audio implementation so Chain Policy receives
@@ -416,13 +420,26 @@ def apply_locked_source_audio_target(latent, audio_vae, source_audio):
             "target window. Keep Current Shot state connected to Chain Context.")
     from .master_audio_context import MiniMaxH3ContexMasterAudioMaskedAV
 
+    option_kwargs = {}
+    if lip_sync_options is not None:
+        option_kwargs = {
+            key: lip_sync_options[key]
+            for key in (
+                "preroll_seconds", "lookahead_seconds", "audio_denoise",
+                "gap_denoise", "gate_hold_seconds")
+        }
     out, prefix_frames, _clip_audio = (
         MiniMaxH3ContexMasterAudioMaskedAV().prepare(
             latent=latent,
             audio_vae=audio_vae,
             master_audio=source_audio,
-            clip_start_seconds=0.0,
+            clip_start_seconds=clip_start_seconds,
             context_length=0,
+            voice=voice,
+            voice_clip_start_seconds=voice_clip_start_seconds,
+            force_active_voice_prefix_seconds=(
+                force_active_voice_prefix_seconds),
+            **option_kwargs,
         ))
     if int(prefix_frames) != 0:
         raise RuntimeError(

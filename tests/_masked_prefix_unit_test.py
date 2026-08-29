@@ -1128,6 +1128,55 @@ def main():
     assert not torch.count_nonzero(
         locked_chain_video_mask[:, :, :prefix_video_steps])
     assert not torch.count_nonzero(locked_chain_audio_mask)
+    lip_voice = {
+        "waveform": torch.zeros((1, 1, 16 * 32000)),
+        "sample_rate": 32000,
+    }
+    lip_voice["waveform"][..., 7 * 32000:8 * 32000] = 1.0
+    lip_options = chain._contract_masked_song_options(
+        preroll_seconds=0.0,
+        lookahead_seconds=0.0,
+        audio_denoise=0.0,
+        gap_denoise=0.3,
+        gate_hold_seconds=0.0,
+        voice_fingerprint=chain._audio_fingerprint(lip_voice),
+    )
+    contextual_locked_policy = chain._contract_compose_chain_policy(
+        chain._contract_audio_policy(
+            "source", "off", "off", "locked", lip_options),
+        chain._contract_transition_policy("soft_av"),
+        audio_context_length=39)
+    contextual_locked_plan = chain._normalize_plan(
+        json.dumps({"shots": [
+            {"id": "one", "prompt": "first", "length": 192},
+            {"id": "voice_locked", "prompt": "second", "length": 192},
+        ]}),
+        "contextual_locked_source_audio_test", 64, 32, 39, "video", "head",
+        "disabled", "source_track", 39, 8.0, 8, 1, 18,
+        "model-stack-v1", 0, "audio_feathered_av",
+        contextual_locked_policy,
+    )
+    contextual_locked_state = {
+        **locked_state,
+        "plan": contextual_locked_plan,
+        "current_source_audio_target_clip_start_seconds": 0.0,
+    }
+    try:
+        chain.MiniMaxH3ChainContext().apply(
+            contextual_locked_state, conditioning, VideoVAE(), target,
+            LockedAudioVAE())
+    except ValueError as exc:
+        assert "lip_sync_voice input is disconnected" in str(exc)
+    else:
+        raise AssertionError("fingerprinted vocal stem was not required")
+    contextual_locked_result = chain.MiniMaxH3ChainContext().apply(
+        contextual_locked_state, conditioning, VideoVAE(), target,
+        LockedAudioVAE(), lip_sync_voice=lip_voice)
+    contextual_locked_audio_mask = contextual_locked_result[3][
+        "noise_mask"].unbind()[1]
+    assert torch.all(contextual_locked_audio_mask[..., 10] == 0.3)
+    assert not torch.count_nonzero(contextual_locked_audio_mask[..., 50])
+    assert torch.all(contextual_locked_audio_mask[..., 100] == 0.3)
     scene_locked_plan = chain._normalize_plan(
         json.dumps({"shots": [
             {"id": "one", "prompt": "first", "length": 192},

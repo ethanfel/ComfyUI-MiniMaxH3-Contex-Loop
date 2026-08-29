@@ -314,7 +314,8 @@ assert visual_aug_schema[1]["max"] == 1.0
 assert visual_aug_schema[1]["step"] == 0.001
 assert context_optional["future_end_anchor"][0] == "BOOLEAN"
 assert context_optional["future_end_anchor"][1]["default"] is False
-assert list(context_optional)[-1] == "future_end_anchor"
+assert list(context_optional)[-2:] == ["future_end_anchor", "lip_sync_voice"]
+assert context_optional["lip_sync_voice"][0] == "AUDIO"
 assert context_optional["boundary_anchors"][0] == chain.BOUNDARY_ANCHORS_TYPE
 
 # A precomputed scene endpoint is valid on scene 1 as well as continuation
