@@ -6,16 +6,16 @@ import {
     promptTextToLines,
     promptValueToText,
     sharedPrompt,
-} from "./h3_chain_plan_core.mjs?v=0.5.51";
+} from "./h3_chain_plan_core.mjs?v=0.5.52";
 import {
     buildPromptAssistantContext,
     makePromptAssistRequest,
-} from "./h3_prompt_assistant_core.mjs?v=0.5.51";
-import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.5.51";
+} from "./h3_prompt_assistant_core.mjs?v=0.5.52";
+import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.5.52";
 import {
     directOptimizerConfigurationError,
     makeDirectPromptOptimizeRequest,
-} from "./h3_prompt_optimizer_core.mjs?v=0.5.51";
+} from "./h3_prompt_optimizer_core.mjs?v=0.5.52";
 import {
     openPromptOptimizerSettings,
     promptOptimizerBackend,
@@ -27,7 +27,7 @@ import {
     promptRevisionLabel,
     promptRevisionNavigation,
     promptRevisionTree,
-} from "./h3_prompt_history_core.mjs?v=0.5.51";
+} from "./h3_prompt_history_core.mjs?v=0.5.52";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
@@ -35,7 +35,7 @@ import {
     replacePromptReferenceOccurrence,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.5.51";
+} from "./h3_reference_preview_core.mjs?v=0.5.52";
 import {
     PromptUndoHistory,
     RICH_PROMPT_GUIDES,
@@ -45,10 +45,13 @@ import {
     richGenerationMode,
     richGuideInstruction,
     tokenizeRichPrompt,
-} from "./h3_rich_prompt_editor_core.mjs?v=0.5.51";
-import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.5.51";
-import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.5.51";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.51";
+} from "./h3_rich_prompt_editor_core.mjs?v=0.5.52";
+import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.5.52";
+import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.5.52";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.52";
+import {
+    PROJECT_ASSET_CATALOG_CHANGED_EVENT,
+} from "./h3_project_asset_sync_core.mjs?v=0.5.52";
 
 const {publishCompanionScene, rebaseScenePrompt} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -1209,6 +1212,8 @@ function mount(node) {
 
     function renderEditorText(text, caret = null, editableSelection = null) {
         if (!state.editor) return;
+        const scrollTop = state.editor.scrollTop;
+        const scrollLeft = state.editor.scrollLeft;
         const source = String(text ?? "");
         if (!state.decorated) {
             state.editor.replaceChildren(document.createTextNode(source));
@@ -1220,6 +1225,8 @@ function mount(node) {
                     editableSelection.selectionEnd,
                 );
             } else if (caret != null) restoreCaret(state.editor, caret);
+            state.editor.scrollTop = scrollTop;
+            state.editor.scrollLeft = scrollLeft;
             return;
         }
         const parts = tokenizeRichPrompt(source, state.records);
@@ -1252,6 +1259,10 @@ function mount(node) {
                 editableSelection.selectionEnd,
             );
         } else if (caret != null) restoreCaret(state.editor, caret);
+        // Content decoration rebuilds the children and otherwise resets the
+        // editor viewport. Keep long prompts at the line the user was editing.
+        state.editor.scrollTop = scrollTop;
+        state.editor.scrollLeft = scrollLeft;
     }
 
     function saveEditorInput(event) {
@@ -1342,6 +1353,26 @@ function mount(node) {
         return state.referenceSyntax.get(referenceSyntaxKey(record)) ?? "native";
     }
 
+    function refreshReferenceState(prompt = editorPlainText(state.editor)) {
+        if (!state.plan?.shots?.length) {
+            state.records = [];
+            state.referenceMode = null;
+            return {wrapper:null, mode:null, records:[]};
+        }
+        const referenceData = availableReferenceRecords(
+            node, state.active + 1, {
+                includeInactive:true,
+                prompt:[
+                    sharedPrompt(state.plan).text.trim(),
+                    String(prompt ?? "").trim(),
+                ].filter(Boolean).join("\n\n"),
+            },
+        );
+        state.records = referenceData.records;
+        state.referenceMode = referenceData.mode;
+        return referenceData;
+    }
+
     function convertReferenceSyntax(record, mode) {
         state.referenceSyntax.set(referenceSyntaxKey(record), mode);
         const current = editorPlainText(state.editor);
@@ -1374,6 +1405,7 @@ function mount(node) {
     function renderReferenceTray() {
         const tray = state.refs;
         if (!tray) return;
+        refreshReferenceState(editorPlainText(state.editor));
         tray.replaceChildren();
         if (!state.records.length) {
             tray.append(element("div", "h3rp-ref-help", "No connected Tagged/Scheduled Ref2VA, core Ref2VA, or core I2V/FL2V references were found."));
@@ -1932,13 +1964,17 @@ function mount(node) {
         const applyPromptUndo = (direction) => {
             const text = state.promptUndo?.[direction]?.();
             if (text == null) return false;
+            const scrollTop = editor.scrollTop;
+            const scrollLeft = editor.scrollLeft;
             const caret = selectionTextOffset(editor);
             renderEditorText(text, Math.min(caret, text.length));
             shot.prompt = promptTextToLines(text);
             writePlan(direction === "undo" ? "Undo saved to Plan" : "Redo saved to Plan");
             scheduleHistoryDraft(shotId, text);
             state.schema?.refresh();
-            editor.focus();
+            editor.focus({preventScroll:true});
+            editor.scrollTop = scrollTop;
+            editor.scrollLeft = scrollLeft;
             return true;
         };
         editor.addEventListener("keydown", (event) => {
@@ -2107,6 +2143,26 @@ function mount(node) {
         }, 50);
     };
     api.addEventListener("executed", onPromptExecuted);
+    const onProjectAssetCatalogChanged = (event) => {
+        const changedProject = String(event?.detail?.project ?? "").trim();
+        const currentProject = planRunName();
+        if (changedProject && currentProject && changedProject !== currentProject) return;
+        if (!state.plan?.shots?.length || !state.editor) return;
+        const prompt = editorPlainText(state.editor);
+        const selection = document.activeElement === state.editor
+            ? editorSelectionOffsets(state.editor) : null;
+        refreshReferenceState(prompt);
+        renderEditorText(prompt, null, selection ? {
+            selectionStart:selection.start,
+            selectionEnd:selection.end,
+        } : null);
+        if (state.refs?.classList.contains("h3rp-open")) renderReferenceTray();
+        state.completion?.refresh();
+        state.schema?.refresh();
+    };
+    globalThis.addEventListener?.(
+        PROJECT_ASSET_CATALOG_CHANGED_EVENT, onProjectAssetCatalogChanged,
+    );
 
     const removed = node.onRemoved;
     node.onRemoved = function () {
@@ -2117,6 +2173,9 @@ function mount(node) {
         state.completion?.destroy();
         state.completion = null;
         api.removeEventListener("executed", onPromptExecuted);
+        globalThis.removeEventListener?.(
+            PROJECT_ASSET_CATALOG_CHANGED_EVENT, onProjectAssetCatalogChanged,
+        );
         delete node._h3PromptCompanionSetActiveScene;
         delete node._h3PromptCompanionSetScenePrompt;
         void flushHistoryDraft();

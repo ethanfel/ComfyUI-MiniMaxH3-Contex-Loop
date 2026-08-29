@@ -5,7 +5,10 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.5.51";
+} from "./h3_project_asset_editor_core.mjs?v=0.5.52";
+import {
+    publishProjectAssetCatalogChanged,
+} from "./h3_project_asset_sync_core.mjs?v=0.5.52";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -395,6 +398,7 @@ function mount(node) {
         runNameWidget.value = canonicalProject;
         runNameWidget.callback?.(canonicalProject);
         syncDownstreamPlan(node, canonicalProject);
+        publishProjectAssetCatalogChanged(node, state.catalog);
         node.graph?.setDirtyCanvas?.(true, true);
     }
     function allItems() {
