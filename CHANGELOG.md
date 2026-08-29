@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Checkpoint Manager can now delete an entire selected
+  `output/h3_chains/<run>` folder. It previews the file, folder, and byte
+  impact, requires both an explicit warning confirmation and the exact Run
+  name, then revalidates the folder snapshot immediately before deletion.
+  Original assets under `input/h3_projects/<run>` are deliberately kept.
+
 - Semantic pictures now accept bare `#tag` as an untimed Qwen-only visual;
   append `[time]` only when explicit approximate scene placement is wanted.
   Prompt completion, reference conversion, rich chips, preflight, native

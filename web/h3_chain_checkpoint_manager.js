@@ -10,18 +10,18 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.6.74";
+} from "./h3_checkpoint_manager_core.mjs?v=0.6.75";
 import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.6.74";
-import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.74";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.74";
+} from "./h3_chain_plan_core.mjs?v=0.6.75";
+import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.75";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.75";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.74";
+} from "./h3_plan_restore_core.mjs?v=0.6.75";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -166,6 +166,7 @@ function injectStyles() {
       .h3cm-root button:hover,.h3cm-root button:focus-visible { border-color:var(--h3cm-accent); outline:none; }
       .h3cm-root button:disabled { cursor:not-allowed; opacity:.45; }
       .h3cm-run-select { flex:1; min-width:0; padding:5px 7px; }
+      .h3cm-run-delete { white-space:nowrap; color:var(--h3cm-danger) !important; }
       .h3cm-scenes { flex:0 0 auto; overflow:auto; padding-bottom:2px; }
       .h3cm-chapter-tabs { flex:0 0 auto; overflow:auto; padding:2px 0; }
       .h3cm-chapter-tab { white-space:nowrap; border-radius:999px !important; }
@@ -276,7 +277,14 @@ function mount(node) {
     const runSelect = element("select", "h3cm-run-select");
     const refresh = button("Refresh", "Rescan saved runs and checkpoint revisions", () => void refreshRuns());
     const open = button("Open folder", "Open the selected run folder on the ComfyUI host", () => void openFolder());
-    runRow.append(runSelect, refresh, open);
+    const deleteRun = button(
+        "Delete run folder",
+        "Permanently delete the selected output/h3_chains run folder after a content preview and two confirmations. Original input project assets are kept.",
+        () => void deleteRunFolder(),
+        "h3cm-run-delete",
+    );
+    deleteRun.disabled = true;
+    runRow.append(runSelect, refresh, open, deleteRun);
     const chapterTabs = element("div", "h3cm-chapter-tabs");
     const scenes = element("div", "h3cm-scenes");
     const main = element("div", "h3cm-main");
@@ -350,6 +358,7 @@ function mount(node) {
         runSelect.disabled = state.busy;
         refresh.disabled = state.busy;
         open.disabled = state.busy || !state.runName;
+        deleteRun.disabled = state.busy || !state.runName;
         load.disabled = state.busy || Boolean(state.attribution) || !canLoadSelected();
         activate.disabled = state.busy || Boolean(state.attribution) || !canActivateSelected();
         remove.disabled = state.busy || Boolean(state.attribution) || !state.deletion?.allowed;
@@ -942,6 +951,70 @@ function mount(node) {
         } catch (error) {
             status.className = "h3cm-status h3cm-error";
             status.textContent = error.message;
+        } finally {
+            setBusy(false);
+        }
+    }
+
+    async function deleteRunFolder() {
+        const runName = state.runName;
+        if (!runName || state.busy) return;
+        let plan;
+        setBusy(true, "Inspecting the complete run folder…");
+        try {
+            plan = await jsonRequest(
+                "/minimax_h3_context_loop/run-folder/delete-preview", {
+                    method:"POST", headers:{"Content-Type":"application/json"},
+                    body:JSON.stringify({run_name:runName}),
+                });
+        } catch (error) {
+            status.className = "h3cm-status h3cm-error";
+            status.textContent = error.message;
+            return;
+        } finally {
+            setBusy(false);
+        }
+        if (state.runName !== runName) return;
+        const confirmed = window.confirm(
+            `Delete the complete run folder "${runName}"?\n\n` +
+            `${plan.file_count} files · ${plan.directory_count} folders · ${formatCheckpointBytes(plan.reclaimed_bytes)}\n\n` +
+            `This permanently removes ${plan.folder}, including checkpoints, revisions, generated segments and audio, prompt history, archived workflows, reference backups, previews, and assembled exports.\n\n` +
+            "Original input project assets are kept. A second validation follows. This cannot be undone.",
+        );
+        if (!confirmed) return;
+        const typed = window.prompt(
+            `Second validation: type the exact Run name to delete ${plan.folder}:\n\n${runName}`,
+            "",
+        );
+        if (typed === null) return;
+        if (typed !== runName) {
+            status.className = "h3cm-status h3cm-error";
+            status.textContent = "Run folder not deleted: the second validation did not exactly match the Run name.";
+            return;
+        }
+        setBusy(true, "Deleting the complete run folder…");
+        try {
+            const payload = await jsonRequest(
+                "/minimax_h3_context_loop/run-folder/delete", {
+                    method:"POST", headers:{"Content-Type":"application/json"},
+                    body:JSON.stringify({run_name:runName,
+                        snapshot:plan.snapshot, confirmation:typed}),
+                });
+            state.runName = "";
+            state.scene = null;
+            state.revision = "";
+            state.selected = null;
+            state.deletion = null;
+            state.payload = null;
+            persistSelection();
+            await refreshRuns();
+            status.className = "h3cm-status";
+            status.textContent = `${payload.message} Reclaimed ${formatCheckpointBytes(payload.reclaimed_bytes)}. Original input project assets were kept.`;
+        } catch (error) {
+            status.className = "h3cm-status h3cm-error";
+            status.textContent = error.payload?.preview
+                ? `${error.message} Click Delete run folder to review it again.`
+                : error.message;
         } finally {
             setBusy(false);
         }
