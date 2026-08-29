@@ -525,6 +525,71 @@ async def check():
         assert not alias_path.exists()
         assert not any(path.exists() for path in candidate_files)
 
+        # Complete run-folder deletion has its own inventory snapshot and an
+        # exact-name second validation. It never removes the original project
+        # assets stored outside output/h3_chains.
+        folder_delete = pathlib.Path(
+            temporary) / "h3_chains" / "folder_delete"
+        (folder_delete / "nested").mkdir(parents=True)
+        (folder_delete / "plan.json").write_bytes(b"plan")
+        (folder_delete / "nested" / "clip.bin").write_bytes(b"frames")
+        input_asset = pathlib.Path(
+            temporary) / "h3_projects" / "folder_delete" / "original.png"
+        input_asset.parent.mkdir(parents=True)
+        input_asset.write_bytes(b"original project asset")
+
+        # Exercise the worker directly: like the listing worker above, the
+        # route's asyncio.to_thread wakeup depends on ComfyUI's real loop.
+        folder_preview = chain._run_folder_deletion_preview("folder_delete")
+        assert folder_preview["folder"] == (
+            "output/h3_chains/folder_delete")
+        assert folder_preview["file_count"] == 2
+        assert folder_preview["directory_count"] == 2
+        assert folder_preview["reclaimed_bytes"] == 10
+        assert len(folder_preview["snapshot"]) == 64
+        assert folder_preview["input_project_assets_kept"]
+
+        try:
+            chain._delete_run_folder(
+                "folder_delete", folder_preview["snapshot"],
+                "folder-delete")
+        except ValueError as exc:
+            assert "exactly match" in str(exc)
+        else:
+            raise AssertionError("incorrect folder confirmation was accepted")
+        assert folder_delete.is_dir()
+
+        (folder_delete / "changed-after-preview.txt").write_text(
+            "new", encoding="utf-8")
+        try:
+            chain._delete_run_folder(
+                "folder_delete", folder_preview["snapshot"],
+                "folder_delete")
+        except chain._RunFolderDeleteChanged as exc:
+            assert "changed" in str(exc)
+            assert exc.preview["file_count"] == 3
+        else:
+            raise AssertionError("stale folder preview was accepted")
+        assert folder_delete.is_dir()
+
+        current_folder_preview = chain._run_folder_deletion_preview(
+            "folder_delete")
+        folder_deleted = chain._delete_run_folder(
+            "folder_delete", current_folder_preview["snapshot"],
+            "folder_delete")
+        assert folder_deleted["deleted_files"] == 3
+        assert folder_deleted["deleted_directories"] == 2
+        assert folder_deleted["input_project_assets_kept"]
+        assert not folder_delete.exists()
+        assert input_asset.is_file()
+
+        try:
+            chain._run_folder_deletion_preview("../folder_delete")
+        except ValueError as exc:
+            assert "exact saved run name" in str(exc)
+        else:
+            raise AssertionError("unsafe complete-folder target was accepted")
+
 if __name__ == "__main__":
     asyncio.run(check())
     print("H3 checkpoint revisions: discovery, prefix restore, and guarded deletion pass")

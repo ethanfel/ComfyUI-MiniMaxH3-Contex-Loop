@@ -4,6 +4,16 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Checkpoint Manager can delete an entire selected
+  `output/h3_chains/<run>` folder after showing its file, folder, and byte
+  impact. The action requires both a warning confirmation and the exact Run
+  name, then revalidates the folder snapshot immediately before deletion.
+  Original assets under `input/h3_projects/<run>` are deliberately kept.
+
+- Restored Checkpoint Manager's missing `selectedChapterRange()` helper. The
+  frontend no longer throws during its initial busy-state calculation, so
+  saved runs and checkpoint choices populate normally again.
+
 - Checkpoint Manager now adopts active checkpoints written before immutable
   revision sidecars were introduced. It recovers the original transaction id
   from the existing versioned MP4 and safetensors filenames, writes only the

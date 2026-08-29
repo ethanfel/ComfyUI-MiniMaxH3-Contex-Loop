@@ -6883,6 +6883,160 @@ def _open_run_output_directory(run_name: Any) -> dict[str, Any]:
     }
 
 
+class _RunFolderDeleteChanged(ValueError):
+    """The selected run changed after its destructive preview."""
+
+    def __init__(self, preview: dict[str, Any]):
+        super().__init__(
+            "The run folder changed after the deletion preview. Review its "
+            "current contents and confirm again.")
+        self.preview = preview
+
+
+def _run_folder_delete_target(run_name: Any) -> tuple[str, str, str]:
+    requested = str(run_name or "").strip()
+    normalized = _safe_name(requested, "")
+    if not normalized:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    if requested != normalized:
+        raise ValueError(
+            "Complete-folder deletion requires the exact saved run name.")
+    output_root = os.path.realpath(_output_root())
+    chains_root = os.path.realpath(os.path.join(output_root, "h3_chains"))
+    try:
+        chains_inside_output = os.path.commonpath(
+            (output_root, chains_root)) == output_root
+    except ValueError:
+        chains_inside_output = False
+    if not chains_inside_output:
+        raise ValueError(
+            "The H3 chains folder resolves outside the ComfyUI output folder.")
+    path = os.path.abspath(os.path.join(chains_root, normalized))
+    try:
+        inside = (os.path.commonpath((chains_root, path)) == chains_root and
+                  os.path.dirname(path) == chains_root)
+    except ValueError:
+        inside = False
+    if not inside or path == chains_root:
+        raise ValueError("H3 run deletion target escapes output/h3_chains.")
+    if os.path.islink(path):
+        raise ValueError("Refusing to delete a symlinked H3 run folder.")
+    resolved = os.path.realpath(path)
+    if resolved != path:
+        raise ValueError(
+            "Refusing to delete an indirectly linked H3 run folder.")
+    if not os.path.isdir(path):
+        raise FileNotFoundError("H3 run %r does not exist." % normalized)
+    if os.path.ismount(path):
+        raise ValueError("Refusing to delete a mounted H3 run folder.")
+    return path, chains_root, normalized
+
+
+def _run_folder_deletion_preview(run_name: Any) -> dict[str, Any]:
+    path, _chains_root, normalized = _run_folder_delete_target(run_name)
+    entries = []
+    file_count = 0
+    directory_count = 1
+    total_bytes = 0
+
+    def add_entry(entry_path: str, kind: str) -> None:
+        nonlocal file_count, directory_count, total_bytes
+        stat = os.lstat(entry_path)
+        relative = os.path.relpath(entry_path, path).replace(os.sep, "/")
+        entries.append({
+            "path": relative,
+            "kind": kind,
+            "size": int(stat.st_size),
+            "mtime_ns": int(stat.st_mtime_ns),
+            "mode": int(stat.st_mode),
+        })
+        if kind == "directory":
+            directory_count += 1
+        else:
+            file_count += 1
+            total_bytes += int(stat.st_size)
+
+    root_stat = os.lstat(path)
+    entries.append({
+        "path": ".",
+        "kind": "directory",
+        "size": int(root_stat.st_size),
+        "mtime_ns": int(root_stat.st_mtime_ns),
+        "mode": int(root_stat.st_mode),
+    })
+    for current, directories, filenames in os.walk(
+            path, topdown=True, followlinks=False):
+        directories.sort()
+        filenames.sort()
+        traversable = []
+        for name in directories:
+            child = os.path.join(current, name)
+            if os.path.islink(child):
+                add_entry(child, "symlink")
+                continue
+            if os.path.ismount(child):
+                raise ValueError(
+                    "Refusing to delete run folder containing mounted path %s."
+                    % os.path.relpath(child, path))
+            add_entry(child, "directory")
+            traversable.append(name)
+        directories[:] = traversable
+        for name in filenames:
+            child = os.path.join(current, name)
+            add_entry(child, "symlink" if os.path.islink(child) else "file")
+
+    snapshot = _fingerprint({
+        "version": 1,
+        "run_name": normalized,
+        "entries": entries,
+    })
+    return {
+        "ok": True,
+        "run_name": normalized,
+        "folder": "output/h3_chains/%s" % normalized,
+        "file_count": file_count,
+        "directory_count": directory_count,
+        "reclaimed_bytes": total_bytes,
+        "snapshot": snapshot,
+        "input_project_assets_kept": True,
+    }
+
+
+def _delete_run_folder(run_name: Any, snapshot: Any,
+                       confirmation: Any) -> dict[str, Any]:
+    path, chains_root, normalized = _run_folder_delete_target(run_name)
+    if str(confirmation or "") != normalized:
+        raise ValueError(
+            "Second confirmation must exactly match the selected run name.")
+    expected = str(snapshot or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
+        raise ValueError(
+            "Complete-folder deletion requires a current preview snapshot.")
+    with checkpoint_run_lock(_output_root(), normalized):
+        preview = _run_folder_deletion_preview(normalized)
+        if not secrets.compare_digest(expected, preview["snapshot"]):
+            raise _RunFolderDeleteChanged(preview)
+        staged = os.path.join(
+            chains_root, ".%s.delete.%s" % (normalized, uuid.uuid4().hex))
+        os.replace(path, staged)
+        try:
+            shutil.rmtree(staged)
+        except Exception:
+            if os.path.isdir(staged) and not os.path.exists(path):
+                os.replace(staged, path)
+            raise
+    return {
+        "ok": True,
+        "run_name": normalized,
+        "deleted_folder": preview["folder"],
+        "deleted_files": preview["file_count"],
+        "deleted_directories": preview["directory_count"],
+        "reclaimed_bytes": preview["reclaimed_bytes"],
+        "input_project_assets_kept": True,
+        "message": "Deleted the complete H3 run folder %s." % normalized,
+    }
+
+
 def _relative_output_path(path: str) -> str:
     return os.path.relpath(os.path.abspath(path), _output_root())
 
@@ -21626,6 +21780,56 @@ async def _open_run_folder(request):
     return web.json_response(payload)
 
 
+async def _preview_run_folder_deletion(request):
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response(
+            {"error": "Complete run-folder deletion preview requires JSON."},
+            status=400)
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "Complete run-folder deletion preview requires a JSON object."},
+            status=400)
+    try:
+        payload = await asyncio.to_thread(
+            _run_folder_deletion_preview, body.get("run_name"))
+    except FileNotFoundError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    except (OSError, TypeError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    return web.json_response(payload)
+
+
+async def _delete_complete_run_folder(request):
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response(
+            {"error": "Complete run-folder deletion requires JSON."},
+            status=400)
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "Complete run-folder deletion requires a JSON object."},
+            status=400)
+    try:
+        payload = await asyncio.to_thread(
+            _delete_run_folder, body.get("run_name"), body.get("snapshot"),
+            body.get("confirmation"))
+    except _RunFolderDeleteChanged as exc:
+        return web.json_response(
+            {"error": str(exc), "preview": exc.preview}, status=409)
+    except FileNotFoundError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    except (TypeError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+    except OSError as exc:
+        return web.json_response(
+            {"error": "Could not delete the complete H3 run folder: %s" % exc},
+            status=500)
+    return web.json_response(payload)
+
+
 async def _get_prompt_history(request):
     run_name = request.query.get("run_name", "")
     scene_id = request.query.get("scene_id", "")
@@ -22600,6 +22804,12 @@ if (PromptServer is not None and web is not None and
             _delete_checkpoint_revision)
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/open-run-folder")(_open_run_folder)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/run-folder/delete-preview")(
+            _preview_run_folder_deletion)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/run-folder/delete")(
+            _delete_complete_run_folder)
     PromptServer.instance.routes.get(
         "/minimax_h3_context_loop/prompt-history")(_get_prompt_history)
     PromptServer.instance.routes.post(
