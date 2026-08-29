@@ -151,5 +151,7 @@ assert.doesNotMatch(source, /All folders/);
 assert.doesNotMatch(source, /const folders = el\("div", "h3pa-folders"\)/);
 assert.match(source, /h3pa-action-primary/);
 assert.match(source, /h3pa-action-manage/);
+assert.match(source, /publishProjectAssetCatalogChanged/);
+assert.match(source, /publishProjectAssetCatalogChanged\(node, state\.catalog\)/);
 
 console.log("H3 Project Asset Carousel: metadata slots, binding, sources, lazy media, editing, and cleanup pass");

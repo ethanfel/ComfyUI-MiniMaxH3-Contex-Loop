@@ -180,5 +180,13 @@ assert.match(source, /mutateHistoryRevision\(\s*"delete"/);
 assert.match(source, /parent → child progression/);
 assert.match(source, /Delete unexecuted leaf/);
 assert.match(source, /serialize:false/);
+assert.match(source, /PROJECT_ASSET_CATALOG_CHANGED_EVENT/);
+assert.match(source, /function refreshReferenceState/);
+assert.match(source, /refreshReferenceState\(editorPlainText\(state\.editor\)\)/);
+assert.match(source, /onProjectAssetCatalogChanged/);
+assert.match(source, /removeEventListener\?\.\(\s*PROJECT_ASSET_CATALOG_CHANGED_EVENT/);
+assert.match(source, /const scrollTop = state\.editor\.scrollTop/);
+assert.match(source, /state\.editor\.scrollTop = scrollTop/);
+assert.match(source, /editor\.focus\(\{preventScroll:true\}\)/);
 
 console.log("H3 Rich Scene Prompt Editor: tokens, guides, previews, optimizer, and history pass");

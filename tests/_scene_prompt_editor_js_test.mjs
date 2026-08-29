@@ -150,5 +150,14 @@ assert.match(source, /Loading prompt versions/);
 assert.match(source, /runName === state\.lastRunName/);
 assert.match(source, /grid-template-columns:minmax\(0,1fr\) auto minmax\(0,1fr\)/);
 assert.match(source, /footer\.append\(identity, historyHost, status\)/);
+assert.match(source, /PROJECT_ASSET_CATALOG_CHANGED_EVENT/);
+assert.match(source, /function refreshReferenceState/);
+assert.match(source, /refreshReferenceState\(next\)/);
+assert.match(source, /const referenceData = refreshReferenceState\(activePromptText\(\)\)/);
+assert.match(source, /onProjectAssetCatalogChanged/);
+assert.match(source, /removeEventListener\?\.\(\s*PROJECT_ASSET_CATALOG_CHANGED_EVENT/);
+assert.match(source, /const scrollTop = state\.richEditor\.scrollTop/);
+assert.match(source, /state\.richEditor\.scrollTop = scrollTop/);
+assert.match(source, /target\.focus\(\{preventScroll:true\}\)/);
 
 console.log("H3 Scene Prompt companion: Plan synchronization and controls pass");
