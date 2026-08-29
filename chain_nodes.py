@@ -133,6 +133,7 @@ from .contracts_v05 import (
 from .checkpoint_manager import (
     CheckpointDeleteBlocked,
     CheckpointGraphManager,
+    checkpoint_revision_token,
     checkpoint_run_lock,
 )
 
@@ -21503,7 +21504,7 @@ def _saved_checkpoint_listing(
                 item = {
                     "scene": index,
                     "scene_id": str(segment.get("id") or "clip_%04d" % index),
-                    "revision": str(segment.get("revision") or ""),
+                    "revision": checkpoint_revision_token(index, segment),
                     "resume_scene": index + 1,
                     "ready": ready,
                     "raw_frames": int(segment.get("raw_frames", 0)),

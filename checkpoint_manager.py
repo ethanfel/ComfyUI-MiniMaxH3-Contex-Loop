@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import threading
@@ -31,6 +32,7 @@ _ARTIFACT_KINDS = {
 }
 _RUN_LOCKS: dict[tuple[str, str], threading.RLock] = {}
 _RUN_LOCKS_GUARD = threading.Lock()
+_LOG = logging.getLogger("minimax_h3_context_loop.checkpoints")
 
 
 def _canonical_json(value: Any) -> str:
@@ -54,6 +56,36 @@ def checkpoint_run_lock(output_root: str, run_name: Any) -> threading.RLock:
     key = (root, run)
     with _RUN_LOCKS_GUARD:
         return _RUN_LOCKS.setdefault(key, threading.RLock())
+
+
+def checkpoint_revision_token(scene: Any, segment: Any) -> str:
+    """Return the immutable revision id used by current and legacy saves.
+
+    Builds before revision sidecars stored the transaction id only in the
+    versioned MP4 and safetensors filenames. Both artifacts were committed by
+    the same transaction, so a matching filename token is the original
+    revision identity rather than a newly invented one.
+    """
+    if not isinstance(segment, dict):
+        return ""
+    try:
+        index = int(scene)
+    except (TypeError, ValueError):
+        return ""
+    stored = str(segment.get("revision") or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{32}", stored):
+        return stored
+    tokens = set()
+    patterns = {
+        "segment": r"clip_%04d\.([0-9a-f]{32})\.mp4" % index,
+        "checkpoint": r"clip_%04d\.([0-9a-f]{32})\.safetensors" % index,
+    }
+    for key, pattern in patterns.items():
+        name = os.path.basename(str(segment.get(key) or "")).lower()
+        match = re.fullmatch(pattern, name)
+        if match is not None:
+            tokens.add(match.group(1))
+    return next(iter(tokens)) if len(tokens) == 1 else ""
 
 
 class CheckpointDeleteBlocked(ValueError):
@@ -194,6 +226,82 @@ class CheckpointGraphManager:
             audio_context = 0
         return continuation, max(0, context), max(0, audio_context)
 
+    def _adopt_legacy_active_revisions(
+            self, checkpoint_dir: str, run: str) -> int:
+        """Create the small revision sidecars omitted by pre-manager saves.
+
+        Existing video, prompt, audio, and safetensors artifacts remain in
+        place. The canonical ``clip_NNNN.json`` pointer is also left byte-for-
+        byte unchanged so adopting an old run is non-destructive.
+        """
+        if not os.path.isdir(checkpoint_dir):
+            return 0
+        active: dict[int, tuple[str, dict[str, Any], str]] = {}
+        for filename in sorted(os.listdir(checkpoint_dir)):
+            match = _ACTIVE.fullmatch(filename)
+            if match is None:
+                continue
+            path = os.path.realpath(os.path.join(checkpoint_dir, filename))
+            try:
+                metadata = self._read_json(path)
+                segment = metadata.get("segment")
+                scene = int(match.group(1))
+                if (not isinstance(segment, dict) or
+                        int(segment.get("index", -1)) != scene or
+                        _safe_name(metadata.get("run_name") or run) != run):
+                    continue
+                revision = checkpoint_revision_token(scene, segment)
+                if revision:
+                    active[scene] = (revision, metadata, path)
+            except (OSError, TypeError, ValueError, json.JSONDecodeError,
+                    AttributeError):
+                continue
+
+        adopted = 0
+        for scene in sorted(active):
+            revision, metadata, pointer_path = active[scene]
+            sidecar = os.path.realpath(os.path.join(
+                checkpoint_dir, "clip_%04d.%s.json" % (scene, revision)))
+            if os.path.isfile(sidecar):
+                continue
+            segment = dict(metadata["segment"])
+            segment.update({
+                "revision": revision,
+                "revision_metadata": os.path.relpath(sidecar, self.output_root),
+            })
+            predecessor = active.get(scene - 1)
+            if predecessor is not None and not segment.get(
+                    "predecessor_revision"):
+                predecessor_revision, predecessor_metadata, _pointer = predecessor
+                predecessor_segment = predecessor_metadata.get("segment")
+                segment["predecessor_revision"] = predecessor_revision
+                if isinstance(predecessor_segment, dict):
+                    predecessor_hash = str(
+                        predecessor_segment.get("checkpoint_sha256") or "")
+                    if predecessor_hash:
+                        segment["predecessor_checkpoint_sha256"] = predecessor_hash
+                    segment.setdefault(
+                        "branch_id", str(predecessor_segment.get("branch_id") or
+                                         predecessor_revision))
+            snapshot = dict(metadata)
+            snapshot["segment"] = segment
+            snapshot.setdefault(
+                "created_at", self._created_at(metadata, pointer_path))
+            snapshot["legacy_adoption"] = {
+                "version": 1,
+                "source": "active_pointer",
+                "source_metadata": os.path.relpath(
+                    pointer_path, self.output_root),
+            }
+            self._atomic_json(sidecar, snapshot)
+            adopted += 1
+        if adopted:
+            _LOG.info(
+                "H3 Checkpoint Manager adopted %d legacy active revision%s for "
+                "run %s without copying media or latent files.",
+                adopted, "" if adopted == 1 else "s", run)
+        return adopted
+
     def _active_revisions(self, checkpoint_dir: str) -> dict[int, str]:
         active: dict[int, str] = {}
         if not os.path.isdir(checkpoint_dir):
@@ -210,8 +318,8 @@ class CheckpointGraphManager:
                 scene = int(match.group(1))
                 if int(segment.get("index", -1)) != scene:
                     continue
-                revision = str(segment.get("revision") or "").lower()
-                if re.fullmatch(r"[0-9a-f]{32}", revision):
+                revision = checkpoint_revision_token(scene, segment)
+                if revision:
                     active[scene] = revision
             except (OSError, TypeError, ValueError, json.JSONDecodeError,
                     AttributeError):
@@ -286,6 +394,7 @@ class CheckpointGraphManager:
         checkpoint_dir = os.path.join(run_dir, "checkpoints")
         review_dir = os.path.join(run_dir, "reviews")
         chapter_starts = self._chapter_starts(run_dir)
+        self._adopt_legacy_active_revisions(checkpoint_dir, run)
         active = self._active_revisions(checkpoint_dir)
         records: dict[tuple[int, str], dict[str, Any]] = {}
         if os.path.isdir(checkpoint_dir):
