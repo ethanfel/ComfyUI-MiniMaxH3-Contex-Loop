@@ -201,6 +201,15 @@ export function studioTimelineScrollLeftForAnchor(
     );
 }
 
+export function studioTimelinePixelAtSecond(
+    seconds, pixelsPerSecond, contentWidth,
+) {
+    const position = Math.max(0, Number(seconds) || 0);
+    const scale = Math.max(0, Number(pixelsPerSecond) || 0);
+    const width = Math.max(0, Number(contentWidth) || 0);
+    return Math.max(0, Math.min(width, position * scale));
+}
+
 export function studioEditorialSceneStartSeconds(segments, sceneIndex) {
     const wanted = Number(sceneIndex);
     const segment = (Array.isArray(segments) ? segments : []).find(

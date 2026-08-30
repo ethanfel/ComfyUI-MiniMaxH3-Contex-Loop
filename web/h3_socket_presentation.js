@@ -10,7 +10,7 @@ import {
     nodeType,
     policyPlanConsumers,
     presentationForNode,
-} from "./h3_socket_presentation_core.mjs?v=0.5.55";
+} from "./h3_socket_presentation_core.mjs?v=0.5.56";
 
 const EXTENSION = "minimax_h3_context_loop.socket_presentation";
 const WATCHED_POLICY_NODES = new Set([
