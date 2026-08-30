@@ -4,6 +4,14 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Chain Context now transparently delegates compatible Guide scenes to
+  seitanism's installed **H3 Motion Context** node. Existing workflows and
+  sockets do not change. The adapter preserves Loop keyframe arbitration,
+  visual-condition metadata, and exact latent-audio placement; Latent Guide,
+  audio-only or longer-audio continuity, future anchors, and legacy ComfyUI
+  remain on the internal compatibility engine until upstream exposes those
+  capabilities.
+
 - Fixed the bundled Tagged Source Audio workflow's `source_timeline` path.
   Tagged Audio now receives the same full Load Audio track as Source Timeline,
   derives its aligned current-scene slice internally, and returns the complete

@@ -45,9 +45,21 @@ patch ownership is rebuilt cleanly.
 
 ## H3 Motion Context copies
 
-This pack and NikoDemon80's upstream pack use distinct node IDs and may coexist.
-Compatible patch copies share ownership markers; the second copy normally
-stands down.
+This pack no longer registers the historical public Motion Context ids, so
+NikoDemon80's original pack or seitanism's maintained MultiRef pack may coexist
+without a node-id collision. When seitanism's registered
+`MiniMaxH3MotionContext` is present on native-guide ComfyUI, Chain Context calls
+it for compatible Guide scenes while retaining the same Chain node UI and
+workflow contract.
+
+Loop-only capabilities currently remain internal: direct saved-video-latent
+Guide reuse, audio-only continuation, a timeline-audio window longer than the
+visual Guide, future end anchors, and the guarded pre-native-core fallback.
+The adapter also resolves carried-head keyframe collisions and restores exact
+latent-audio placement after the upstream call.
+
+Compatible legacy patch copies share ownership markers; the second copy
+normally stands down.
 
 If an older compatible copy owns the process first, wire **MiniMax H3 Patch
 Priority** before Contex Loop Context. It can replace only a recognized sibling
