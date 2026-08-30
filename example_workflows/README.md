@@ -383,10 +383,11 @@ the sampler on the unprepared conditioner latent.
 - [`Ref2V Studio Tagged Source Audio - MiniMax H3.json`](<Ref2V Studio Tagged Source Audio - MiniMax H3.json>)
   derives from Studio Tagged and registers Load Audio once with Source
   Timeline. The descriptor feeds Plan Studio preflight, Loop Start, recovery,
-  and assembly through saved state. Current Shot's scene-local slice feeds the
-  `@audio_1` Tagged Audio Ref with `align_audio_reference` enabled; its
-  downstream fingerprint is deliberately not returned to Plan, avoiding a
-  cycle while structured dependencies retain exact PCM provenance.
+  and assembly through saved state. The same full Load Audio track feeds the
+  `@audio_1` Tagged Audio Ref in `source_timeline` mode; that node derives the
+  exact current-scene slice internally with H3-grid alignment enabled. Because
+  the registry stays upstream of Current Shot, its complete picture-and-audio
+  fingerprint safely returns to Plan without an execution cycle.
 - [`Ref2V Sequential Motion - EXPERIMENTAL - MiniMax H3.json`](<Ref2V Sequential Motion - EXPERIMENTAL - MiniMax H3.json>)
   adds one long video with embedded audio as `@motion` + `@motion_audio` and
   predates the dedicated Tagged Motion Ref. For new motion-transfer workflows,

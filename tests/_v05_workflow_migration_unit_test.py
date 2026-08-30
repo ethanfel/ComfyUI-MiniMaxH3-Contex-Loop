@@ -26,6 +26,16 @@ def input_names(node):
     return [item["name"] for item in node.get("inputs", [])]
 
 
+def socket(items, name):
+    return next(item for item in items if item.get("name") == name)
+
+
+def origin_for_input(workflow, input_socket):
+    link = next(item for item in workflow["links"]
+                if item[0] == input_socket["link"])
+    return next(item for item in workflow["nodes"] if item["id"] == link[1])
+
+
 def assert_original_names_first(workflow):
     for item in workflow["nodes"]:
         title = item.get("title")
@@ -86,6 +96,60 @@ def main():
     stable_demo = copy.deepcopy(source_demo)
     migration.migrate(source_demo, migration.SOURCE_AUDIO_DEMO)
     assert source_demo == stable_demo
+
+    # Recreate issue #38's old topology and verify migration repairs it: the
+    # dynamic Current Shot slice must become the static full Load Audio track,
+    # and the complete registry fingerprint must return to Plan.
+    legacy_source_demo = copy.deepcopy(stable_demo)
+    legacy_loader = nodes(legacy_source_demo, "LoadAudio")[0]
+    legacy_audio_ref = nodes(
+        legacy_source_demo, "MiniMaxH3TaggedAudioReference")[0]
+    legacy_current = nodes(legacy_source_demo, "MiniMaxH3ChainCurrent")[0]
+    legacy_plan = nodes(legacy_source_demo, "MiniMaxH3ChainPlan")[0]
+    legacy_conditioner = nodes(
+        legacy_source_demo, "MiniMaxH3TaggedReferenceToVideo")[0]
+    audio_link_id = socket(legacy_audio_ref["inputs"], "audio")["link"]
+    audio_link = next(item for item in legacy_source_demo["links"]
+                      if item[0] == audio_link_id)
+    audio_link[1:3] = [legacy_current["id"], 12]
+    socket(legacy_loader["outputs"], "AUDIO")["links"].remove(audio_link_id)
+    socket(legacy_current["outputs"],
+           "source_audio_slice")["links"] = [audio_link_id]
+    legacy_audio_ref["widgets_values"] = ["audio_1", "standalone", False]
+
+    previous_link_id = socket(
+        legacy_audio_ref["inputs"], "previous")["link"]
+    previous_link = next(item for item in legacy_source_demo["links"]
+                         if item[0] == previous_link_id)
+    legacy_picture = next(item for item in legacy_source_demo["nodes"]
+                          if item["id"] == previous_link[1])
+    fingerprint_link_id = socket(
+        legacy_plan["inputs"], "generation_fingerprint")["link"]
+    fingerprint_link = next(item for item in legacy_source_demo["links"]
+                            if item[0] == fingerprint_link_id)
+    fingerprint_link[1:3] = [legacy_picture["id"], 1]
+    socket(legacy_audio_ref["outputs"],
+           "reference_fingerprint")["links"] = None
+    socket(legacy_picture["outputs"],
+           "reference_fingerprint")["links"] = [fingerprint_link_id]
+    legacy_conditioner["widgets_values"].pop()
+    legacy_conditioner["outputs"] = [
+        item for item in legacy_conditioner["outputs"]
+        if item["name"] != "refmod_sources"]
+    legacy_studio = nodes(
+        legacy_source_demo, "MiniMaxH3ChainPlanStudio")[0]
+    preflight_link_id = socket(
+        legacy_studio["inputs"], "tagged_references")["link"]
+    legacy_source_demo["links"] = [
+        item for item in legacy_source_demo["links"]
+        if item[0] != preflight_link_id]
+    socket(legacy_audio_ref["outputs"], "references")["links"].remove(
+        preflight_link_id)
+    socket(legacy_studio["inputs"], "tagged_references")["link"] = None
+    legacy_source_demo["last_link_id"] = preflight_link_id - 1
+
+    migration.migrate(legacy_source_demo, migration.SOURCE_AUDIO_DEMO)
+    assert legacy_source_demo == stable_demo
     assert len(nodes(source_demo, "MiniMaxH3SourceTimeline")) == 1
     assert len(nodes(source_demo, "MiniMaxH3AudioPolicy")) == 0
     assert len(nodes(source_demo, "MiniMaxH3TransitionPolicy")) == 0
@@ -93,6 +157,28 @@ def main():
     assert len(compact) == 1
     assert compact[0]["widgets_values"] == [
         "guide", "source", "on", "off"]
+    audio_loader = nodes(source_demo, "LoadAudio")[0]
+    audio_ref = nodes(source_demo, "MiniMaxH3TaggedAudioReference")[0]
+    source_current = nodes(source_demo, "MiniMaxH3ChainCurrent")[0]
+    source_plan = nodes(source_demo, "MiniMaxH3ChainPlan")[0]
+    source_studio = nodes(source_demo, "MiniMaxH3ChainPlanStudio")[0]
+    source_conditioner = nodes(
+        source_demo, "MiniMaxH3TaggedReferenceToVideo")[0]
+    assert audio_ref["widgets_values"] == [
+        "audio_1", "source_timeline", True]
+    assert origin_for_input(
+        source_demo, socket(audio_ref["inputs"], "audio")) == audio_loader
+    assert socket(source_current["outputs"],
+                  "source_audio_slice")["links"] is None
+    assert origin_for_input(
+        source_demo,
+        socket(source_plan["inputs"], "generation_fingerprint")) == audio_ref
+    assert origin_for_input(
+        source_demo,
+        socket(source_studio["inputs"], "tagged_references")) == audio_ref
+    assert source_conditioner["widgets_values"][-1] == "native_ref2va"
+    assert socket(source_conditioner["outputs"],
+                  "refmod_sources")["type"] == "H3_REF_LIST"
 
     drift_plan = {
         "pos": [100, 200],

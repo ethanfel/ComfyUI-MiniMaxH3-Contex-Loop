@@ -4,6 +4,13 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Fixed the bundled Tagged Source Audio workflow's `source_timeline` path.
+  Tagged Audio now receives the same full Load Audio track as Source Timeline,
+  derives its aligned current-scene slice internally, and returns the complete
+  static picture-and-audio fingerprint to Plan. The example also serializes
+  Tagged Ref2VA's current `native_ref2va` widget and `refmod_sources` output so
+  its controls no longer appear shifted after node updates.
+
 - Checkpoint Manager can delete an entire selected
   `output/h3_chains/<run>` folder after showing its file, folder, and byte
   impact. The action requires both a warning confirmation and the exact Run

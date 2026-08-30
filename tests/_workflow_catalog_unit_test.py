@@ -633,7 +633,7 @@ def validate_ref2v(path, variant):
         assert socket(editor["inputs"], "plan")["link"] is not None
     else:
         conditioner = node(workflow, "MiniMaxH3TaggedReferenceToVideo")
-        assert conditioner["widgets_values"][-4:] == [
+        assert conditioner["widgets_values"][5:9] == [
             "strict", "512", "timestamped_video", True]
         tagged_refs = [item for item in workflow["nodes"]
                        if item.get("type") ==
@@ -733,11 +733,11 @@ def validate_ref2v_source_audio(path):
     assert len(assembles) == 2
 
     assert audio_loader["widgets_values"][0] == "SELECT_FULL_SOURCE_TRACK.wav"
-    assert audio_ref["widgets_values"] == ["audio_1", "standalone", False]
+    assert audio_ref["widgets_values"] == [
+        "audio_1", "source_timeline", True]
     assert origin_for_input(
-        workflow, socket(audio_ref["inputs"], "audio")) == current
-    assert socket(current["outputs"], "source_audio_slice")["links"] == [
-        socket(audio_ref["inputs"], "audio")["link"]]
+        workflow, socket(audio_ref["inputs"], "audio")) == audio_loader
+    assert socket(current["outputs"], "source_audio_slice")["links"] is None
     assert current["widgets_values"] == [True]
     assert socket(audio_ref["inputs"], "previous")["link"] is not None
     assert socket(conditioner["inputs"], "references")["link"] == (
@@ -746,9 +746,16 @@ def validate_ref2v_source_audio(path):
         socket(current["outputs"], "state")["links"])
     picture_registry = origin_for_input(
         workflow, socket(audio_ref["inputs"], "previous"))
+    assert socket(picture_registry["outputs"],
+                  "reference_fingerprint")["links"] is None
     assert origin_for_input(
         workflow, socket(plan_node["inputs"], "generation_fingerprint")) == (
-            picture_registry)
+            audio_ref)
+    assert socket(audio_ref["outputs"], "reference_fingerprint")["links"] == [
+        socket(plan_node["inputs"], "generation_fingerprint")["link"]]
+
+    assert conditioner["widgets_values"][-1] == "native_ref2va"
+    assert socket(conditioner["outputs"], "refmod_sources")["links"] is None
 
     assert timeline["widgets_values"] == ["", "", "ignore", 0]
     assert origin_for_input(
@@ -759,12 +766,15 @@ def validate_ref2v_source_audio(path):
     assert origin_for_input(
         workflow, socket(studio["inputs"], "source_timeline")) == timeline
     assert origin_for_input(
+        workflow, socket(studio["inputs"], "tagged_references")) == audio_ref
+    assert origin_for_input(
         workflow, socket(manifest_load["inputs"], "source_timeline")) == (
             timeline)
     source_consumers = [loop_start, current, manifest_load, *assembles]
     assert all(socket(item["inputs"], "source_audio")["link"] is None
                for item in source_consumers)
     assert set(socket(audio_loader["outputs"], "AUDIO")["links"]) == {
+        socket(audio_ref["inputs"], "audio")["link"],
         socket(timeline["inputs"], "source_audio")["link"],
         socket(manager["inputs"], "asset_2")["link"],
     }
