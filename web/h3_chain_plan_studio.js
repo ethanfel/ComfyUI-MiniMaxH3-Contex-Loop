@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.78";
+} from "./h3_chain_plan_core.mjs?v=0.6.79";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.78";
+} from "./h3_prompt_history_core.mjs?v=0.6.79";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.78";
+} from "./h3_reference_preview_core.mjs?v=0.6.79";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.78";
+} from "./h3_policy_core.mjs?v=0.6.79";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.78";
+} from "./h3_socket_presentation_core.mjs?v=0.6.79";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -90,8 +90,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.78";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.78";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.79";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.79";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -3950,7 +3950,14 @@ function mount(node) {
             new Event("change"),
         );
         updateSubtitleOverlay(target);
-        state.primePlayerNext?.(location.trailing ? -1 : inGap ? index : index + 1);
+        const segmentPosition = model.segments.findIndex(
+            (segment) => segment.key === location.key,
+        );
+        const upcomingSegment = model.segments[segmentPosition + 1];
+        state.primePlayerNext?.(
+            upcomingSegment?.kind === "scene"
+                ? upcomingSegment.sceneIndex : -1,
+        );
         if (autoplay && !generated) state.playPlayerTransport?.();
     }
 
@@ -3958,10 +3965,10 @@ function mount(node) {
         const wrapper = element("div", "h3studio-player");
         const label = element("div", "h3studio-player-label", "Generated playback");
         const stage = element("div", "h3studio-compare-stage");
-        const video = element("video"); video.playsInline = true; video.preload = "metadata";
+        let video = element("video"); video.playsInline = true; video.preload = "metadata";
         const handoffFrame = element("canvas", "h3studio-handoff-frame");
         handoffFrame.hidden = true;
-        const generatedAudio = element("audio");
+        let generatedAudio = element("audio");
         generatedAudio.preload = "metadata"; generatedAudio.hidden = true;
         const sourceTimelineAudio = element("audio");
         sourceTimelineAudio.preload = "metadata"; sourceTimelineAudio.hidden = true;
@@ -3994,6 +4001,9 @@ function mount(node) {
         const preloadAudio = element("audio");
         preloadAudio.preload = "auto"; preloadAudio.muted = true;
         preloadAudio.hidden = true;
+        let standbyVideo = preloadVideo;
+        let standbyAudio = preloadAudio;
+        stage.insertBefore(preloadVideo, handoffFrame);
         const clearPreload = (media) => {
             if (!media.dataset.source) return;
             delete media.dataset.source;
@@ -4004,15 +4014,15 @@ function mount(node) {
                 ? playerCheckpoint(index) : null;
             const videoSource = media?.video ? videoUrl(media.video) : "";
             const audioSource = media?.audio ? videoUrl(media.audio) : "";
-            if (!videoSource) clearPreload(preloadVideo);
-            else if (preloadVideo.dataset.source !== videoSource) {
-                preloadVideo.dataset.source = videoSource;
-                preloadVideo.src = videoSource; preloadVideo.load();
+            if (!videoSource) clearPreload(standbyVideo);
+            else if (standbyVideo.dataset.source !== videoSource) {
+                standbyVideo.dataset.source = videoSource;
+                standbyVideo.src = videoSource; standbyVideo.load();
             }
-            if (!audioSource) clearPreload(preloadAudio);
-            else if (preloadAudio.dataset.source !== audioSource) {
-                preloadAudio.dataset.source = audioSource;
-                preloadAudio.src = audioSource; preloadAudio.load();
+            if (!audioSource) clearPreload(standbyAudio);
+            else if (standbyAudio.dataset.source !== audioSource) {
+                standbyAudio.dataset.source = audioSource;
+                standbyAudio.src = audioSource; standbyAudio.load();
             }
         };
         const captureHandoffFrame = () => {
@@ -4052,8 +4062,45 @@ function mount(node) {
                 handoffFrame.hidden = true;
             }, 180);
         };
-        state.playerPreloadVideo = preloadVideo;
-        state.playerPreloadAudio = preloadAudio;
+        const primedSegmentReady = (index) => {
+            const media = index >= 0 && index < state.plan.shots.length
+                ? playerCheckpoint(index) : null;
+            const videoSource = media?.video ? videoUrl(media.video) : "";
+            return Boolean(
+                videoSource && standbyVideo.dataset.source === videoSource &&
+                standbyVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
+            );
+        };
+        const promotePrimedSegment = (index) => {
+            if (!primedSegmentReady(index)) return false;
+            const outgoingVideo = video;
+            const outgoingAudio = generatedAudio;
+            const incomingVideo = standbyVideo;
+            const incomingAudio = standbyAudio;
+            incomingVideo.playbackRate = outgoingVideo.playbackRate;
+            incomingVideo.volume = outgoingVideo.volume;
+            incomingVideo.muted = outgoingVideo.muted;
+            incomingAudio.playbackRate = outgoingAudio.playbackRate;
+            incomingAudio.volume = outgoingAudio.volume;
+            incomingAudio.muted = outgoingAudio.muted;
+            incomingVideo.hidden = false;
+            outgoingVideo.hidden = true;
+            video = incomingVideo;
+            standbyVideo = outgoingVideo;
+            generatedAudio = incomingAudio;
+            standbyAudio = outgoingAudio;
+            state.player = video;
+            state.playerAudio = generatedAudio;
+            state.playerPreloadVideo = standbyVideo;
+            state.playerPreloadAudio = standbyAudio;
+            try { standbyVideo.pause(); } catch (_error) {}
+            try { standbyAudio.pause(); } catch (_error) {}
+            standbyVideo.muted = true;
+            standbyAudio.muted = true;
+            return true;
+        };
+        state.playerPreloadVideo = standbyVideo;
+        state.playerPreloadAudio = standbyAudio;
         state.primePlayerNext = primeNextSegment;
         const controls = element("div", "h3studio-player-controls");
         const play = button(
@@ -4285,29 +4332,57 @@ function mount(node) {
         };
         state.playPlayerTransport = playPlayerTransport;
         state.togglePlayerPlayback = togglePlayerPlayback;
-        video.addEventListener("play", () => {
+        const transportVideos = [video, standbyVideo];
+        const generatedAudios = [generatedAudio, standbyAudio];
+        const onActiveVideo = (eventName, listener) => {
+            for (const player of transportVideos) {
+                player.addEventListener(eventName, (event) => {
+                    if (event.currentTarget !== video) return;
+                    listener(event);
+                });
+            }
+        };
+        const onActiveGeneratedAudio = (eventName, listener) => {
+            for (const player of generatedAudios) {
+                player.addEventListener(eventName, (event) => {
+                    if (event.currentTarget !== generatedAudio) return;
+                    listener(event);
+                });
+            }
+        };
+        onActiveVideo("play", () => {
             play.textContent = "❚❚";
             syncSource(); synchronizeGeneratedAudio(true);
             synchronizeSourceTimelineAudio(true);
             if (sourceVideo.dataset.source) void sourceVideo.play().catch(() => {});
         });
-        video.addEventListener("playing", () => {
+        onActiveVideo("playing", () => {
             releaseHandoffFrame();
             startMediaClock("video");
         });
-        video.addEventListener("pause", () => {
+        onActiveVideo("pause", () => {
             stopMediaClock("video");
+            const model = timelineModel();
+            const currentSegment = model.segments.findIndex(
+                (segment) => segment.key === state.playerSegmentKey,
+            );
+            const upcoming = model.segments[currentSegment + 1];
+            if (video.ended && upcoming?.kind === "scene" &&
+                    primedSegmentReady(upcoming.sceneIndex)) {
+                generatedAudio.pause(); sourceVideo.pause();
+                return;
+            }
             play.textContent = "▶";
             // The source track is a monitor slaved to the video transport.
             // Always stop it on pause; automatic scene handoff will restart it
             // from the next absolute timeline position when video fires play.
             pausePlayerMonitors();
         });
-        video.addEventListener("waiting", () => {
+        onActiveVideo("waiting", () => {
             stopMediaClock("video");
             generatedAudio.pause(); sourceTimelineAudio.pause(); sourceVideo.pause();
         });
-        generatedAudio.addEventListener("canplay", () => {
+        onActiveGeneratedAudio("canplay", () => {
             synchronizeGeneratedAudio(!video.paused);
         });
         sourceVideo.addEventListener("canplay", () => {
@@ -4327,26 +4402,26 @@ function mount(node) {
             stopMediaClock("source");
             if (!video.dataset.source) play.textContent = "▶";
         });
-        video.addEventListener("seeking", () => {
+        onActiveVideo("seeking", () => {
             generatedAudio.pause(); sourceTimelineAudio.pause(); sourceVideo.pause();
             synchronizeGeneratedAudio(false); synchronizeSourceTimelineAudio(false);
             syncSource();
         });
-        video.addEventListener("seeked", () => {
+        onActiveVideo("seeked", () => {
             synchronizeGeneratedAudio(!video.paused);
             synchronizeSourceTimelineAudio(!video.paused); syncSource();
             if (!video.paused && sourceVideo.dataset.source) {
                 void sourceVideo.play().catch(() => {});
             }
         });
-        video.addEventListener("ratechange", () => {
+        onActiveVideo("ratechange", () => {
             synchronizeGeneratedAudio(false);
             synchronizeSourceTimelineAudio(false); syncSource();
         });
         // timeupdate is only a low-frequency fallback. The visible transport
         // is driven from requestAnimationFrame while media is playing so its
         // clock and red timeline line remain on the same frame.
-        video.addEventListener("timeupdate", refreshVideoTransport);
+        onActiveVideo("timeupdate", refreshVideoTransport);
         sourceTimelineAudio.addEventListener("timeupdate", () => {
             if (video.dataset.source) return;
             refreshSourceTransport();
@@ -4362,10 +4437,11 @@ function mount(node) {
             updateTransportPosition(current);
             startEditorialClock();
         });
-        video.addEventListener("ended", () => {
+        onActiveVideo("ended", () => {
             stopMediaClock("video");
             captureHandoffFrame();
-            generatedAudio.pause(); sourceVideo.pause();
+            const outgoingAudio = generatedAudio;
+            outgoingAudio.pause(); sourceVideo.pause();
             const model = timelineModel();
             const currentSegment = model.segments.findIndex(
                 (segment) => segment.key === state.playerSegmentKey,
@@ -4374,6 +4450,9 @@ function mount(node) {
             if (!next) {
                 sourceTimelineAudio.pause();
                 return;
+            }
+            if (next.kind === "scene") {
+                promotePrimedSegment(next.sceneIndex);
             }
             seekTimeline(next.startSeconds, true);
         });
@@ -4477,9 +4556,9 @@ function mount(node) {
         }));
         wrapper.append(
             label, stage, generatedAudio, sourceTimelineAudio,
-            preloadVideo, preloadAudio,
+            preloadAudio,
             compareControls, controls,
-            element("div", "h3studio-message", "Generated and Source Track can play together on the planned timeline. Before a scene is rendered, Source Track playback supplies the timeline clock; playback hands back to video automatically when a saved segment begins. Each monitor has independent volume; waveform speaker buttons mute only the Source Track for that scene. Click the player and press Space to play or pause. Motion-ref audio is optional when available."),
+            element("div", "h3studio-message", "Generated and Source Track can play together on the planned timeline. Adjacent saved scenes are pre-decoded in a second player for a smooth boundary handoff; this preview behavior never changes the saved clips or final assembly. Before a scene is rendered, Source Track playback supplies the timeline clock; playback hands back to video automatically when a saved segment begins. Each monitor has independent volume; waveform speaker buttons mute only the Source Track for that scene. Click the player and press Space to play or pause. Motion-ref audio is optional when available."),
         );
         setTimeout(() => {
             if (state.player !== video || !video.isConnected) return;

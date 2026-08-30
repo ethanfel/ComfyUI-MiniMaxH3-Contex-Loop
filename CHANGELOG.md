@@ -4,6 +4,13 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Plan Studio Player now uses its preloaded media as a real second playback
+  buffer. At adjacent saved-scene boundaries the decoded video and separate
+  generated-audio elements are promoted immediately, the previous elements
+  become the following preload buffers, and the existing last-frame veil fades
+  only while the promoted player starts. This removes the redundant same-URL
+  reload pause without changing clips, editorial timing, or final assembly.
+
 - Project Asset Carousel can now import from another Run's live Carousel, not
   only from recovery backups. The copy preserves the source role, tag,
   reference options, and audio lyrics, receives an independent project-owned
