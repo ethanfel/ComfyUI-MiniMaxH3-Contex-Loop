@@ -3084,7 +3084,22 @@ def _tagged_audio_reference_value(
         raise ValueError(
             "Tagged audio @%s source_timeline has no Loop Start source-audio "
             "fingerprint to validate." % entry.get("tag", "audio"))
-    if not entry_hash or entry_hash != expected_hash:
+    accepted_hashes = {expected_hash}
+    source_timeline = state.get("source_timeline")
+    if _is_source_timeline(source_timeline):
+        timeline_audio_hash = str(
+            source_timeline["fingerprints"].get("audio") or "")
+        timeline_content_hash = str(
+            source_timeline["audio"].get("content_sha256") or "")
+        # Source Timeline deliberately fingerprints the media route as well
+        # as its decoded content.  A connected AUDIO tensor is registered by
+        # Tagged Audio with the content fingerprint, while Loop Start records
+        # the route fingerprint in the Plan.  Accept the content identity only
+        # when this runtime timeline is itself the source recorded by Plan.
+        if expected_hash in (timeline_audio_hash, timeline_content_hash):
+            accepted_hashes.update(filter(None, (
+                timeline_audio_hash, timeline_content_hash)))
+    if not entry_hash or entry_hash not in accepted_hashes:
         raise ValueError(
             "Tagged audio @%s source_timeline received a different full "
             "source track than H3 Chain Loop Start. Wire the same Load Audio "

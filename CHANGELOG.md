@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Fixed Tagged Audio `source_timeline` identity validation for the shipped
+  full-track workflow. Loop Start's route fingerprint and Tagged Audio's
+  waveform-content fingerprint are now recognized as two identities of the
+  same Source Timeline audio, while genuinely different tracks remain blocked.
+
 - Fixed Plan Studio transport synchronization. Ruler ticks, scrubbing, scene
   widths, and the red play line now use the same pixels-per-second scale, so
   extending the open timeline or changing zoom cannot skew the playhead.
