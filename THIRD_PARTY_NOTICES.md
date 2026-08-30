@@ -48,6 +48,14 @@ checkpointed generated-audio and saved-prelude assembly, using cumulative
 delivered video-frame boundaries so per-scene rounding cannot accumulate into
 long-run A/V drift.
 
+On the nightly integration, `motion_context_upstream.py` dynamically discovers
+that pack's public `MiniMaxH3MotionContext` registration and calls it for
+compatible Guide scenes. No upstream source is copied by this adapter. The
+visible Chain node and saved workflow remain local; capability checks retain
+the internal implementation for Loop-only modes the upstream contract does not
+yet expose. This runtime integration was reviewed against upstream revision
+`5839d453efa0346c1da49acc39fc65050c5c48c0` (2026-08-30), GPL-3.0.
+
 The experimental masked AV chain mode directly adapts that GPL-3.0 project's
 masked existing-video extension and its capability-aware runtime compatibility
 for ComfyUI PR #15375. In this loop integration the preserved source is the

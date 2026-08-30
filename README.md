@@ -34,8 +34,15 @@ scenes from disk.
 From `ComfyUI/custom_nodes`:
 
 ```bash
+git clone https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef.git
 git clone https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop.git
 ```
+
+The upstream MultiRef pack supplies the maintained low-level Motion Context
+implementation. Chain Context discovers it through ComfyUI's node registry and
+delegates compatible Guide scenes without adding nodes or wires to the
+workflow. Loop-specific modes fall back automatically to the bundled
+compatibility engine.
 
 Restart ComfyUI, then:
 

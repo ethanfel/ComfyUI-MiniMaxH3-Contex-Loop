@@ -85,6 +85,7 @@ from .nodes import (
     _resize,
     _streams_from_latent,
 )
+from .motion_context_upstream import apply_motion_context
 from .prompt_history import PromptHistoryStore
 from .prompt_optimizer import optimize_prompt_payload
 from .run_manager import RunArchiveManager, archive_policy_inputs
@@ -15293,7 +15294,8 @@ class MiniMaxH3ChainContext:
                 min(_TAPERED_GUIDE_RAMP_FRAMES,
                     int(previous_frames.shape[0])),
                 _TAPERED_GUIDE_ALPHA_END, noise_seed)
-        out, trim = MiniMaxH3MotionContext().apply(
+        out, trim = apply_motion_context(
+            MiniMaxH3MotionContext,
             conditioning=conditioning,
             vae=vae,
             latent=target_latent,
