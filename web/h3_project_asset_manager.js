@@ -5,10 +5,10 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.77";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.78";
 import {
     publishProjectAssetCatalogChanged,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.77";
+} from "./h3_project_asset_sync_core.mjs?v=0.6.78";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -317,13 +317,14 @@ function mount(node) {
     }
     const sourceSelect = el("select");
     for (const [value, label] of [
-        ["input", "ComfyUI input"], ["path", "Server path"],
+        ["input", "ComfyUI input"], ["project", "Other Run"],
+        ["path", "Server path"],
         ["chains", "H3 backups"],
     ]) {
         const option = el("option", "", label); option.value = value;
         sourceSelect.append(option);
     }
-    sourceSelect.title = "Choose where Import browses for media to copy into this project.";
+    sourceSelect.title = "Choose where Import browses for media to copy into this Run. Other Run reads the live Asset Carousel; H3 backups reads recovery snapshots.";
     const previewSelect = el("select");
     for (const [value, label] of [
         ["light", "Light previews"],
@@ -346,7 +347,7 @@ function mount(node) {
             fileInput.click();
         }, "Choose a local media file, or drop files directly onto the Carousel. A selected Unassigned slot is bound; otherwise a new asset is created."),
         button("Import", () => browseSource(selectedUnassignedSlot()),
-            "Create a project asset from the selected source. ComfyUI input is the default; a selected Unassigned slot is bound instead."),
+            "Create a project asset from the selected source: ComfyUI input, another Run, an H3 backup, or a server path. A selected Unassigned slot is bound instead."),
         button("Refresh", () => refresh()), fileInput,
     );
     const status = el("div", "h3pa-status", "Loading project assets…");
@@ -1765,28 +1766,46 @@ function mount(node) {
         const modal = el("div", "h3pa-modal");
         const row = el("div", "h3pa-row");
         const search = el("input", "h3pa-project"); search.placeholder = "Filter assets";
-        row.append(el("strong", "", source === "input" ? "ComfyUI input" : "H3 chain backups"), search,
+        const sourceTitle = source === "input"
+            ? "ComfyUI input"
+            : (source === "project" ? "Other Run assets" : "H3 chain backups");
+        row.append(el("strong", "", sourceTitle), search,
             button("Close", () => modal.remove()));
         const list = el("div", "h3pa-source-list"); modal.append(row, list); document.body.append(modal);
         async function load() {
             list.textContent = "Loading…";
             try {
                 const payload = await jsonRequest(
-                    `/minimax_h3_context_loop/project-assets/sources?source=${source}&q=${encodeURIComponent(search.value)}`,
+                    `/minimax_h3_context_loop/project-assets/sources?source=${source}&q=${encodeURIComponent(search.value)}&project=${encodeURIComponent(project())}`,
                 );
                 list.replaceChildren();
                 const items = source === "chains"
                     ? payload.items.flatMap((run) => run.assets.map((asset) => ({...asset, run_name: run.run_name})))
-                    : payload.items;
+                    : (source === "project"
+                        ? payload.items.flatMap((run) => run.assets.map((asset) => ({...asset, source_project: run.project})))
+                        : payload.items);
+                if (!items.length) {
+                    list.append(el("div", "h3pa-empty", source === "project"
+                        ? "No matching assets were found in another Run."
+                        : "No matching media was found."));
+                }
                 for (const item of items) {
                     const rowItem = el("div", "h3pa-source-item");
-                    rowItem.append(el("span", "", source === "chains"
-                        ? `${item.run_name} · ${promptTag(item)}` : item.path),
+                    const sourceLabel = source === "chains"
+                        ? `${item.run_name} · ${promptTag(item)}`
+                        : (source === "project"
+                            ? `${item.source_project} · ${promptTag(item)} · ${item.original_name || "asset"}`
+                            : item.path);
+                    rowItem.append(el("span", "", sourceLabel),
                     el("span", "", item.kind ?? ""), button(slot ? "Bind" : "Import", async () => {
                         try {
                             if (source === "chains") await importAsset({
                                 source, run_name: item.run_name, asset_id: item.id,
                                 slot_id: slot?.id ?? "",
+                            });
+                            else if (source === "project") await importAsset({
+                                source, source_project: item.source_project,
+                                asset_id: item.id, slot_id: slot?.id ?? "",
                             });
                             else await importAsset({
                                 source, path: item.path, slot_id: slot?.id ?? "",

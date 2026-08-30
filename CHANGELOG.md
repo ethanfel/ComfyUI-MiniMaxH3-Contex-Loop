@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Project Asset Carousel can now import from another Run's live Carousel, not
+  only from recovery backups. The copy preserves the source role, tag,
+  reference options, and audio lyrics, receives an independent project-owned
+  media copy and catalog identity, and never modifies the source Run. Selecting
+  an Unassigned card binds the imported media to that slot instead.
+
 - Fixed Plan Studio transport synchronization. Ruler ticks, scrubbing, scene
   widths, and the red play line now use the same pixels-per-second scale, so
   extending the open timeline or changing zoom cannot skew the playhead.

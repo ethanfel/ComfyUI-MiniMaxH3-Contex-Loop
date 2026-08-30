@@ -1073,6 +1073,92 @@ class ProjectAssetStore:
             raise FileNotFoundError("ComfyUI input asset was not found: %s" % value)
         return path
 
+    def projects(self, query: Any = "", *, exclude_project: Any = "") -> list[dict[str, Any]]:
+        """List live Carousel catalogs without exposing arbitrary input files."""
+        needle = str(query or "").strip().lower()
+        excluded = (_safe_project(exclude_project)
+                    if str(exclude_project or "").strip() else "")
+        result = []
+        remaining = MAX_INPUT_RESULTS
+        if not os.path.isdir(self.projects_root):
+            return result
+        with os.scandir(self.projects_root) as projects:
+            for project in projects:
+                if remaining <= 0:
+                    break
+                if (not project.is_dir(follow_symlinks=False)
+                        or project.name == excluded):
+                    continue
+                try:
+                    catalog = self.load(project.name)
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                assets = []
+                for raw in catalog.get("assets", []):
+                    if not isinstance(raw, dict):
+                        continue
+                    searchable = " ".join((
+                        project.name,
+                        str(raw.get("tag") or ""),
+                        str(raw.get("original_name") or ""),
+                        str(raw.get("role") or ""),
+                    )).lower()
+                    if needle and needle not in searchable:
+                        continue
+                    try:
+                        self._asset_path(project.name, raw)
+                    except (OSError, TypeError, ValueError):
+                        continue
+                    assets.append(dict(raw))
+                    remaining -= 1
+                    if remaining <= 0:
+                        break
+                if assets:
+                    result.append({
+                        "project": project.name,
+                        "revision": str(catalog.get("revision") or ""),
+                        "assets": assets,
+                    })
+        return sorted(result, key=lambda item: item["project"].lower())
+
+    def import_project_asset(
+            self, project: Any, source_project: Any, asset_id: Any, *,
+            slot_id: Any = "") -> dict[str, Any]:
+        """Copy one asset from another live Carousel into this project."""
+        target_name = _safe_project(project)
+        source_name = _safe_project(source_project)
+        if target_name == source_name:
+            raise ValueError(
+                "Choose another Run. Use Duplicate for an asset already in "
+                "this Carousel.")
+        source_entry, source_path = self.asset(source_name, asset_id)
+        wanted_slot = str(slot_id or "")
+        if wanted_slot:
+            result = self.bind_reference_slot(
+                target_name, wanted_slot, source_path,
+                original_name=source_entry.get("original_name", ""),
+                source_kind="project")
+        else:
+            result = self.import_file(
+                target_name, source_path,
+                role=source_entry.get("role", ""),
+                tag=source_entry.get("tag", ""),
+                original_name=source_entry.get("original_name", ""),
+                source_kind="project",
+                options=(dict(source_entry.get("options") or {})
+                         if isinstance(source_entry.get("options"), dict)
+                         else None))
+        lyrics = str(source_entry.get("lyrics") or "")
+        if lyrics and result.get("asset", {}).get("kind") == "audio":
+            bound_slot_id = result.get("bound_slot_id")
+            result = self.update(
+                target_name, result["asset"]["id"], {"lyrics": lyrics})
+            if bound_slot_id:
+                result["bound_slot_id"] = bound_slot_id
+        result["source_project"] = source_name
+        result["source_asset_id"] = str(source_entry.get("id") or "")
+        return result
+
     def backups(self) -> list[dict[str, Any]]:
         result = []
         if not os.path.isdir(self.chains_root):

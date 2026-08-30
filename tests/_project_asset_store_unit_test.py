@@ -89,6 +89,47 @@ def main():
             assert "only be attached to audio assets" in str(exc)
         else:
             raise AssertionError("Lyrics were attached to a non-audio asset")
+
+        projects = store.projects("hero_semantic", exclude_project="episode_2")
+        assert len(projects) == 1
+        assert projects[0]["project"] == "episode_1"
+        assert [item["id"] for item in projects[0]["assets"]] == [
+            first["asset"]["id"]]
+        copied_picture = store.import_project_asset(
+            "episode_2", "episode_1", first["asset"]["id"])
+        assert copied_picture["asset"]["role"] == "semantic_anchor"
+        assert copied_picture["asset"]["tag"] == "hero_semantic"
+        assert copied_picture["asset"]["source_kind"] == "project"
+        assert copied_picture["source_project"] == "episode_1"
+        assert pathlib.Path(store.asset(
+            "episode_2", copied_picture["asset"]["id"])[1]) != (
+                first_project_copy)
+        copied_audio = store.import_project_asset(
+            "episode_2", "episode_1", second["asset"]["id"])
+        assert copied_audio["asset"]["lyrics"] == "First line\nSecond line"
+        assert copied_audio["asset"]["role"] == "source_track"
+        assert all(item["project"] != "episode_1"
+                   for item in store.projects(exclude_project="episode_1"))
+        try:
+            store.import_project_asset(
+                "episode_1", "episode_1", first["asset"]["id"])
+        except ValueError as exc:
+            assert "Use Duplicate" in str(exc)
+        else:
+            raise AssertionError("A same-project import bypassed Duplicate")
+
+        project_slot_catalog = store.sync_reference_slots(
+            "episode_binding", [{
+                "kind": "image", "role": "picture", "tag": "bound_hero",
+                "content_hash": "project-copy", "options": {},
+            }])
+        project_bound = store.import_project_asset(
+            "episode_binding", "episode_1", first["asset"]["id"],
+            slot_id=project_slot_catalog["reference_slots"][0]["id"])
+        assert project_bound["asset"]["tag"] == "bound_hero"
+        assert project_bound["asset"]["role"] == "picture"
+        assert project_bound["catalog"]["reference_slots"] == []
+
         reordered = store.reorder("episode_1", [
             second["asset"]["id"], first["asset"]["id"],
         ])
@@ -137,7 +178,7 @@ def main():
         assert bound["catalog"]["reference_slots"] == []
         assert len(bound["catalog"]["assets"]) == 1
 
-    print("H3 Project Asset Store: import, backup, metadata sync, binding, listing, ordering, deletion, and edit pass")
+    print("H3 Project Asset Store: import, cross-project copy, backup, metadata sync, binding, listing, ordering, deletion, and edit pass")
 
 
 if __name__ == "__main__":

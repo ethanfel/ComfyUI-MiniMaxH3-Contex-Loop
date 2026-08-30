@@ -1,11 +1,11 @@
 import {app} from "/scripts/app.js";
 import {api} from "/scripts/api.js";
-import {parsePlanJson, planToJson, randomSceneSeed} from "./h3_chain_plan_core.mjs?v=0.6.77";
+import {parsePlanJson, planToJson, randomSceneSeed} from "./h3_chain_plan_core.mjs?v=0.6.78";
 import {
     activeSceneFromOutput,
     applySceneReroll,
     resumeSelection,
-} from "./h3_chain_cancel_reroll_core.mjs?v=0.6.77";
+} from "./h3_chain_cancel_reroll_core.mjs?v=0.6.78";
 
 const CURRENT_TYPE = "MiniMaxH3ChainCurrent";
 const PLAN_TYPE = "MiniMaxH3ChainPlan";

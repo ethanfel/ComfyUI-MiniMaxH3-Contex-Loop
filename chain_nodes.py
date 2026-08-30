@@ -23958,6 +23958,10 @@ async def _project_asset_sources(request):
     try:
         if source == "input":
             items = await asyncio.to_thread(store.input_media, query)
+        elif source == "project":
+            items = await asyncio.to_thread(
+                store.projects, query,
+                exclude_project=request.query.get("project", ""))
         elif source == "chains":
             items = await asyncio.to_thread(store.backups)
             needle = str(query or "").strip().lower()
@@ -23976,7 +23980,7 @@ async def _project_asset_sources(request):
                         filtered.append({**run, "assets": assets})
                 items = filtered
         else:
-            raise ValueError("Asset source must be input or chains.")
+            raise ValueError("Asset source must be input, project, or chains.")
         return web.json_response({"source": source, "items": items})
     except (OSError, TypeError, ValueError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
@@ -24035,13 +24039,20 @@ async def _project_asset_import(request):
         source = str(body.get("source") or "path").strip().lower()
         if source == "input":
             path = store.input_path(body.get("path"))
+        elif source == "project":
+            result = await asyncio.to_thread(
+                store.import_project_asset,
+                body.get("project", ""), body.get("source_project", ""),
+                body.get("asset_id", ""), slot_id=body.get("slot_id", ""))
+            return web.json_response(result)
         elif source == "chains":
             _entry, path = store.backup_asset_path(
                 body.get("run_name"), body.get("asset_id"))
         elif source == "path":
             path = str(body.get("path") or "")
         else:
-            raise ValueError("Asset import source must be input, chains, or path.")
+            raise ValueError(
+                "Asset import source must be input, project, chains, or path.")
         slot_id = str(body.get("slot_id") or "")
         importer = (store.bind_reference_slot
                     if slot_id else store.import_file)

@@ -7,15 +7,15 @@ import {
     assetInputNumber,
     collectAssetBindings,
     nodeType,
-} from "./h3_run_assets_core.mjs?v=0.6.77";
+} from "./h3_run_assets_core.mjs?v=0.6.78";
 import {
     runArchiveOptionLabel,
     runManagerIdentity,
-} from "./h3_run_manager_core.mjs?v=0.6.77";
+} from "./h3_run_manager_core.mjs?v=0.6.78";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.77";
+} from "./h3_plan_restore_core.mjs?v=0.6.78";
 
 const NODE_NAME = "MiniMaxH3ChainRunManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
