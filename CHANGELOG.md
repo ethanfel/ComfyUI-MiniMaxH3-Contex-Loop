@@ -17,14 +17,14 @@ Newest first. This file keeps release history out of the onboarding README.
   preserved outside that interval, and decoded source audio is end-aligned on
   an exact 40 Hz PCM grid before VAE encoding. Native H3 run lengths still use
   one efficient video Guide. Loop-only latent Guide, audio-only carry,
-  longer-audio windows, future anchors, fractional audio correction, and the
+  longer-audio windows, fractional audio correction, and the
   guarded legacy-core path remain available.
 
 - Chain Context now transparently delegates compatible Guide scenes to
   seitanism's installed **H3 Motion Context** node. Existing workflows and
   sockets do not change. The adapter preserves Loop keyframe arbitration,
-  visual-condition metadata, and exact latent-audio placement; Latent Guide,
-  audio-only or longer-audio continuity, future anchors, and legacy ComfyUI
+  Guide markers, and exact latent-audio placement; Latent Guide, audio-only or
+  longer-audio continuity, and legacy ComfyUI
   remain on the internal compatibility engine until upstream exposes those
   capabilities.
 

@@ -21,7 +21,6 @@ shared_nodes._video_from_latent = lambda _latent: types.SimpleNamespace(
     shape=(1, 16, 30, 2, 2))
 shared_nodes._audio_tail_from_latent = lambda _latent, _frames: (
     "tail", 37, -1.0 / 3.0)
-shared_nodes._validate_visual_cond_noise_aug = float
 sys.modules[shared_nodes.__name__] = shared_nodes
 
 spec = importlib.util.spec_from_file_location(
@@ -98,8 +97,6 @@ def apply(**overrides):
         "audio_vae": None,
         "context_audio": None,
         "video_context_latent": None,
-        "visual_cond_noise_aug": 0.995,
-        "future_end_anchor": False,
     }
     values.update(overrides)
     return adapter.apply_motion_context(FallbackMotionContext, **values)
@@ -133,7 +130,6 @@ def main():
         assert [value["resolved_frame_index"] for value in
                 delegated["conditioning"][0][1]["minimax_keyframes"]] == [70]
         metadata = output[0][1]
-        assert metadata["minimax_visual_cond_noise_aug"] == 0.995
         assert [value["resolved_frame_index"] for value in
                 metadata["minimax_keyframes"]] == [70, 0]
         assert metadata["minimax_keyframes"][-1][
@@ -151,8 +147,6 @@ def main():
         assert abs(keyframes[1]["resolved_frame_index"] + 0.4) < 1e-9
         assert keyframes[1]["audio_latent"] == "upstream-audio"
 
-        upstream_calls = len(UpstreamMotionContext.calls)
-
         # Loop-only modes remain lossless through the internal engine.
         result = apply(video_context_latent="previous-video-latent")
         assert result == ("fallback-conditioning", 22)
@@ -168,10 +162,6 @@ def main():
             audio_context_length=39,
             context_latent="previous-av-latent")
         assert result == ("fallback-conditioning", 22)
-
-        result = apply(future_end_anchor=True)
-        assert result == ("fallback-conditioning", 22)
-        assert len(UpstreamMotionContext.calls) == upstream_calls
 
         # Older ComfyUI falls back even when the provider itself is installed.
         adapter._native_guides_available = lambda: False

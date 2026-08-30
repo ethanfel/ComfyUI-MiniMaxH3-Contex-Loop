@@ -54,7 +54,7 @@ workflow contract.
 
 Loop-only capabilities currently remain internal: direct saved-video-latent
 Guide reuse, audio-only continuation, a timeline-audio window longer than the
-visual Guide, future end anchors, and the guarded pre-native-core fallback.
+visual Guide, and the guarded pre-native-core fallback.
 The adapter also resolves carried-head keyframe collisions and restores exact
 latent-audio placement after the upstream call.
 
