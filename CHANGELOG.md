@@ -4,6 +4,13 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Plan Studio transport synchronization. Ruler ticks, scrubbing, scene
+  widths, and the red play line now use the same pixels-per-second scale, so
+  extending the open timeline or changing zoom cannot skew the playhead.
+  Generated-video and Source Track playback also refresh the visible clock and
+  line every animation frame; the browser's coarse `timeupdate` event remains
+  only as a fallback.
+
 - Updated the retained internal Motion Context engine to current upstream
   Guide behavior: arbitrary off-grid visual lengths remain exact, head-mode
   Guides can be placed at an interior `target_start`, unrelated anchors are

@@ -21,6 +21,7 @@ import {
     studioSourceAudioSecond,
     studioSourceSecond,
     studioTimelineLayout,
+    studioTimelinePixelAtSecond,
     studioTimelineScrollAnchorSeconds,
     studioTimelineScrollLeftForAnchor,
     studioTimelineSegments,
@@ -137,6 +138,17 @@ assert.ok(Math.abs(
     openTimeline.widths.slice(0, 3).reduce((total, value) => total + value, 0)
         - 600,
 ) < 1e-9);
+assert.ok(Math.abs(studioTimelinePixelAtSecond(
+    1042 / 24, openTimeline.pixelsPerSecond, openTimeline.contentWidth,
+) - 600) < 1e-9);
+assert.ok(Math.abs(studioTimelinePixelAtSecond(
+    openTimeline.totalSeconds,
+    openTimeline.pixelsPerSecond,
+    openTimeline.contentWidth,
+) - openTimeline.contentWidth) < 1e-9);
+assert.equal(studioTimelinePixelAtSecond(
+    9999, openTimeline.pixelsPerSecond, openTimeline.contentWidth,
+), openTimeline.contentWidth);
 assert.equal(locateStudioTimelineSegment(
     openTimeline.segments, 70,
 ).key, "gap:tail");
@@ -422,6 +434,10 @@ assert.match(source, /synchronizeGeneratedAudio/);
 assert.match(source, /Source Track playback supplies the timeline clock/);
 assert.match(source, /currentSettings === state\.lastSettingsSignature/);
 assert.match(source, /state\.timelinePosition = target/);
+assert.match(source, /studioTimelinePixelAtSecond/);
+assert.match(source, /startMediaClock\("video"\)/);
+assert.match(source, /startMediaClock\("source"\)/);
+assert.match(source, /requestAnimationFrame while media is playing/);
 assert.match(source, /state\.view !== "player"/);
 assert.match(source, /renderSourceTimeline\(\); renderSourceAudioTimeline\(\)/);
 assert.match(source, /updateTimelineSelection\(\)/);

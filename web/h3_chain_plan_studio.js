@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.76";
+} from "./h3_chain_plan_core.mjs?v=0.6.77";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.76";
+} from "./h3_prompt_history_core.mjs?v=0.6.77";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.76";
+} from "./h3_reference_preview_core.mjs?v=0.6.77";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.76";
+} from "./h3_policy_core.mjs?v=0.6.77";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.76";
+} from "./h3_socket_presentation_core.mjs?v=0.6.77";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -82,6 +82,7 @@ import {
     studioSourceAudioSecond,
     studioSourceSecond,
     studioTimelineLayout,
+    studioTimelinePixelAtSecond,
     studioTimelineScrollAnchorSeconds,
     studioTimelineScrollLeftForAnchor,
     studioTimelineSegments,
@@ -89,8 +90,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.76";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.76";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.77";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.77";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -569,6 +570,7 @@ function mount(node) {
         timelineViewport:null, timelineContent:null, timelineRuler:null,
         timelineZoomInput:null, timelineZoomLabel:null,
         timelineResizeObserver:null, timelineWidths:[], timelineSegments:[],
+        timelinePixelsPerSecond:0,
         timelineRenderedActive:null,
         timelineWorkspaceEndFrame:0, timelineSceneEndFrame:0,
         timelineExtending:false, timelineDragging:false,
@@ -582,7 +584,8 @@ function mount(node) {
         subtitleAssets:[], subtitleAssetsRun:"", subtitleAssetsToken:0,
         playhead:null, player:null, playerAudio:null, sourceAudioPlayer:null,
         sourcePlayer:null, sourceLayer:null, subtitleOverlay:null,
-        editorialClockFrame:null, playerSegmentKey:"",
+        editorialClockFrame:null, mediaClockFrame:null, mediaClockKind:"",
+        playerSegmentKey:"",
         contextPlayers:[],
         playerSlider:null, playerIndex:-1,
         playerPreloadVideo:null, playerPreloadAudio:null,
@@ -1279,6 +1282,19 @@ function mount(node) {
         if (state.checkpointError) host.append(element("span", "h3studio-error", state.checkpointError));
     }
 
+    function timelinePixelAtSecond(seconds) {
+        return studioTimelinePixelAtSecond(
+            seconds,
+            state.timelinePixelsPerSecond,
+            Number(state.timelineContent?.dataset.timelineWidth) || 0,
+        );
+    }
+
+    function positionTimelinePlayhead(seconds) {
+        if (!state.playhead) return;
+        state.playhead.style.left = `${timelinePixelAtSecond(seconds)}px`;
+    }
+
     function renderRuler(ruler, totalSeconds) {
         ruler.replaceChildren();
         const width = Math.max(
@@ -1290,26 +1306,33 @@ function mount(node) {
                 "span",
                 `h3studio-ruler-tick${tick.major ? " h3studio-major" : ""}`,
             );
-            marker.style.left = `${totalSeconds ? tick.seconds / totalSeconds * 100 : 0}%`;
+            marker.style.left = `${timelinePixelAtSecond(tick.seconds)}px`;
             if (tick.major) marker.append(
                 element("span", "", formatClock(tick.seconds)),
             );
             ruler.append(marker);
         }
         const playhead = element("span", "h3studio-playhead");
-        playhead.style.left = `${totalSeconds
-            ? (state.timelinePosition ?? 0) / totalSeconds * 100 : 0}%`;
         ruler.append(playhead);
         state.playhead = playhead;
+        positionTimelinePlayhead(state.timelinePosition ?? 0);
         const hover = element("span", "h3studio-ruler-hover");
         hover.hidden = true;
         ruler.append(hover);
         const targetAtEvent = (event) => {
             if (!totalSeconds) return;
             const rect = ruler.getBoundingClientRect();
+            const localRatio = (event.clientX - rect.left) /
+                Math.max(1, rect.width);
+            if (!(state.timelinePixelsPerSecond > 0)) {
+                return Math.max(0, Math.min(
+                    totalSeconds, localRatio * totalSeconds,
+                ));
+            }
             return Math.max(0, Math.min(
                 totalSeconds,
-                (event.clientX - rect.left) / Math.max(1, rect.width) * totalSeconds,
+                localRatio * width /
+                    Math.max(Number.EPSILON, state.timelinePixelsPerSecond),
             ));
         };
         const showHover = (event) => {
@@ -1317,7 +1340,7 @@ function mount(node) {
             if (target == null) return;
             hover.hidden = false;
             hover.textContent = formatClock(target);
-            hover.style.left = `${totalSeconds ? target / totalSeconds * 100 : 0}%`;
+            hover.style.left = `${timelinePixelAtSecond(target)}px`;
         };
         const scrub = (event) => {
             const target = targetAtEvent(event);
@@ -1414,6 +1437,7 @@ function mount(node) {
         state.timelineZoom = layout.zoom;
         state.timelineWidths = layout.widths;
         state.timelineSegments = layout.segments;
+        state.timelinePixelsPerSecond = layout.pixelsPerSecond;
         content.dataset.timelineWidth = String(layout.contentWidth);
         content.style.width = `${layout.contentWidth}px`;
         for (const host of [
@@ -3720,6 +3744,11 @@ function mount(node) {
             cancelAnimationFrame(state.editorialClockFrame);
             state.editorialClockFrame = null;
         }
+        if (state.mediaClockFrame != null) {
+            cancelAnimationFrame(state.mediaClockFrame);
+            state.mediaClockFrame = null;
+        }
+        state.mediaClockKind = "";
         const current = state.player;
         const generatedAudio = state.playerAudio;
         const sourceAudioCurrent = state.sourceAudioPlayer;
@@ -3775,7 +3804,7 @@ function mount(node) {
             publishActiveScene();
         }
         if (state.playerSlider) state.playerSlider.value = String(target);
-        if (state.playhead) state.playhead.style.left = `${model.totalSeconds ? target / model.totalSeconds * 100 : 0}%`;
+        positionTimelinePlayhead(target);
         if (!state.player) return;
         if (!generated) {
             delete state.player.dataset.source;
@@ -4095,8 +4124,73 @@ function mount(node) {
             state.timelinePosition = bounded;
             slider.value = String(bounded);
             clock.textContent = `${formatClock(bounded)} / ${formatClock(model.totalSeconds)}`;
-            if (state.playhead) state.playhead.style.left = `${model.totalSeconds ? bounded / model.totalSeconds * 100 : 0}%`;
+            positionTimelinePlayhead(bounded);
             updateSubtitleOverlay(bounded);
+        };
+        const sourceTimelineSecond = () => {
+            const descriptor = sourceAudio();
+            if (!descriptor) return Number(state.timelinePosition) || 0;
+            return Math.max(
+                0,
+                (Number(sourceTimelineAudio.currentTime) || 0) -
+                    Math.max(0, Number(descriptor.seek_seconds) || 0),
+            );
+        };
+        const refreshVideoTransport = () => {
+            if (!video.dataset.source) return;
+            const current = playerTimelineSecond();
+            updateTransportPosition(current);
+            synchronizeGeneratedAudio(false);
+            synchronizeSourceTimelineAudio(false, current);
+            syncSource();
+        };
+        const refreshSourceTransport = () => {
+            if (!sourceAudio() || !sourceTimelineAudio.dataset.source) return;
+            const current = sourceTimelineSecond();
+            const model = timelineModel();
+            const location = locateStudioTimelineSegment(
+                model.segments, current,
+            );
+            if (location.index >= 0 &&
+                    location.key !== state.playerSegmentKey) {
+                seekTimeline(current, !sourceTimelineAudio.paused);
+            } else updateTransportPosition(current);
+        };
+        const stopMediaClock = (kind = null) => {
+            if (kind && state.mediaClockKind !== kind) return;
+            if (state.mediaClockFrame != null) {
+                cancelAnimationFrame(state.mediaClockFrame);
+                state.mediaClockFrame = null;
+            }
+            state.mediaClockKind = "";
+        };
+        const startMediaClock = (kind) => {
+            stopMediaClock();
+            stopEditorialClock();
+            state.mediaClockKind = kind;
+            const tick = () => {
+                if (!video.isConnected || state.player !== video ||
+                        state.mediaClockKind !== kind) {
+                    stopMediaClock(kind);
+                    return;
+                }
+                if (kind === "video") {
+                    if (video.paused || video.ended) {
+                        stopMediaClock(kind);
+                        return;
+                    }
+                    refreshVideoTransport();
+                } else {
+                    if (sourceTimelineAudio.paused ||
+                            sourceTimelineAudio.ended || video.dataset.source) {
+                        stopMediaClock(kind);
+                        return;
+                    }
+                    refreshSourceTransport();
+                }
+                state.mediaClockFrame = requestAnimationFrame(tick);
+            };
+            state.mediaClockFrame = requestAnimationFrame(tick);
         };
         const stopEditorialClock = () => {
             if (state.editorialClockFrame == null) return;
@@ -4105,6 +4199,7 @@ function mount(node) {
         };
         const startEditorialClock = () => {
             stopEditorialClock();
+            stopMediaClock();
             const originPosition = Number(state.timelinePosition) || 0;
             const originTime = performance.now();
             const tick = (now) => {
@@ -4196,8 +4291,12 @@ function mount(node) {
             synchronizeSourceTimelineAudio(true);
             if (sourceVideo.dataset.source) void sourceVideo.play().catch(() => {});
         });
-        video.addEventListener("playing", releaseHandoffFrame);
+        video.addEventListener("playing", () => {
+            releaseHandoffFrame();
+            startMediaClock("video");
+        });
         video.addEventListener("pause", () => {
+            stopMediaClock("video");
             play.textContent = "▶";
             // The source track is a monitor slaved to the video transport.
             // Always stop it on pause; automatic scene handoff will restart it
@@ -4205,6 +4304,7 @@ function mount(node) {
             pausePlayerMonitors();
         });
         video.addEventListener("waiting", () => {
+            stopMediaClock("video");
             generatedAudio.pause(); sourceTimelineAudio.pause(); sourceVideo.pause();
         });
         generatedAudio.addEventListener("canplay", () => {
@@ -4218,9 +4318,13 @@ function mount(node) {
             synchronizeSourceTimelineAudio(!video.paused);
         });
         sourceTimelineAudio.addEventListener("play", () => {
-            if (!video.dataset.source) play.textContent = "❚❚";
+            if (!video.dataset.source) {
+                play.textContent = "❚❚";
+                startMediaClock("source");
+            }
         });
         sourceTimelineAudio.addEventListener("pause", () => {
+            stopMediaClock("source");
             if (!video.dataset.source) play.textContent = "▶";
         });
         video.addEventListener("seeking", () => {
@@ -4239,37 +4343,17 @@ function mount(node) {
             synchronizeGeneratedAudio(false);
             synchronizeSourceTimelineAudio(false); syncSource();
         });
-        video.addEventListener("timeupdate", () => {
-            const model = timelineModel();
-            const current = Math.min(
-                model.totalSeconds,
-                studioEditorialSceneStartSeconds(
-                    model.segments, state.playerIndex,
-                ) + video.currentTime,
-            );
-            updateTransportPosition(current);
-            synchronizeGeneratedAudio(false);
-            synchronizeSourceTimelineAudio(false, current); syncSource();
-        });
+        // timeupdate is only a low-frequency fallback. The visible transport
+        // is driven from requestAnimationFrame while media is playing so its
+        // clock and red timeline line remain on the same frame.
+        video.addEventListener("timeupdate", refreshVideoTransport);
         sourceTimelineAudio.addEventListener("timeupdate", () => {
             if (video.dataset.source) return;
-            const descriptor = sourceAudio();
-            if (!descriptor) return;
-            const current = Math.max(
-                0,
-                (Number(sourceTimelineAudio.currentTime) || 0) -
-                    Math.max(0, Number(descriptor.seek_seconds) || 0),
-            );
-            const model = timelineModel();
-            const location = locateStudioTimelineSegment(model.segments, current);
-            if (location.index >= 0 && location.key !== state.playerSegmentKey) {
-                seekTimeline(current, !sourceTimelineAudio.paused);
-                return;
-            }
-            updateTransportPosition(current);
+            refreshSourceTransport();
         });
         sourceTimelineAudio.addEventListener("ended", () => {
             if (video.dataset.source) return;
+            stopMediaClock("source");
             const descriptor = sourceAudio();
             const current = Math.max(0, Number(
                 descriptor?.available_duration_seconds
@@ -4279,6 +4363,7 @@ function mount(node) {
             startEditorialClock();
         });
         video.addEventListener("ended", () => {
+            stopMediaClock("video");
             captureHandoffFrame();
             generatedAudio.pause(); sourceVideo.pause();
             const model = timelineModel();
@@ -4761,7 +4846,6 @@ function mount(node) {
         }
         const panelHost = element("div", "h3studio-panel"); state.panelHost = panelHost;
         root.append(head, toolbar, status, shell, panelHost);
-        renderRuler(ruler, timelineModel().totalSeconds);
         renderToolbarState(); renderStatus();
         renderTimeline({
             revealActive:revealTimelineActive,
