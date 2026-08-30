@@ -56,6 +56,14 @@ the internal implementation for Loop-only modes the upstream contract does not
 yet expose. This runtime integration was reviewed against upstream revision
 `5839d453efa0346c1da49acc39fc65050c5c48c0` (2026-08-30), GPL-3.0.
 
+The retained internal fallback was also brought to that revision's arbitrary
+Guide-length and `target_start` placement behavior. `h3_audio_grid.py` adapts
+the same revision's exact 40 Hz PCM-grid helper so source-audio continuation
+cannot be shifted by a generic VAE wrapper's normal center crop. Local
+keyframe arbitration, latent Guide, audio-only and longer-audio continuity,
+future anchors, signed fractional audio placement, and legacy-core support
+remain extensions of this loop pack.
+
 The experimental masked AV chain mode directly adapts that GPL-3.0 project's
 masked existing-video extension and its capability-aware runtime compatibility
 for ComfyUI PR #15375. In this loop integration the preserved source is the
