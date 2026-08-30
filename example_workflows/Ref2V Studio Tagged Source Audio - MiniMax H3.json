@@ -2,7 +2,7 @@
   "id": "c0b8422a-84d4-44f8-91ce-31c68a9a119e",
   "revision": 0,
   "last_node_id": 1956,
-  "last_link_id": 116,
+  "last_link_id": 117,
   "nodes": [
     {
       "id": 1,
@@ -532,9 +532,7 @@
         {
           "name": "source_audio_slice",
           "type": "AUDIO",
-          "links": [
-            100
-          ]
+          "links": null
         },
         {
           "name": "status",
@@ -807,6 +805,11 @@
           "name": "reference_fingerprint",
           "type": "STRING",
           "links": null
+        },
+        {
+          "name": "refmod_sources",
+          "type": "H3_REF_LIST",
+          "links": null
         }
       ],
       "title": "MiniMax H3 Tagged Ref2VA — TAGGED REF2VA — COMPILES @TAGS PER SCENE",
@@ -825,7 +828,8 @@
         "strict",
         "512",
         "timestamped_video",
-        true
+        true,
+        "native_ref2va"
       ],
       "color": "#346434",
       "bgcolor": "rgba(24,24,27,.9)"
@@ -2015,9 +2019,7 @@
         {
           "name": "reference_fingerprint",
           "type": "STRING",
-          "links": [
-            96
-          ]
+          "links": null
         },
         {
           "name": "status",
@@ -2058,6 +2060,7 @@
           "name": "AUDIO",
           "type": "AUDIO",
           "links": [
+            100,
             108,
             111
           ]
@@ -2112,13 +2115,16 @@
           "name": "references",
           "type": "H3_TAGGED_REFERENCES",
           "links": [
-            101
+            101,
+            117
           ]
         },
         {
           "name": "reference_fingerprint",
           "type": "STRING",
-          "links": null
+          "links": [
+            96
+          ]
         },
         {
           "name": "status",
@@ -2126,7 +2132,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Tagged Audio Ref — 3 — @audio_1 / CURRENT SCENE SLICE",
+      "title": "MiniMax H3 Tagged Audio Ref — 3 — @audio_1 / FULL TRACK → CURRENT SCENE",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.4.1",
@@ -2135,8 +2141,8 @@
       },
       "widgets_values": [
         "audio_1",
-        "standalone",
-        false
+        "source_timeline",
+        true
       ],
       "color": "#653c4a",
       "bgcolor": "rgba(24,24,27,.9)"
@@ -2176,7 +2182,7 @@
         {
           "name": "tagged_references",
           "type": "H3_TAGGED_REFERENCES",
-          "link": null,
+          "link": 117,
           "shape": 7
         },
         {
@@ -3102,7 +3108,7 @@
     ],
     [
       96,
-      1948,
+      1952,
       1,
       1700,
       1,
@@ -3118,8 +3124,8 @@
     ],
     [
       100,
-      1702,
-      12,
+      1951,
+      0,
       1952,
       0,
       "AUDIO"
@@ -3195,6 +3201,14 @@
       1700,
       2,
       "H3_CHAIN_POLICY"
+    ],
+    [
+      117,
+      1952,
+      0,
+      1930,
+      3,
+      "H3_TAGGED_REFERENCES"
     ]
   ],
   "groups": [

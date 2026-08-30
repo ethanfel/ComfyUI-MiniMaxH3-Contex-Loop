@@ -383,11 +383,24 @@ def _reference_registry(workflow: dict[str, Any], graph: Graph
             continue
         link = graph.links[int(value["link"])]
         origin = graph.nodes[link[1]]
-        # A timeline-derived Tagged Audio node lives downstream of Current
-        # Shot. Returning it to preflight or Plan would close an execution
-        # cycle, so that demo relies on source-timeline validation instead.
+        # Legacy timeline demos fed Current Shot's dynamic slice into Tagged
+        # Audio. Returning that registry to preflight or Plan would close an
+        # execution cycle. A current source_timeline node instead receives the
+        # static full Load Audio track and is safe to return.
         if origin.get("type") == "MiniMaxH3TaggedAudioReference":
-            return None
+            values = origin.get("widgets_values") or []
+            if len(values) < 2 or values[1] != "source_timeline":
+                return None
+            audio_input = _input(origin, "audio")
+            audio_link_id = audio_input.get("link")
+            if audio_link_id is None:
+                return None
+            audio_link = graph.links.get(int(audio_link_id))
+            if audio_link is None:
+                return None
+            audio_origin = graph.nodes[int(audio_link[1])]
+            if audio_origin.get("type") == "MiniMaxH3ChainCurrent":
+                return None
         return origin, int(link[2]), kind
     return None
 
@@ -500,20 +513,30 @@ def _migrate_source_audio_demo(workflow: dict[str, Any], graph: Graph) -> None:
     graph.workflow = workflow
     graph.nodes = {item["id"]: item for item in workflow["nodes"]}
     graph.links = {item[0]: item for item in workflow["links"]}
-    if _node(workflow, "MiniMaxH3SourceTimeline") is not None:
-        return
     loader = _node(workflow, "LoadAudio")
     audio_ref = _node(workflow, "MiniMaxH3TaggedAudioReference")
+    conditioner = _node(workflow, "MiniMaxH3TaggedReferenceToVideo")
     current = _node(workflow, "MiniMaxH3ChainCurrent")
     start = _node(workflow, "MiniMaxH3ChainLoopStart")
     studio = _node(workflow, "MiniMaxH3ChainPlanStudio")
     manifest = _node(workflow, "MiniMaxH3ChainManifestLoad")
     plan = _node(workflow, "MiniMaxH3ChainPlan")
     assert all(item is not None for item in (
-        loader, audio_ref, current, start, studio, manifest, plan))
+        loader, audio_ref, conditioner, current, start, studio, manifest,
+        plan))
 
-    timeline = graph.add_node(_source_timeline_node(loader))
-    graph.connect(loader, 0, timeline, 1, "AUDIO")
+    timeline = _node(workflow, "MiniMaxH3SourceTimeline")
+    if timeline is None:
+        timeline = graph.add_node(_source_timeline_node(loader))
+    timeline_audio = _input(timeline, "source_audio")
+    timeline_audio_link = timeline_audio.get("link")
+    if timeline_audio_link is None:
+        graph.connect(loader, 0, timeline,
+                      timeline["inputs"].index(timeline_audio), "AUDIO")
+    else:
+        link = graph.links[int(timeline_audio_link)]
+        if int(link[1]) != int(loader["id"]) or int(link[2]) != 0:
+            graph.reorigin(int(timeline_audio_link), loader, 0)
 
     # Replace the legacy full-track fan-out. The typed descriptor is carried
     # in recursive state and saved metadata; Current Shot exposes only the
@@ -526,45 +549,70 @@ def _migrate_source_audio_demo(workflow: dict[str, Any], graph: Graph) -> None:
         if legacy is not None and legacy.get("link") is not None:
             graph.remove_link(int(legacy["link"]))
 
-    start_timeline = graph.add_input(
-        start, "source_timeline", "H3_SOURCE_TIMELINE")
-    graph.connect(timeline, 0, start,
-                  start["inputs"].index(start_timeline),
-                  "H3_SOURCE_TIMELINE")
-    studio_timeline = _input(studio, "source_timeline")
-    graph.connect(timeline, 0, studio,
-                  studio["inputs"].index(studio_timeline),
-                  "H3_SOURCE_TIMELINE")
-    manifest_timeline = graph.add_input(
-        manifest, "source_timeline", "H3_SOURCE_TIMELINE")
-    graph.connect(timeline, 0, manifest,
-                  manifest["inputs"].index(manifest_timeline),
-                  "H3_SOURCE_TIMELINE")
+    for consumer in (start, studio, manifest):
+        timeline_input = graph.add_input(
+            consumer, "source_timeline", "H3_SOURCE_TIMELINE")
+        timeline_link_id = timeline_input.get("link")
+        timeline_link = (graph.links.get(int(timeline_link_id))
+                         if timeline_link_id is not None else None)
+        if not (timeline_link is not None
+                and int(timeline_link[1]) == int(timeline["id"])
+                and int(timeline_link[2]) == 0):
+            graph.connect(
+                timeline, 0, consumer,
+                consumer["inputs"].index(timeline_input),
+                "H3_SOURCE_TIMELINE")
 
-    audio_link = int(_input(audio_ref, "audio")["link"])
-    graph.reorigin(audio_link, current, 12)
-    audio_ref["widgets_values"] = ["audio_1", "standalone", False]
-    audio_ref["title"] = "3 — @audio_1 / CURRENT SCENE SLICE"
+    # source_timeline mode deliberately receives the same static full track as
+    # Loop Start. Tagged Audio derives the current scene window internally,
+    # keeping the registry safe to fingerprint and pass to preflight.
+    audio_input = _input(audio_ref, "audio")
+    audio_link_id = audio_input.get("link")
+    if audio_link_id is None:
+        graph.connect(loader, 0, audio_ref,
+                      audio_ref["inputs"].index(audio_input), "AUDIO")
+    else:
+        audio_link = graph.links[int(audio_link_id)]
+        if (int(audio_link[1]) != int(loader["id"])
+                or int(audio_link[2]) != 0):
+            graph.reorigin(int(audio_link_id), loader, 0)
+    loader_audio_links = loader["outputs"][0].get("links") or []
+    loader["outputs"][0]["links"] = sorted(loader_audio_links) or None
+    audio_ref["widgets_values"] = ["audio_1", "source_timeline", True]
+    audio_ref["title"] = "3 — @audio_1 / FULL TRACK → CURRENT SCENE"
     current["widgets_values"] = [True]
 
-    # The previous picture registry remains a static generation fingerprint.
-    # Source audio is now recorded as a canonical per-scene dependency, so its
-    # downstream slice must not feed back into Plan.
+    # The full registry is now static and can fingerprint both pictures and
+    # source audio without routing Current Shot back into Plan.
     fingerprint_link = _input(plan, "generation_fingerprint").get("link")
-    previous_link = _input(audio_ref, "previous").get("link")
-    if fingerprint_link is not None and previous_link is not None:
-        previous = graph.links[int(previous_link)]
-        graph.reorigin(int(fingerprint_link), graph.nodes[previous[1]], 1)
+    if fingerprint_link is None:
+        graph.connect(
+            audio_ref, 1, plan,
+            plan["inputs"].index(_input(plan, "generation_fingerprint")),
+            "STRING")
+    else:
+        fingerprint = graph.links[int(fingerprint_link)]
+        if (int(fingerprint[1]) != int(audio_ref["id"])
+                or int(fingerprint[2]) != 1):
+            graph.reorigin(int(fingerprint_link), audio_ref, 1)
+
+    outputs = conditioner.setdefault("outputs", [])
+    if not any(item.get("name") == "refmod_sources" for item in outputs):
+        outputs.append({
+            "name": "refmod_sources", "type": "H3_REF_LIST", "links": None})
+    conditioner_values = conditioner.setdefault("widgets_values", [])
+    if len(conditioner_values) == 9:
+        conditioner_values.append("native_ref2va")
 
 
 def migrate(workflow: dict[str, Any], name: str) -> dict[str, Any]:
     if _node(workflow, "MiniMaxH3ChainPlan") is not None:
         graph = Graph(workflow)
         _add_chain_policy(workflow, graph)
-        _add_preflight(workflow, graph)
-        _wire_scene_resolved_trim(workflow, graph)
         if name == SOURCE_AUDIO_DEMO:
             _migrate_source_audio_demo(workflow, graph)
+        _add_preflight(workflow, graph)
+        _wire_scene_resolved_trim(workflow, graph)
         graph.finish()
     _prefix_custom_titles(workflow)
     return workflow

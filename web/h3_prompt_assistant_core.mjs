@@ -1,4 +1,4 @@
-import {promptValueToText, sharedPrompt} from "./h3_chain_plan_core.mjs?v=0.6.75";
+import {promptValueToText, sharedPrompt} from "./h3_chain_plan_core.mjs?v=0.6.76";
 
 export const PROMPT_ASSIST_MODES = Object.freeze([
     {id: "rewrite", label: "Rewrite"},
