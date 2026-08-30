@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Tagged Audio `source_timeline` identity validation for the shipped
+  full-track workflow. Loop Start's route fingerprint and Tagged Audio's
+  waveform-content fingerprint are now recognized as two identities of the
+  same Source Timeline audio, while genuinely different tracks remain blocked.
+
 - Plan Studio Player now uses its preloaded media as a real second playback
   buffer. At adjacent saved-scene boundaries the decoded video and separate
   generated-audio elements are promoted immediately, the previous elements

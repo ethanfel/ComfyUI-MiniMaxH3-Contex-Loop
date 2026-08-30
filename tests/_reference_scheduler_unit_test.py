@@ -976,6 +976,47 @@ timeline_slice, timeline_detail = chain._tagged_audio_reference_value(
 assert int(timeline_slice["waveform"].shape[-1]) == 92
 assert float(timeline_slice["waveform"][0, 0, 0]) == 50
 assert "@song source timeline 0.500..1.417s" in timeline_detail
+
+# The shipped Source Timeline workflow connects one Load Audio output to both
+# Source Timeline and Tagged Audio. Loop Start records the timeline route
+# fingerprint, while Tagged Audio records the original waveform fingerprint;
+# both must validate as the same source without weakening mismatch detection.
+deferred_timeline = chain._make_source_timeline(
+    source_audio=timeline_audio, embedded_audio="ignore")
+timeline_route_state = {
+    **timeline_state,
+    "source_timeline": deferred_timeline,
+    "plan": {
+        **timeline_state["plan"],
+        "compatibility": {
+            **timeline_state["plan"]["compatibility"],
+            "source_audio_hash": deferred_timeline[
+                "fingerprints"]["audio"],
+            "source_timeline_fingerprint": deferred_timeline[
+                "fingerprints"]["timeline"],
+        },
+    },
+}
+timeline_route_slice, timeline_route_detail = (
+    chain._tagged_audio_reference_value(
+        timeline_entry, timeline_route_state, 2, 2, 22))
+assert chain.torch.equal(
+    timeline_route_slice["waveform"], timeline_slice["waveform"])
+assert "@song source timeline 0.500..1.417s" in timeline_route_detail
+different_route_audio = {
+    "waveform": timeline_audio["waveform"] + 1,
+    "sample_rate": timeline_audio["sample_rate"],
+}
+different_route_entry = chain.MiniMaxH3TaggedAudioReference().add(
+    different_route_audio, "song", "source_timeline", False)[0]["entries"][0]
+try:
+    chain._tagged_audio_reference_value(
+        different_route_entry, timeline_route_state, 2, 2, 22)
+except ValueError as exc:
+    assert "different full source track" in str(exc)
+else:
+    raise AssertionError(
+        "source-timeline route accepted different tagged audio content")
 different_timeline_state = {
     **timeline_state,
     "plan": {
