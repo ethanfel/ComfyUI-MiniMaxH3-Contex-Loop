@@ -58,6 +58,12 @@ visual Guide, future end anchors, and the guarded pre-native-core fallback.
 The adapter also resolves carried-head keyframe collisions and restores exact
 latent-audio placement after the upstream call.
 
+The retained engine follows the current provider contract for arbitrary exact
+Guide lengths, interior `target_start` placement, native-run batching, and
+end-aligned 40 Hz source-audio encoding. This keeps a capability-gated fallback
+scene behaviorally consistent instead of silently reverting to the older
+snap-to-grid implementation.
+
 Compatible legacy patch copies share ownership markers; the second copy
 normally stands down.
 

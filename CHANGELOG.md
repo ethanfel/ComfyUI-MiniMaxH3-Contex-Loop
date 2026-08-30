@@ -4,6 +4,15 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Updated the retained internal Motion Context engine to current upstream
+  Guide behavior: arbitrary off-grid visual lengths remain exact, head-mode
+  Guides can be placed at an interior `target_start`, unrelated anchors are
+  preserved outside that interval, and decoded source audio is end-aligned on
+  an exact 40 Hz PCM grid before VAE encoding. Native H3 run lengths still use
+  one efficient video Guide. Loop-only latent Guide, audio-only carry,
+  longer-audio windows, future anchors, fractional audio correction, and the
+  guarded legacy-core path remain available.
+
 - Chain Context now transparently delegates compatible Guide scenes to
   seitanism's installed **H3 Motion Context** node. Existing workflows and
   sockets do not change. The adapter preserves Loop keyframe arbitration,

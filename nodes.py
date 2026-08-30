@@ -19,9 +19,10 @@ encode_mode
           stills. Far fewer rows and one VAE load.
 
 anchor_mode
-  head    pinned frames occupy indices 0..N-1 of the delivered timeline.
-          They come back in the output, so trim that many frames off the
-          front before concatenating.
+  head    pinned frames occupy target_start..target_start+N-1. At the normal
+          target_start 0 they come back at the head of the output, so trim
+          that many frames before concatenating. Interior placement returns
+          no trim because it is a scene-local Guide rather than an overlap.
   before  pinned frames sit at negative indices, ending at -1, so
           delivered frame 0 continues from them and nothing is wasted.
           Their time coordinates land below text_len, which is the range
@@ -43,6 +44,7 @@ from .av_timing import (
     AUDIO_WITH_OVERLAP_WAVEFORM_KEY,
     conform_waveform_length,
 )
+from .h3_audio_grid import audio_grid_geometry, encode_exact_audio_grid
 
 try:
     from safetensors.torch import load_file as _st_load, save_file as _st_save
@@ -143,14 +145,12 @@ def _prepare_native_guide_conditioning(conditioning):
     _activate_inline_patches()
     return conditioning
 
-# Run lengths the video VAE's downscale formula max(1, (n - 5) // 17 * 5 + 2)
-# actually distinguishes. Anything between two grid points encodes to the same
-# number of latent steps as the lower one, but the steps then cover the FIRST
-# `covered` frames of the input rather than the last: encoding 10 frames yields
-# the same 2 steps as encoding 5, representing frames [-10..-6] of the source
-# clip instead of [-5..-1]. The pinned run would end five frames early and the
-# delivered clip would continue from the wrong instant. So off-grid requests
-# are snapped DOWN before slicing, keeping content and coverage in agreement.
+# Enumerated native runs retained for masked-prefix policy selection. Motion
+# Context recognizes the complete ``1`` or ``17k+5`` family algebraically, so
+# valid runs beyond this policy table still use one H3 video-VAE Guide.
+# Off-grid requests must not be encoded as one video: the VAE would cover only
+# the lower grid length and shift the seam away from the source tail. They are
+# represented as native/legacy still-guide sequences instead.
 VIDEO_RUN_GRID = (
     243, 226, 209, 192, 175, 158, 141, 124,
     107, 90, 73, 56, 39, 22, 5, 1,
@@ -185,12 +185,8 @@ def _resize(image, width, height, crop):
     return samples.movedim(1, -1)
 
 
-def _encode_tail_audio(audio_vae, audio, seconds):
-    """Encode the last `seconds` of a clip's audio with the H3 audio VAE.
-
-    Returns ([1, 32, 2, T] latent, T) where T counts 40 Hz latent steps,
-    matching what the layout calls ref_audio_t.
-    """
+def _encode_tail_audio(audio_vae, audio, frame_count):
+    """Encode a seam-aligned audio tail on H3's exact 40 Hz grid."""
     waveform = audio["waveform"]  # [B, C, L]
     sr = int(audio["sample_rate"])
     vae_sr = int(getattr(audio_vae, "audio_sample_rate", 32000))
@@ -200,15 +196,52 @@ def _encode_tail_audio(audio_vae, audio, seconds):
                 "h3_motion_context: context_audio is %d Hz but the VAE wants %d Hz "
                 "and torchaudio is not available to resample." % (sr, vae_sr))
         waveform = torchaudio.functional.resample(waveform, sr, vae_sr)
-    want = int(round(seconds * vae_sr))
+    frame_count = int(frame_count)
+    expected_steps = int(round(frame_count / float(FPS) * AUDIO_HZ))
+    grid_sr, samples_per_latent, grid_samples = audio_grid_geometry(
+        audio_vae, expected_steps)
+    if grid_sr != vae_sr:
+        raise RuntimeError(
+            "h3_motion_context: audio VAE grid reports %d Hz but "
+            "audio_sample_rate is %d" % (grid_sr, vae_sr))
+
     have = int(waveform.shape[-1])
-    if have < want:
-        _LOG.warning("h3_motion_context: context_audio is %.3fs, shorter than the "
-                     "%.3fs of pinned video. Pinning what there is.",
-                     have / vae_sr, seconds)
+    picture_samples = int(round(frame_count / float(FPS) * vae_sr))
+    if have >= grid_samples:
+        window = waveform[..., have - grid_samples:]
+        steps = expected_steps
     else:
-        waveform = waveform[..., have - want:]
-    z = audio_vae.encode(waveform[:1].movedim(1, -1))  # [1, 32, 2, T]
+        # A 24 fps boundary can end part-way through the nearest 40 Hz cell.
+        # Preserve the important right/seam edge and pad only that partial
+        # older boundary cell. A genuinely short clip uses its final complete
+        # cells instead of fabricating a long prefix.
+        expected_overhang = max(0, grid_samples - picture_samples)
+        tolerance = max(2, int(round(vae_sr * 0.001)))
+        shortage = grid_samples - have
+        if (have >= picture_samples - tolerance
+                and shortage <= expected_overhang + tolerance):
+            window = torch.nn.functional.pad(waveform, (shortage, 0))
+            steps = expected_steps
+            _LOG.warning(
+                "h3_motion_context: context audio ends on the picture "
+                "boundary but the H3 grid extends %d samples earlier; "
+                "left-padding that partial boundary cell", shortage)
+        else:
+            steps = min(expected_steps, have // samples_per_latent)
+            if steps < 1:
+                raise ValueError(
+                    "h3_motion_context: context_audio is too short for one "
+                    "H3 audio step")
+            grid_samples = steps * samples_per_latent
+            window = waveform[..., have - grid_samples:]
+            _LOG.warning(
+                "h3_motion_context: context_audio is shorter than the "
+                "requested %d-frame window; pinning the final %d complete "
+                "H3 audio steps", frame_count, steps)
+
+    z, _diagnostics = encode_exact_audio_grid(
+        audio_vae, window[:1], steps,
+        "h3_motion_context: context tail")
     return z, int(z.shape[-1])
 
 
@@ -346,22 +379,24 @@ class MiniMaxH3MotionContext:
                                "clip. Supplying the whole clip is safe: only "
                                "the requested tail is used."}),
                 "context_length": ("INT", {
-                    "default": 5, "min": 1, "max": 243,
-                    "tooltip": "Frames of the previous clip to carry over. In "
-                               "video mode only native 17-frame grid values "
-                               "(1, 5, 22, ... 243) are distinct; "
-                               "anything else is snapped DOWN to the nearest so "
-                               "the pinned run always ends at the clip's last "
-                               "frame."}),
+                    "default": 5, "min": 1, "max": 9999,
+                    "tooltip": "Exact number of previous-clip frames to carry. "
+                               "Native H3 runs (1, 5, 22, 39, ...) use one "
+                               "efficient video Guide; off-grid values use an "
+                               "exact native still sequence instead of being "
+                               "shortened."}),
                 "encode_mode": (["video", "frames"], {
                     "default": "video",
-                    "tooltip": "video: one VAE call, motion lives inside the "
-                               "latent, fewer rows. frames: one call per frame, "
-                               "each pinned as a separate still."}),
+                    "tooltip": "video: one efficient temporal VAE call for "
+                               "native H3 run lengths (1, 5, 22, ...); exact "
+                               "off-grid lengths safely fall back to one call "
+                               "per frame. frames: always pin each frame as a "
+                               "separate still."}),
                 "anchor_mode": (["head", "before"], {
                     "default": "head",
-                    "tooltip": "head: pinned frames occupy the first indices and "
-                               "come back in the output, so trim them. before: "
+                    "tooltip": "head: place the Guide on the target timeline; "
+                               "target_start 0 reproduces it at the beginning "
+                               "and returns a trim count. before: legacy "
                                "negative indices, nothing wasted, but the "
                                "coordinates overlap the text rows."}),
                 "crop": (["disabled", "center"], {
@@ -371,14 +406,14 @@ class MiniMaxH3MotionContext:
                                "target size; center preserves aspect ratio "
                                "and center-crops."}),
                 "audio_context_length": ("INT", {
-                    "default": 22, "min": 0, "max": 240,
+                    "default": 22, "min": 0, "max": 9999,
                     "tooltip": "Frames of tail audio to pin, independent of the "
                                "video window. 0 follows context_length. In "
                                "timeline mode the window is END-aligned with "
                                "the pinned video, so 22 with a 22-frame video "
                                "window overlays it exactly; longer windows "
                                "extend backwards into vacated coordinate "
-                               "space (untested)."}),
+                               "space for longer or audio-only continuity."}),
                 "audio_mode": (["timeline", "ref"], {
                     "default": "timeline",
                     "tooltip": "timeline: pinned audio gets coordinates on "
@@ -389,6 +424,13 @@ class MiniMaxH3MotionContext:
                                "clip, which the model imitates (similar "
                                "music, not phase-locked) rather than "
                                "continues."}),
+                "target_start": ("INT", {
+                    "default": 0, "min": 0, "max": 999999,
+                    "tooltip": "Target frame where a head-mode visual Guide "
+                               "begins. 0 keeps normal continuation and returns "
+                               "the overlap trim; a positive value places the "
+                               "Guide inside the target and returns trim 0. "
+                               "Legacy before mode requires 0."}),
             },
             "optional": {
                 "context_latent": ("LATENT", {
@@ -423,20 +465,22 @@ class MiniMaxH3MotionContext:
     OUTPUT_TOOLTIPS = (
         "Conditioning with the previous clip's motion and optional timeline "
         "audio appended. Connect this to the guider/sampler path.",
-        "Number of pinned leading frames reproduced in head mode. Connect to "
-        "MiniMax H3 Contex Loop Trim; before mode returns 0.",
+        "Number of pinned leading frames reproduced at target_start 0. "
+        "Connect to MiniMax H3 Contex Loop Trim; before mode and interior "
+        "Guide placement return 0.",
     )
     FUNCTION = "apply"
     CATEGORY = "conditioning/minimax"
     DESCRIPTION = ("Pin a run of consecutive frames from a previous clip as "
                    "never-denoised conditioning rows, so the model reads real "
-                   "motion instead of guessing it from a single still. A stock "
-                   "last_frame target is preserved outside the carried head.")
+                   "motion instead of guessing it from a single still. Stock "
+                   "and semantic anchors are preserved outside the carried "
+                   "Guide interval.")
 
     def apply(self, conditioning, vae, latent, context_frames, context_length,
               encode_mode, anchor_mode, crop, audio_context_length=22,
               audio_mode="timeline", context_latent=None, audio_vae=None,
-              context_audio=None, video_context_latent=None):
+              context_audio=None, video_context_latent=None, target_start=0):
         guide_api = _activate_inline_patches()
         native_guides = guide_api == "native"
 
@@ -455,32 +499,30 @@ class MiniMaxH3MotionContext:
             _LOG.warning("h3_motion_context: only %d frames supplied, pinning %d",
                          available, n)
 
-        if n > 0 and encode_mode == "video":
-            # snap down to the VAE grid BEFORE slicing, so the frames encoded
-            # are exactly the frames the latent steps will cover (see
-            # VIDEO_RUN_GRID). Slicing the last n and letting the VAE keep the
-            # first `covered` of them would pin a run ending before the clip
-            # does, and the join would jump by the difference.
-            run = next(g for g in VIDEO_RUN_GRID if g <= n)
-            if run != n:
-                _LOG.warning(
-                    "h3_motion_context: %d frames is off the VAE grid; pinning "
-                    "the last %d instead (usable runs: %s)",
-                    n, run, ", ".join(str(value) for value in
-                                     reversed(VIDEO_RUN_GRID)))
-            n = run
-
-        if n >= frame_count:
+        start = int(target_start)
+        if start < 0:
+            raise ValueError("h3_motion_context: target_start must be >= 0")
+        if anchor_mode == "before" and start != 0:
             raise ValueError(
-                "h3_motion_context: asked to pin %d frames into a %d frame clip. "
-                "The pinned run must be a small fraction of the timeline."
-                % (n, frame_count))
+                "h3_motion_context: target_start applies only to head mode; "
+                "legacy before mode requires target_start=0.")
+        if start and n <= 0:
+            raise ValueError(
+                "h3_motion_context: target_start requires positive visual "
+                "context.")
+        if n > 0 and start + n >= frame_count:
+            raise ValueError(
+                "h3_motion_context: guide span [%d, %d) does not leave room "
+                "in a %d-frame clip; the Guide must leave room for newly "
+                "generated frames." % (start, start + n, frame_count))
 
         blocks = []
         offsets = []
         span = 0
         direct_video = None
-        if (n > 0 and encode_mode == "video"
+        native_video_run = (
+            n == 1 or (n >= 5 and (n - 5) % 17 == 0))
+        if (n > 0 and encode_mode == "video" and native_video_run
                 and video_context_latent is not None):
             try:
                 direct_video = _video_guide_tail_from_latent(
@@ -495,7 +537,7 @@ class MiniMaxH3MotionContext:
             # the LAST n frames of the incoming clip become the pinned run
             tail = _resize(context_frames[available - n:], width, height, crop)
 
-        if n > 0 and encode_mode == "video":
+        if n > 0 and encode_mode == "video" and native_video_run:
             # Direct generated-latent Guide avoids a lossy VAE round trip.
             # Imported/incompatible context retains the original RGB path.
             enc = (direct_video if direct_video is not None
@@ -509,15 +551,10 @@ class MiniMaxH3MotionContext:
             offsets = _step_offsets(steps)
             covered = _pixel_frames(steps)
             if covered != n:
-                # n was snapped to the grid above, so a mismatch here means
-                # the VAE's downscale formula changed underneath us and the
-                # pinned content no longer lines up with the positions we
-                # would write. Refuse rather than render a shifted join.
                 raise RuntimeError(
-                    "h3_motion_context: %d frames encoded to %d latent steps "
-                    "covering %d frames; the VAE grid no longer matches "
-                    "VIDEO_RUN_GRID. Upstream VAE change, refusing to run."
-                    % (n, steps, covered))
+                    "h3_motion_context: exact %d-frame Guide encoded to %d "
+                    "latent steps covering %d frames; refusing a "
+                    "phase-shifted Guide." % (n, steps, covered))
             if native_guides:
                 # Core Add Guide accepts one multi-frame latent and lays out
                 # all of its video steps. Keeping the encoded run intact is
@@ -533,15 +570,26 @@ class MiniMaxH3MotionContext:
                     "video steps directly from the previous sampled latent",
                     n, steps)
         elif n > 0:
+            if encode_mode == "video" and not native_video_run:
+                _LOG.info(
+                    "h3_motion_context: %d-frame context is off the native "
+                    "H3 clip grid; using an exact per-frame Guide sequence", n)
             for i in range(n):
-                blocks.append(vae.encode(tail[i:i + 1]))
+                encoded_frame = vae.encode(tail[i:i + 1])
+                if (getattr(encoded_frame, "ndim", 0) != 5
+                        or int(encoded_frame.shape[2]) != 1):
+                    raise ValueError(
+                        "h3_motion_context: frame %d encoded to %s; expected "
+                        "one H3 still latent" % (
+                            i, tuple(getattr(encoded_frame, "shape", ()))))
+                blocks.append(encoded_frame)
                 offsets.append(i)
             span = n
 
         if anchor_mode == "before":
             indices = [o - span for o in offsets]
         else:
-            indices = list(offsets)
+            indices = [start + o for o in offsets]
 
         keyframes = []
         for p, blk in zip(indices, blocks):
@@ -583,20 +631,20 @@ class MiniMaxH3MotionContext:
                         "audio_vae. Wire the H3 audio VAE, or wire "
                         "context_latent instead.")
                 audio_latent, ref_audio_t = _encode_tail_audio(
-                    audio_vae, context_audio, a_frames / float(FPS))
+                    audio_vae, context_audio, a_frames)
                 overhang = 0.0  # decoded audio was match_tail-cut at the frame
                 audio_src = "vae"
             if audio_mode == "timeline":
                 # end-align the audio window with the pinned video: both are
                 # the tail of clip A, so both must end at the same instant
-                # of the new timeline -- frame `span` in head mode (where
-                # A's last frame sits), frame 0 in before mode. On the
+                # of the new timeline -- frame `start + span` in head mode
+                # (where A's last frame sits), frame 0 in before mode. On the
                 # latent path the sliced content reaches `overhang` of a
                 # step past A's last frame (H3 rounds its audio grid up),
                 # so the end coordinate moves by exactly that much; the
                 # layout patch takes a fractional frame index.
                 timeline_end_frame = float(
-                    span if anchor_mode == "head" else 0)
+                    start + span if anchor_mode == "head" else 0)
                 timeline_end_frame += overhang / FRAME_RESCALE
                 if native_guides:
                     # Native audio guides are start-anchored in units of video
@@ -622,13 +670,13 @@ class MiniMaxH3MotionContext:
                     "audio_latent": audio_latent,
                 }
 
-        # Preserve a stock last_frame guide. The carried head already owns any
-        # first-frame guide at the same coordinates, so guides inside that
-        # repeated span are removed. On legacy ComfyUI, tag retained guides with
-        # MC_KEY so reference compensation treats the complete target-relative
-        # set consistently. Native ComfyUI already anchors the full guide list
-        # to the target origin. Ported from NikoDemon80 upstream 0.3.0.
-        head_end = span if anchor_mode == "head" else 0
+        # Preserve guides outside the carried interval and remove only direct
+        # coordinate collisions. This retains stock last_frame and semantic
+        # anchors around an interior target_start. On legacy ComfyUI, tag
+        # retained guides with MC_KEY so reference compensation treats the
+        # complete target-relative set consistently.
+        guide_start = start if anchor_mode == "head" else -span
+        guide_end = guide_start + span
         out = []
         dropped = []
         for embedding, extra in conditioning:
@@ -647,7 +695,7 @@ class MiniMaxH3MotionContext:
             for prior_keyframe in prior:
                 position = float(prior_keyframe.get(
                     MC_KEY, prior_keyframe.get("resolved_frame_index", 0)))
-                if position < head_end:
+                if guide_start <= position < guide_end:
                     dropped.append(position)
                     continue
                 retained = dict(prior_keyframe)
@@ -661,9 +709,9 @@ class MiniMaxH3MotionContext:
         if dropped:
             _LOG.warning(
                 "h3_motion_context: dropped %d keyframe anchor(s) at "
-                "frame(s) %s because the carried head already owns frames "
-                "0..%d; a last_frame anchor is preserved.",
-                len(dropped), sorted(set(dropped)), head_end - 1)
+                "frame(s) %s because the carried Guide already owns "
+                "[%d, %d); anchors outside that interval are preserved.",
+                len(dropped), sorted(set(dropped)), guide_start, guide_end)
         if motion_context_audio_ref is not None:
             # Ref2VA multi-reference coexistence design contributed by
             # seitanism in the Banodoco seamless-extension thread. Append so
@@ -671,12 +719,13 @@ class MiniMaxH3MotionContext:
             out = node_helpers.conditioning_set_values(
                 out, {"minimax_refs": [motion_context_audio_ref]}, append=True)
 
-        trim = span if anchor_mode == "head" else 0
+        trim = span if anchor_mode == "head" and start == 0 else 0
         index_summary = ("%d..%d" % (indices[0], indices[-1])
                          if indices else "none")
-        _LOG.info("h3_motion_context: %s/%s, %d frames -> %d cond blocks at "
-                  "indices %s, %d frame clip at %dx%d, trim %d, audio %s",
-                  encode_mode, anchor_mode, n, len(blocks),
+        _LOG.info("h3_motion_context: %s/%s, %d frames at target %d -> %d "
+                  "cond blocks at indices %s, %d frame clip at %dx%d, "
+                  "trim %d, audio %s",
+                  encode_mode, anchor_mode, n, start, len(blocks),
                   index_summary, frame_count, width, height, trim,
                   ("%d frames -> %d latent steps (%.3fs) from %s, %s"
                    % (a_frames, ref_audio_t, ref_audio_t / AUDIO_HZ, audio_src,
