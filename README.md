@@ -208,6 +208,15 @@ Source Timeline soundtrack continues on the absolute project clock. Audio-asset
 lyrics can be stamped as LRC (or pasted as SRT), previewed on the subtitle row,
 and exported as an optional `.srt` beside the assembled movie.
 
+After a scene has been rendered, its cyan right-edge handle and
+**Latent-safe used end** control can shorten the take without resampling it.
+Only endpoints shared by H3's video-latent cycle and audio clock are offered;
+the complete checkpoint stays available and **Full** restores it. Continuation,
+assembly, generated audio, PNG export, and whole-chain latent finishing use the
+selected prefix. Changing a cut that an already-rendered later scene depended
+on marks that later continuation stale so it can be regenerated from the
+correct endpoint.
+
 Checkpoint Manager identifies saved takes by scene and inferred branch, previews
 saved media and exact video/audio dependencies, and safely deletes inactive
 leaves one revision at a time. When an independent saved take can safely fill

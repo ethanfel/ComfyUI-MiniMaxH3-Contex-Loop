@@ -15,6 +15,8 @@ import {
     studioContextWindowLayout,
     studioContextWindowStartAtRatio,
     studioEditorialSceneStartSeconds,
+    studioLatentSafeOutFrames,
+    studioNearestLatentSafeOutFrame,
     studioNearestH3FrameLength,
     studioRulerTicks,
     studioSceneStartSeconds,
@@ -48,6 +50,17 @@ const rows = [
     {id:"two", deliveredFrames:340, deliveredSeconds:340 / 24},
     {id:"three", deliveredFrames:340, deliveredSeconds:340 / 24},
 ];
+assert.ok(studioLatentSafeOutFrames(362, 340).includes(72));
+assert.equal(studioNearestLatentSafeOutFrame(362, 340, 71), 72);
+assert.equal(studioNearestLatentSafeOutFrame(362, 340, 339), 340);
+const trimmedTimeline = studioTimelineSegments([
+    {id:"one", rawFrames:362, deliveredFrames:340},
+    {id:"two", rawFrames:362, deliveredFrames:340},
+], [], null, [{scene_id:"one", out_frame:72}]);
+assert.deepEqual(trimmedTimeline.filter(
+    (segment) => segment.kind === "scene",
+).map((segment) => segment.durationFrames), [72, 340]);
+assert.equal(trimmedTimeline.at(-1).endFrame, 412);
 assert.equal(studioSceneStartSeconds(rows, 1), 362 / 24);
 assert.equal(locateStudioTimelineSecond(rows, 0).index, 0);
 assert.equal(locateStudioTimelineSecond(rows, 362 / 24).index, 1);
@@ -367,6 +380,9 @@ assert.match(source, /SOURCE_AUDIO_MUTES_PROPERTY/);
 assert.match(source, /studioSourceAudioSecond/);
 assert.match(source, /studioWaveformIntervalSamples/);
 assert.match(source, /Editorial start/);
+assert.match(source, /Latent-safe used end/);
+assert.match(source, /studioNearestLatentSafeOutFrame/);
+assert.match(source, /full sampled checkpoint retained/);
 assert.match(source, /Black editorial gap/);
 assert.match(source, /OPEN TIMELINE/);
 assert.match(source, /extendTimelineWorkspace/);

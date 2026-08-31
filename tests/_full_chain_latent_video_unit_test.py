@@ -186,6 +186,40 @@ def main():
             assert abs(pixels[4] - 170) <= 2
             assert all(value >= 253 for value in pixels[5:])
 
+            manifest["segments"][0]["id"] = "one"
+            manifest["segments"][1]["id"] = "two"
+            editorial_path = pathlib.Path(
+                chain._run_editorial_path("seedvr_test"))
+            chain._atomic_json(editorial_path, chain._normalize_run_editorial({
+                "format": "h3_chain_editorial_v1",
+                "run_name": "seedvr_test",
+                "scene_order": [
+                    {"scene": 1, "scene_id": "one"},
+                    {"scene": 2, "scene_id": "two"},
+                ],
+                "trims": [{
+                    "scene": 2, "scene_id": "two", "out_frame": 3,
+                }],
+            }, "seedvr_test"))
+            trimmed_vae = FakeVAE()
+            trimmed_video, trimmed_path, trimmed_status = node().adapt(
+                manifest, trimmed_vae, "none", "plan", "memory", False, 256)
+            assert trimmed_video == trimmed_path
+            assert trimmed_path != path
+            assert trimmed_vae.calls == 2
+            assert "8 frames" in trimmed_status
+            with av.open(trimmed_path, mode="r") as container:
+                assert sum(1 for _frame in container.decode(
+                    container.streams.video[0])) == 8
+            chain._atomic_json(editorial_path, chain._normalize_run_editorial({
+                "format": "h3_chain_editorial_v1",
+                "run_name": "seedvr_test",
+                "scene_order": [
+                    {"scene": 1, "scene_id": "one"},
+                    {"scene": 2, "scene_id": "two"},
+                ],
+            }, "seedvr_test"))
+
             partial_manifest = {
                 **manifest,
                 "clip_count": 1,

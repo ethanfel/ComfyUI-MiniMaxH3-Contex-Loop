@@ -144,6 +144,7 @@ from .checkpoint_manager import (
 _LOG = logging.getLogger("minimax_h3_context_loop.chain")
 
 FPS = 24
+AUDIO_HZ = 40
 VISUAL_COND_NOISE_AUG_DEFAULT = 0.999
 PLAN_VERSION = 2
 MAX_SHOTS = 128
@@ -4793,6 +4794,22 @@ def _h3_native_frame_boundary_step(frame: int) -> int | None:
     return None
 
 
+def _h3_prefix_frame_boundary_step(frame: int) -> int | None:
+    """Map any exact H3 video-latent prefix boundary to its step count.
+
+    Unlike reusable context windows, an editorial end cut does not need to
+    restart at phase zero.  Every boundary produced by the native 1/4/4/4/4
+    temporal cycle is safe because the retained value is a prefix of the
+    original sampled latent.
+    """
+    frame = int(frame)
+    if frame < 0:
+        return None
+    cycle, offset = divmod(frame, 17)
+    within_cycle = {0: 0, 1: 1, 5: 2, 9: 3, 13: 4}.get(offset)
+    return None if within_cycle is None else cycle * 5 + within_cycle
+
+
 def _native_context_window_starts(
         raw_frames: int, delivered_frames: int, span_frames: int,
         prefix_frames: int = 0) -> tuple[int, ...]:
@@ -5076,8 +5093,8 @@ def _low_grid_guide_context(
         raise ValueError(
             "H3 low-grid Guide requires predecessor segment metadata to "
             "separate its delivered frames from its incoming overlap.")
-    raw_frames = int(segment.get("raw_frames", 0))
-    delivered_frames = int(segment.get("delivered_frames", 0))
+    raw_frames = _editorial_segment_raw_frames(segment)
+    delivered_frames = _editorial_segment_delivered_frames(segment)
     trim_frames = raw_frames - delivered_frames
     if (raw_frames <= 0 or delivered_frames <= 0 or trim_frames < 0
             or int(decoded.shape[0]) != raw_frames):
@@ -7375,6 +7392,7 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
     raw_order = value.get("scene_order", [])
     raw_chapters = value.get("chapters", [])
     raw_placements = value.get("placements", [])
+    raw_trims = value.get("trims", [])
     raw_locked = value.get("locked_scene_ids", [])
     if not isinstance(raw_order, list) or len(raw_order) > MAX_SHOTS:
         raise ValueError("scene_order must contain at most %d scenes." % MAX_SHOTS)
@@ -7383,6 +7401,8 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
     if not isinstance(raw_placements, list) or len(raw_placements) > MAX_SHOTS:
         raise ValueError(
             "placements must contain at most %d entries." % MAX_SHOTS)
+    if not isinstance(raw_trims, list) or len(raw_trims) > MAX_SHOTS:
+        raise ValueError("trims must contain at most %d entries." % MAX_SHOTS)
     if not isinstance(raw_locked, list) or len(raw_locked) > MAX_SHOTS:
         raise ValueError(
             "locked_scene_ids must contain at most %d entries." % MAX_SHOTS)
@@ -7460,6 +7480,34 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         })
     placements.sort(key=lambda item: int(item["scene"]))
 
+    trims: list[dict[str, Any]] = []
+    trimmed_ids: set[str] = set()
+    for offset, item in enumerate(raw_trims):
+        if not isinstance(item, dict):
+            raise ValueError(
+                "Editorial trim %d must be an object." % (offset + 1))
+        scene_id = _safe_name(item.get("scene_id"), "")
+        if not scene_id or (scene_by_id and scene_id not in scene_by_id):
+            raise ValueError(
+                "Editorial trim %d must target a scene in scene_order."
+                % (offset + 1))
+        if scene_id in trimmed_ids:
+            raise ValueError(
+                "Scene %s has more than one editorial trim." % scene_id)
+        trimmed_ids.add(scene_id)
+        out_frame = int(item.get("out_frame", 0))
+        if out_frame < 1 or out_frame > MAX_H3_FRAMES:
+            raise ValueError(
+                "Editorial trim out_frame must be between 1 and %d."
+                % MAX_H3_FRAMES)
+        trims.append({
+            "scene_id": scene_id,
+            "scene": int(scene_by_id.get(
+                scene_id, item.get("scene", offset + 1))),
+            "out_frame": out_frame,
+        })
+    trims.sort(key=lambda item: int(item["scene"]))
+
     locked_scene_ids: list[str] = []
     locked_seen: set[str] = set()
     for offset, item in enumerate(raw_locked):
@@ -7500,6 +7548,7 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         "chapters": chapters,
         "scene_order": scene_order,
         "placements": placements,
+        "trims": trims,
         "locked_scene_ids": locked_scene_ids,
         "subtitles": subtitles,
     }
@@ -7509,7 +7558,7 @@ def _load_run_editorial(run_name: Any) -> dict[str, Any]:
     normalized = _safe_name(run_name, "")
     empty = {
         "format": "h3_chain_editorial_v1", "run_name": normalized,
-        "chapters": [], "scene_order": [], "placements": [],
+        "chapters": [], "scene_order": [], "placements": [], "trims": [],
         "locked_scene_ids": [],
         "subtitles": {"mode": "off", "asset_id": "", "offset_seconds": 0.0},
     }
@@ -7526,11 +7575,244 @@ def _load_run_editorial(run_name: Any) -> dict[str, Any]:
         return empty
 
 
+def _editorial_trimmed_segment(
+        segment: dict[str, Any], editorial: dict[str, Any]
+) -> dict[str, Any]:
+    """Return a transient segment view with one validated latent-safe out."""
+    scene_id = str(segment.get("id") or "")
+    trim = next((
+        item for item in editorial.get("trims", [])
+        if isinstance(item, dict)
+        and str(item.get("scene_id") or "") == scene_id
+    ), None)
+    if trim is None:
+        return segment
+    raw_frames = int(segment.get("raw_frames", 0))
+    delivered_frames = int(segment.get("delivered_frames", 0))
+    out_frames = int(trim.get("out_frame", 0))
+    if (raw_frames < 1 or delivered_frames < 1
+            or delivered_frames > raw_frames):
+        raise ValueError(
+            "Editorial trim scene %s has invalid saved raw/delivered frame "
+            "counts %d/%d." % (scene_id, raw_frames, delivered_frames))
+    if out_frames < 1 or out_frames > delivered_frames:
+        raise ValueError(
+            "Editorial trim scene %s out_frame must be between 1 and its "
+            "%d delivered frames." % (scene_id, delivered_frames))
+    # A full-length value is normalized to no cut. This lets older editors
+    # safely round-trip a reset without changing continuation state.
+    if out_frames == delivered_frames:
+        return segment
+    raw_out_frames = raw_frames - delivered_frames + out_frames
+    video_steps = _h3_prefix_frame_boundary_step(raw_out_frames)
+    if video_steps is None:
+        raise ValueError(
+            "Editorial trim scene %s ends at raw frame %d, which is between "
+            "H3 video-latent steps." % (scene_id, raw_out_frames))
+    if (out_frames * int(AUDIO_HZ)) % FPS:
+        raise ValueError(
+            "Editorial trim scene %s uses %d delivered frames, which does "
+            "not end on the shared 24 fps / 40 Hz audio-latent grid." %
+            (scene_id, out_frames))
+    result = dict(segment)
+    result.update({
+        "_editorial_out_frames": out_frames,
+        "_editorial_raw_out_frames": raw_out_frames,
+        "_editorial_video_steps": video_steps,
+        "_editorial_audio_steps": int(round(
+            raw_out_frames / float(FPS) * AUDIO_HZ)),
+    })
+    return result
+
+
+def _editorial_segment_delivered_frames(
+        segment: dict[str, Any], fallback: int = 0) -> int:
+    return int(segment.get(
+        "_editorial_out_frames",
+        segment.get("delivered_frames", fallback)))
+
+
+def _editorial_segment_raw_frames(
+        segment: dict[str, Any], fallback: int = 0) -> int:
+    return int(segment.get(
+        "_editorial_raw_out_frames", segment.get("raw_frames", fallback)))
+
+
+def _editorial_dependency_mismatches(
+        segment: dict[str, Any], index: int,
+        editorial_segments: dict[int, dict[str, Any]],
+) -> list[str]:
+    """Report saved continuations whose source endpoint changed afterward."""
+    reasons: list[str] = []
+    predecessor = editorial_segments.get(int(index) - 1)
+    resolved_visual = int(segment.get("resolved_context_length", 0))
+    visual_source_index = int(segment.get(
+        "visual_context_source_scene",
+        int(index) - 1 if resolved_visual > 0 else 0))
+    uses_immediate_audio = (
+        int(segment.get("resolved_audio_context_length", 0)) > 0
+        and str(segment.get("generated_continuity", "on")) == "on")
+    if (predecessor is not None
+            and (visual_source_index == int(index) - 1
+                 or uses_immediate_audio)):
+        expected = _editorial_segment_delivered_frames(predecessor)
+        actual = int(segment.get(
+            "predecessor_editorial_out_frames",
+            predecessor.get("delivered_frames", 0)))
+        if actual != expected:
+            reasons.append(
+                "previous scene endpoint changed from %df to %df" %
+                (actual, expected))
+    for source_field, used_field, label in (
+            ("visual_context_source_scene",
+             "visual_context_source_editorial_out_frames", "visual source"),
+            ("visual_context_lead_source_scene",
+             "visual_context_lead_editorial_out_frames",
+             "composed lead source")):
+        source_index = int(segment.get(source_field, 0))
+        source = editorial_segments.get(source_index)
+        if source is None:
+            continue
+        expected = _editorial_segment_delivered_frames(source)
+        actual = int(segment.get(
+            used_field, source.get("delivered_frames", 0)))
+        if actual != expected:
+            reasons.append(
+                "%s scene %d endpoint changed from %df to %df" %
+                (label, source_index, actual, expected))
+    return reasons
+
+
+def _editorial_dependency_sources(
+        segment: dict[str, Any], index: int,
+) -> set[int]:
+    """Return saved scenes whose content can affect this continuation."""
+    sources: set[int] = set()
+    resolved_visual = int(segment.get("resolved_context_length", 0))
+    visual_source_index = int(segment.get(
+        "visual_context_source_scene",
+        int(index) - 1 if resolved_visual > 0 else 0))
+    if visual_source_index > 0:
+        sources.add(visual_source_index)
+    if (int(segment.get("resolved_audio_context_length", 0)) > 0
+            and str(segment.get("generated_continuity", "on")) == "on"
+            and int(index) > 1):
+        sources.add(int(index) - 1)
+    lead_source_index = int(segment.get(
+        "visual_context_lead_source_scene", 0))
+    if lead_source_index > 0:
+        sources.add(lead_source_index)
+    return sources
+
+
+def _editorial_stale_dependencies(
+        editorial_segments: dict[int, dict[str, Any]],
+) -> dict[int, list[str]]:
+    """Resolve direct endpoint mismatches and transitive dependants."""
+    stale: dict[int, list[str]] = {}
+    for index in sorted(editorial_segments):
+        segment = editorial_segments[index]
+        reasons = _editorial_dependency_mismatches(
+            segment, index, editorial_segments)
+        for source_index in sorted(_editorial_dependency_sources(
+                segment, index)):
+            if source_index in stale:
+                reasons.append("depends on stale scene %d" % source_index)
+        if reasons:
+            stale[index] = list(dict.fromkeys(reasons))
+    return stale
+
+
+def _require_current_editorial_dependencies(
+        editorial_segments: dict[int, dict[str, Any]], purpose: str,
+) -> None:
+    stale = _editorial_stale_dependencies(editorial_segments)
+    if not stale:
+        return
+    first = min(stale)
+    raise ValueError(
+        "%s cannot use scene %d because its saved continuation belongs to "
+        "an older editorial endpoint (%s). Resume at scene %d and "
+        "regenerate downstream continuity; the original complete "
+        "checkpoints remain available." %
+        (purpose, first, "; ".join(stale[first]), first))
+
+
+def _editorial_trim_latent(
+        latent: dict[str, Any], segment: dict[str, Any]
+) -> dict[str, Any]:
+    """Slice a sampled AV prefix without decoding or altering its checkpoint."""
+    if "_editorial_out_frames" not in segment:
+        return _compact_latent(latent)
+    parts = _streams_from_latent(latent)
+    if len(parts) < 2:
+        raise ValueError("Editorial latent trim requires an H3 AV latent pair.")
+    video, audio = parts[0], parts[1]
+    video_axis = 2 if getattr(video, "ndim", 0) == 5 else 1
+    if getattr(video, "ndim", 0) not in (4, 5):
+        raise ValueError(
+            "Editorial trim expected H3 video latent [B,C,T,H,W], got %s."
+            % (tuple(getattr(video, "shape", ())),))
+    video_steps = int(segment["_editorial_video_steps"])
+    full_video_steps = _h3_prefix_frame_boundary_step(
+        int(segment["raw_frames"]))
+    if (full_video_steps is None
+            or int(video.shape[video_axis]) != full_video_steps
+            or video_steps < 1 or video_steps >= full_video_steps):
+        raise ValueError(
+            "Editorial trim scene %s cannot slice video latent shape %s to "
+            "%d steps." % (segment.get("id", "scene"),
+                            tuple(video.shape), video_steps))
+    video_index = [slice(None)] * int(video.ndim)
+    video_index[video_axis] = slice(0, video_steps)
+
+    if getattr(audio, "ndim", 0) not in (3, 4):
+        raise ValueError(
+            "Editorial trim expected H3 audio latent [B,C,2,T], got %s."
+            % (tuple(getattr(audio, "shape", ())),))
+    audio_steps = int(segment["_editorial_audio_steps"])
+    if audio_steps < 1 or audio_steps >= int(audio.shape[-1]):
+        raise ValueError(
+            "Editorial trim scene %s cannot slice audio latent shape %s to "
+            "%d steps." % (segment.get("id", "scene"),
+                            tuple(audio.shape), audio_steps))
+    return {"samples": [
+        _tensor_cpu_clone(video[tuple(video_index)]),
+        _tensor_cpu_clone(audio[..., :audio_steps]),
+    ]}
+
+
+def _editorial_context_tail(
+        frames: Any, segment: dict[str, Any], storage_frames: int
+) -> Any:
+    """Crop a saved full-end RGB tail so it ends at the editorial out."""
+    storage_frames = max(0, int(storage_frames))
+    if storage_frames == 0:
+        return _tensor_cpu_clone(frames[:0])
+    if "_editorial_out_frames" not in segment:
+        return _tensor_cpu_clone(frames[-storage_frames:])
+    delivered = int(segment["delivered_frames"])
+    out_frames = int(segment["_editorial_out_frames"])
+    available = int(frames.shape[0])
+    saved_start = delivered - available
+    kept = max(0, min(available, out_frames - saved_start))
+    if kept <= 0:
+        return _tensor_cpu_clone(frames[:0])
+    return _tensor_cpu_clone(frames[:kept][-storage_frames:])
+
+
 def _editorial_timeline_records(
         run_name: Any, segments: list[dict[str, Any]]) -> tuple[
             dict[str, Any], list[dict[str, Any]], int]:
     """Resolve editorial clip positions without changing the chain manifest."""
     editorial = _load_run_editorial(run_name)
+    editorial_segments = {
+        int(segment.get("index", offset)):
+            _editorial_trimmed_segment(segment, editorial)
+        for offset, segment in enumerate(segments, start=1)
+    }
+    _require_current_editorial_dependencies(
+        editorial_segments, "H3 editorial assembly")
     requested = {
         str(item.get("scene_id") or ""): int(item.get("start_frame", 0))
         for item in editorial.get("placements", [])
@@ -7538,21 +7820,26 @@ def _editorial_timeline_records(
     }
     ordered: list[dict[str, Any]] = []
     natural_start = 0
+    source_cursor = 0
     for offset, segment in enumerate(segments, start=1):
+        editorial_segment = editorial_segments[
+            int(segment.get("index", offset))]
         scene_id = str(segment.get("id") or "clip_%04d" % offset)
-        delivered = int(segment["delivered_frames"])
+        delivered = _editorial_segment_delivered_frames(editorial_segment)
         explicit = scene_id in requested
         ordered.append({
             "segment": segment,
             "scene": int(segment.get("index", offset)),
             "scene_id": scene_id,
             "frame_count": delivered,
-            "source_start_frame": natural_start,
+            "source_frame_count": int(segment["delivered_frames"]),
+            "source_start_frame": source_cursor,
             "requested_start_frame": int(
                 requested[scene_id] if explicit else natural_start),
             "explicit": explicit,
         })
         natural_start += delivered
+        source_cursor += int(segment["delivered_frames"])
     ordered.sort(key=lambda item: (
         int(item["requested_start_frame"]),
         0 if bool(item["explicit"]) else 1,
@@ -7576,6 +7863,7 @@ def _editorial_timeline_records(
             "scene_id": str(item["scene_id"]),
             "start_frame": start,
             "frame_count": int(item["frame_count"]),
+            "source_frame_count": int(item["source_frame_count"]),
             "source_start_frame": int(item["source_start_frame"]),
             "segment": item["segment"],
         })
@@ -8357,8 +8645,8 @@ def _previous_context_frames(state: dict[str, Any], vae: Any,
             "H3 chain predecessor VAE returned image shape %s; expected "
             "[frames,height,width,channels]." % (tuple(decoded.shape),))
 
-    raw_frames = int(segment.get("raw_frames", 0))
-    delivered_frames = int(segment.get("delivered_frames", 0))
+    raw_frames = _editorial_segment_raw_frames(segment)
+    delivered_frames = _editorial_segment_delivered_frames(segment)
     trim_frames = raw_frames - delivered_frames
     if (raw_frames <= 0 or delivered_frames <= 0 or trim_frames < 0
             or int(decoded.shape[0]) != raw_frames):
@@ -8411,7 +8699,9 @@ def _public_segment(value: dict[str, Any]) -> dict[str, Any]:
         "visual_context_lead_frames", "visual_context_lead_start_frame",
         "sample_rate", "segment_sha256",
         "checkpoint_sha256", "prompt_file_sha256", "predecessor_revision",
-        "predecessor_checkpoint_sha256") if key in value}
+        "predecessor_checkpoint_sha256", "predecessor_editorial_out_frames",
+        "visual_context_source_editorial_out_frames",
+        "visual_context_lead_editorial_out_frames") if key in value}
 
 
 def _visual_context_state(
@@ -8490,14 +8780,23 @@ def _visual_context_state(
                 "retained RGB tail or video latent." % int(scene_index))
         if video.ndim == 4:
             video = video.unsqueeze(0)
+        if "_editorial_out_frames" in segment:
+            frames = _editorial_context_tail(
+                frames, segment, _plan_context_storage_length(plan))
+            trimmed = _editorial_trim_latent({
+                "samples": [video, tensors.get("audio")],
+            }, segment)
+            video, trimmed_audio = _streams_from_latent(trimmed)[:2]
+            tensors = dict(tensors)
+            tensors["audio"] = trimmed_audio
         return position, segment, tensors, frames, video
 
     def retained_rgb_window(
             segment, retained_frames, start_frame, wanted,
             planned_delivered_frames):
         wanted = int(wanted)
-        delivered_frames = int(segment.get(
-            "delivered_frames", planned_delivered_frames))
+        delivered_frames = _editorial_segment_delivered_frames(
+            segment, planned_delivered_frames)
         start_frame = int(start_frame)
         end_frame = start_frame + wanted
         if start_frame < 0 or end_frame > delivered_frames:
@@ -8519,9 +8818,10 @@ def _visual_context_state(
     def native_latent_window(
             segment, video, start_frame, wanted, prefix_frames,
             planned_raw_frames, planned_delivered_frames, label):
-        raw_frames = int(segment.get("raw_frames", planned_raw_frames))
-        delivered_frames = int(segment.get(
-            "delivered_frames", planned_delivered_frames))
+        raw_frames = _editorial_segment_raw_frames(
+            segment, planned_raw_frames)
+        delivered_frames = _editorial_segment_delivered_frames(
+            segment, planned_delivered_frames)
         start_frame = int(start_frame)
         wanted = int(wanted)
         if start_frame not in _native_context_window_starts(
@@ -8555,11 +8855,12 @@ def _visual_context_state(
 
     source_position, source_segment, tensors, source_frames, source_video = (
         load_visual_source(source_index))
-    source_delivered_frames = int(source_segment.get(
-        "delivered_frames",
-        plan["shots"][source_index - 1].get("delivered_frames", 0)))
-    source_raw_frames = int(source_segment.get(
-        "raw_frames", plan["shots"][source_index - 1].get("raw_frames", 0)))
+    source_delivered_frames = _editorial_segment_delivered_frames(
+        source_segment,
+        plan["shots"][source_index - 1].get("delivered_frames", 0))
+    source_raw_frames = _editorial_segment_raw_frames(
+        source_segment,
+        plan["shots"][source_index - 1].get("raw_frames", 0))
     source_start = _shot_visual_context_start_frame(
         shot, "visual_context_start_frame",
         source_raw_frames, source_delivered_frames, recent_frames, lead_frames)
@@ -8599,12 +8900,12 @@ def _visual_context_state(
     if lead_source_index is not None:
         (_lead_position, lead_segment, _lead_tensors, lead_source_frames,
          lead_video) = load_visual_source(lead_source_index)
-        lead_raw_frames = int(lead_segment.get(
-            "raw_frames", plan["shots"][
-                lead_source_index - 1].get("raw_frames", 0)))
-        lead_delivered_frames = int(lead_segment.get(
-            "delivered_frames", plan["shots"][
-                lead_source_index - 1].get("delivered_frames", 0)))
+        lead_raw_frames = _editorial_segment_raw_frames(
+            lead_segment, plan["shots"][
+                lead_source_index - 1].get("raw_frames", 0))
+        lead_delivered_frames = _editorial_segment_delivered_frames(
+            lead_segment, plan["shots"][
+                lead_source_index - 1].get("delivered_frames", 0))
         lead_start = _shot_visual_context_start_frame(
             shot, "visual_context_lead_start_frame",
             lead_raw_frames, lead_delivered_frames, lead_frames, 0)
@@ -8827,6 +9128,7 @@ def _load_resume_state(
     previous_index = start_clip - 1
     context_sources = _resume_context_predecessors(plan, int(start_clip))
     consumed_predecessors = set(context_sources["scenes"])
+    editorial = _load_run_editorial(plan.get("run_name"))
     segments = []
     previous_meta = None
     if not bool(verify_history):
@@ -8893,8 +9195,23 @@ def _load_resume_state(
         restored = _public_segment(segment)
         for key, value in _prompt_fields(plan, index).items():
             restored.setdefault(key, value)
-        segments.append(restored)
+        segments.append(_editorial_trimmed_segment(restored, editorial))
         previous_meta = metadata
+
+    editorial_segments = {
+        int(segment.get("index", offset)): segment
+        for offset, segment in enumerate(segments, start=1)
+    }
+    stale_dependencies = _editorial_stale_dependencies(editorial_segments)
+    if stale_dependencies:
+        saved_index = min(stale_dependencies)
+        raise ValueError(
+            "Cannot resume clip %d: saved scene %d used an older editorial "
+            "continuation endpoint (%s). Resume at scene %d and regenerate "
+            "downstream continuity; the original complete checkpoints "
+            "remain available." %
+            (start_clip, saved_index,
+             "; ".join(stale_dependencies[saved_index]), saved_index))
 
     if previous_meta is None:
         raise RuntimeError("Internal resume error: predecessor metadata unavailable.")
@@ -8911,11 +9228,15 @@ def _load_resume_state(
         if missing:
             raise ValueError(
                 "H3 chain checkpoint is missing tensors: %s" % missing)
-        context_frames = tensors["context_frames"]
-        previous_latent = {
-            "samples": [tensors["video"], tensors["audio"]]}
-        previous_delivered = int(
-            previous_meta["segment"].get("delivered_frames", 0))
+        previous_segment = segments[-1]
+        context_frames = _editorial_context_tail(
+            tensors["context_frames"], previous_segment,
+            _plan_context_storage_length(plan))
+        previous_latent = _editorial_trim_latent({
+            "samples": [tensors["video"], tensors["audio"]],
+        }, previous_segment)
+        previous_delivered = _editorial_segment_delivered_frames(
+            previous_segment)
         if (getattr(context_frames, "ndim", 0) != 4
                 or int(context_frames.shape[0]) > previous_delivered):
             raise ValueError(
@@ -17211,6 +17532,9 @@ class MiniMaxH3ChainSegmentSave:
                     "visual_context_source_checkpoint_sha256": str(
                         visual_source_segment.get(
                             "checkpoint_sha256") or ""),
+                    "visual_context_source_editorial_out_frames":
+                        _editorial_segment_delivered_frames(
+                            visual_source_segment),
                 })
                 if "visual_context_start_frame" in shot:
                     segment["visual_context_start_frame"] = int(
@@ -17230,6 +17554,9 @@ class MiniMaxH3ChainSegmentSave:
                     "visual_context_lead_frames": int(
                         _shot_visual_context_lead_frames(
                             shot, effective_context_length)),
+                    "visual_context_lead_editorial_out_frames":
+                        _editorial_segment_delivered_frames(
+                            visual_lead_segment),
                 })
                 if "visual_context_lead_start_frame" in shot:
                     segment["visual_context_lead_start_frame"] = int(
@@ -17309,6 +17636,8 @@ class MiniMaxH3ChainSegmentSave:
                     segment["predecessor_revision"] = predecessor_revision
                 if predecessor_hash:
                     segment["predecessor_checkpoint_sha256"] = predecessor_hash
+                segment["predecessor_editorial_out_frames"] = (
+                    _editorial_segment_delivered_frames(predecessor))
                 predecessor_branch = str(
                     predecessor.get("branch_id") or predecessor_revision or "")
                 previous_predecessor = str((
@@ -18810,6 +19139,20 @@ class MiniMaxH3ChainLoopEnd:
                 raise ValueError(
                     "Selected H3 candidate is missing its continuation state.")
             plan = selected_plan
+        editorial = _load_run_editorial(plan.get("run_name"))
+        next_segment = _editorial_trimmed_segment(
+            _public_segment(segment), editorial)
+        if "_editorial_out_frames" in next_segment:
+            selected_frames = selected_frames[
+                :int(next_segment["_editorial_out_frames"])]
+            selected_latent = _editorial_trim_latent(
+                selected_latent, next_segment)
+            _LOG.info(
+                "H3 Chain scene %d continuation now ends at latent-safe "
+                "editorial frame %d/%d; the complete checkpoint remains "
+                "unchanged.", index,
+                int(next_segment["_editorial_out_frames"]),
+                int(next_segment["delivered_frames"]))
         context_length = min(
             _plan_context_storage_length(plan), int(selected_frames.shape[0]))
         next_state = {
@@ -18822,7 +19165,7 @@ class MiniMaxH3ChainLoopEnd:
                 selected_frames[-context_length:]),
             "previous_latent": _compact_latent(selected_latent),
             "segments": list(state.get("segments", [])) +
-                        [_public_segment(segment)],
+                        [next_segment],
             "resumed_from": state.get("resumed_from", 0),
         }
         if state.get("source_timeline") is not None:
@@ -19124,12 +19467,13 @@ def _audio_with_editorial_timeline(
     output = torch.zeros(
         (*tuple(waveform.shape[:-1]), total_samples),
         dtype=waveform.dtype, device=waveform.device)
-    placed_frames = 0
+    source_coverage_frames = 0
     for record in timeline_records:
         if record["kind"] != "scene":
             continue
         frames = int(record["frame_count"])
-        source_frame = int(record.get("source_start_frame", placed_frames))
+        source_frame = int(record.get(
+            "source_start_frame", source_coverage_frames))
         source_start = sample_boundary_from_frames(
             source_frame, sample_rate, FPS)
         source_end = sample_boundary_from_frames(
@@ -19146,11 +19490,12 @@ def _audio_with_editorial_timeline(
             source = torch.nn.functional.pad(
                 source, (0, budget - int(source.shape[-1])))
         output[..., target_start:target_end] = source
-        placed_frames += frames
-    if placed_frames != int(generated_frames):
+        source_coverage_frames += int(record.get(
+            "source_frame_count", frames))
+    if source_coverage_frames != int(generated_frames):
         raise ValueError(
-            "Editorial audio placed %d generated frames; expected %d."
-            % (placed_frames, int(generated_frames)))
+            "Editorial audio covered %d generated source frames; expected %d."
+            % (source_coverage_frames, int(generated_frames)))
     result = {"waveform": output, "sample_rate": sample_rate}
     first_scene = next((
         item for item in timeline_records if item.get("kind") == "scene"
@@ -19753,7 +20098,17 @@ def _apply_editorial_timeline_records(
         item.get("kind") == "gap" and int(item.get("frame_count", 0)) > 0
         for item in timeline_records
     )
-    if not reordered and not has_gaps:
+    segment_by_scene = {
+        int(item.get("index", offset)): item
+        for offset, item in enumerate(segments, start=1)
+    }
+    trimmed = any(
+        item.get("kind") == "scene"
+        and int(item.get("frame_count", 0)) != int(
+            segment_by_scene[int(item["scene"])]["delivered_frames"])
+        for item in timeline_records
+    )
+    if not reordered and not has_gaps and not trimmed:
         return records
     width = 0
     height = 0
@@ -19775,10 +20130,6 @@ def _apply_editorial_timeline_records(
             raise ValueError(
                 "Editorial black-gap assembly could not resolve video "
                 "dimensions.")
-    segment_by_scene = {
-        int(item.get("index", offset)): item
-        for offset, item in enumerate(segments, start=1)
-    }
     record_by_scene = {
         int(item.get("scene_index", 0)): item
         for item in records if item.get("kind") == "segment"
@@ -19813,6 +20164,7 @@ def _apply_editorial_timeline_records(
             raise ValueError(
                 "Editorial timeline targets missing scene %d." % scene)
         record = dict(record)
+        used_frames = int(item["frame_count"])
         if reordered or gap_before_scene:
             # Saved incoming overlap belongs to the scene's generation
             # predecessor. It is invalid after an editorial reorder, and a
@@ -19820,13 +20172,21 @@ def _apply_editorial_timeline_records(
             # delivered clip without resampling or touching its checkpoint.
             record.update({
                 "path": _absolute_output_path(source["segment"]),
-                "input_frames": int(source["delivered_frames"]),
-                "delivered_frames": int(source["delivered_frames"]),
+                "input_frames": used_frames,
+                "delivered_frames": used_frames,
                 "blend_frames": 0,
                 "skip_frames": 0,
             })
             record.pop("tone_match", None)
             record.pop("tone_match_prefix", None)
+        elif used_frames != int(source["delivered_frames"]):
+            blend_frames = min(
+                int(record.get("blend_frames", 0)), used_frames)
+            record.update({
+                "input_frames": used_frames + blend_frames,
+                "delivered_frames": used_frames,
+                "blend_frames": blend_frames,
+            })
         result.append(record)
         gap_before_scene = False
     return result
@@ -20817,6 +21177,15 @@ class MiniMaxH3ChainExportPNG:
             raise RuntimeError(
                 "H3 PNG export requires safetensors and torch.")
         segments = _checkpoint_export_segments(manifest)
+        editorial = _load_run_editorial(manifest.get("run_name"))
+        editorial_segments = [
+            _editorial_trimmed_segment(segment, editorial)
+            for segment in segments
+        ]
+        _require_current_editorial_dependencies({
+            int(segment.get("index", offset)): segment
+            for offset, segment in enumerate(editorial_segments, start=1)
+        }, "H3 PNG export")
         output_dir = _new_export_directory(manifest, export_name)
         partial_path = os.path.join(output_dir, "export.partial.json")
         final_path = os.path.join(output_dir, "export.json")
@@ -20829,7 +21198,8 @@ class MiniMaxH3ChainExportPNG:
         manifest_metadata = json.dumps(
             manifest, ensure_ascii=False, separators=(",", ":"))
 
-        for segment in segments:
+        for editorial_segment in editorial_segments:
+            segment = editorial_segment
             index = int(segment["index"])
             checkpoint = _absolute_output_path(segment["checkpoint"])
             tensors = _st_load(checkpoint)
@@ -20852,14 +21222,19 @@ class MiniMaxH3ChainExportPNG:
                     "[frames,height,width,channels]." % (tuple(images.shape),))
 
             raw_frames = int(segment["raw_frames"])
-            delivered_frames = int(segment["delivered_frames"])
+            delivered_frames = _editorial_segment_delivered_frames(
+                editorial_segment)
             trim_frames = raw_frames - delivered_frames
+            technical_trim_frames = (
+                raw_frames - int(segment["delivered_frames"]))
             if int(images.shape[0]) != raw_frames:
                 raise ValueError(
                     "H3 PNG export decoded %d frames for clip %d; its manifest "
                     "requires %d raw frames before trimming %d overlap frames." %
                     (int(images.shape[0]), index, raw_frames, trim_frames))
-            images = images[trim_frames:trim_frames + delivered_frames]
+            images = images[
+                technical_trim_frames:
+                technical_trim_frames + delivered_frames]
             clip_first = frame_number
             prompt = str(segment.get("prompt") or "")
             scene_metadata = json.dumps({
@@ -20974,6 +21349,8 @@ def _full_chain_selected_audio(
     selected: str,
     prelude: dict[str, Any] | None,
     source_audio: Any = None,
+    editorial_records: list[dict[str, Any]] | None = None,
+    editorial_frames: int | None = None,
 ) -> dict[str, Any] | None:
     """Recover exactly the final audio policy without another Plan socket."""
     extension_frames = int(manifest["total_delivered_frames"])
@@ -21026,6 +21403,15 @@ def _full_chain_selected_audio(
     else:
         raise ValueError(
             "Unknown H3 full-chain audio source %r." % selected)
+    if (audio is not None and selected == "generated"
+            and editorial_records is not None
+            and editorial_frames is not None
+            and int(editorial_frames) != extension_frames):
+        audio = _audio_with_editorial_timeline(
+            audio, editorial_records, extension_frames,
+            int(editorial_frames),
+            "H3 full-chain latent-safe generated audio")
+        extension_frames = int(editorial_frames)
     if audio is not None and prelude is not None:
         audio = _audio_with_prelude(audio, extension_frames, prelude)
     return audio
@@ -21073,6 +21459,7 @@ def _full_chain_cache_identity(
     schedule: list[int],
     audio_source: str,
     video_vae: Any,
+    editorial_trims: list[dict[str, Any]] | None = None,
 ) -> tuple[str, dict[str, Any]]:
     identity = {
         "format": "h3_full_chain_latent_video_cache_v1",
@@ -21084,6 +21471,7 @@ def _full_chain_cache_identity(
             (manifest.get("compatibility") or {}).get(
                 "source_audio_hash") or ""),
         "blend_schedule": [int(item) for item in schedule],
+        "editorial_trims": list(editorial_trims or []),
         "prelude": ({
             "video_sha256": str(prelude.get("video_sha256") or ""),
             "audio_sha256": str(prelude.get("audio_sha256") or ""),
@@ -21310,6 +21698,15 @@ class MiniMaxH3ChainLatentVideoAdapter:
                 "Checkpoint Manager.")
         segments = _checkpoint_export_segments(manifest)
         prelude = _validate_prelude(manifest)
+        editorial = _load_run_editorial(manifest.get("run_name"))
+        editorial_segments = [
+            _editorial_trimmed_segment(segment, editorial)
+            for segment in segments
+        ]
+        _require_current_editorial_dependencies({
+            int(segment.get("index", offset)): segment
+            for offset, segment in enumerate(editorial_segments, start=1)
+        }, "H3 Full-Chain Latent Video")
         schedule = _full_chain_blend_schedule(
             manifest, segments, prelude, blend_schedule)
         selected_audio = str(audio_source or "plan").strip().lower()
@@ -21321,10 +21718,16 @@ class MiniMaxH3ChainLatentVideoAdapter:
                 "source, generated, or none; got %r." % selected_audio)
 
         prelude_frames = int(prelude["frame_count"]) if prelude else 0
-        total_frames = prelude_frames + int(
-            manifest["total_delivered_frames"])
+        editorial_frames = sum(
+            _editorial_segment_delivered_frames(segment)
+            for segment in editorial_segments)
+        total_frames = prelude_frames + editorial_frames
         digest, identity = _full_chain_cache_identity(
-            manifest, segments, prelude, schedule, selected_audio, video_vae)
+            manifest, segments, prelude, schedule, selected_audio, video_vae,
+            editorial_trims=[{
+                "scene_id": str(item.get("scene_id") or ""),
+                "out_frame": int(item.get("out_frame", 0)),
+            } for item in editorial.get("trims", [])])
         run_name = _safe_name(manifest.get("run_name"), "h3_chain")
         cache_dir = os.path.join(
             _output_root(), "h3_chains", run_name, "upscaled", "seedvr2",
@@ -21361,14 +21764,15 @@ class MiniMaxH3ChainLatentVideoAdapter:
                 "path": _absolute_output_path(prelude["video"]),
             })
         schedule_index = 0
-        for ordinal, segment in enumerate(segments):
+        for ordinal, segment in enumerate(editorial_segments):
             has_predecessor = bool(records)
             blend = int(schedule[schedule_index]) if has_predecessor else 0
             if has_predecessor:
                 schedule_index += 1
-            delivered = int(segment["delivered_frames"])
+            delivered = _editorial_segment_delivered_frames(segment)
             raw = int(segment["raw_frames"])
-            repeated = raw - delivered
+            repeated = raw - int(segment["delivered_frames"])
+            blend = min(blend, delivered)
             if blend > repeated:
                 raise ValueError(
                     "H3 Full-Chain Latent Video boundary before clip %d "
@@ -21487,8 +21891,27 @@ class MiniMaxH3ChainLatentVideoAdapter:
                     "H3 Full-Chain Latent Video wrote %d frames; expected %d."
                     % (writer.written, total_frames))
 
+            generated_cursor = 0
+            editorial_cursor = 0
+            natural_records = []
+            for original, edited in zip(segments, editorial_segments):
+                used = _editorial_segment_delivered_frames(edited)
+                full = int(original["delivered_frames"])
+                natural_records.append({
+                    "kind": "scene",
+                    "scene": int(original["index"]),
+                    "scene_id": str(original.get("id") or ""),
+                    "start_frame": editorial_cursor,
+                    "frame_count": used,
+                    "source_start_frame": generated_cursor,
+                    "source_frame_count": full,
+                })
+                generated_cursor += full
+                editorial_cursor += used
             audio = _full_chain_selected_audio(
-                manifest, selected_audio, prelude, source_audio)
+                manifest, selected_audio, prelude, source_audio,
+                editorial_records=natural_records,
+                editorial_frames=editorial_frames)
             if audio is None:
                 os.replace(silent_path, final_path)
             else:
@@ -21673,8 +22096,13 @@ class MiniMaxH3ChainAssemble:
         editorial, editorial_records, editorial_extension_frames = (
             _editorial_timeline_records(run_name, segments))
         generated_extension_frames = int(manifest["total_delivered_frames"])
-        editorial_gap_frames = (
-            editorial_extension_frames - generated_extension_frames)
+        editorial_used_frames = sum(
+            int(item.get("frame_count", 0)) for item in editorial_records
+            if item.get("kind") == "scene")
+        editorial_trim_frames = max(
+            0, generated_extension_frames - editorial_used_frames)
+        editorial_gap_frames = max(
+            0, editorial_extension_frames - editorial_used_frames)
         generated_scene_order = [
             int(item.get("index", offset))
             for offset, item in enumerate(segments, start=1)
@@ -21684,7 +22112,9 @@ class MiniMaxH3ChainAssemble:
             for item in editorial_records if item.get("kind") == "scene"
         ]
         editorial_reordered = editorial_scene_order != generated_scene_order
-        editorial_changed = bool(editorial_gap_frames or editorial_reordered)
+        editorial_changed = bool(
+            editorial_trim_frames or editorial_gap_frames
+            or editorial_reordered)
         tone_match_mode = str(
             boundary_tone_match if boundary_tone_match is not None
             else "off").strip().lower()
@@ -21969,6 +22399,9 @@ class MiniMaxH3ChainAssemble:
             subtitle_status += " + %s" % subtitle_copy
         gap_status = ("; %d black editorial frames" % editorial_gap_frames
                       if editorial_gap_frames else "")
+        trim_status = ("; %d latent-safe frames trimmed" %
+                       editorial_trim_frames
+                       if editorial_trim_frames else "")
         order_status = ("; editorial scene order [%s]" % ",".join(
             str(value) for value in editorial_scene_order)
             if editorial_reordered else "")
@@ -21995,11 +22428,11 @@ class MiniMaxH3ChainAssemble:
             if color_stabilization_mode == "scene_1_anchor" else "")
         clip_kind = ("HQ clips" if upscale_manifest is not None
                      else "generated clips")
-        status = "assembled %d %s%s with %s%s%s%s%s%s -> %s%s%s%s" % (
+        status = "assembled %d %s%s with %s%s%s%s%s%s%s -> %s%s%s%s" % (
             len(segments), clip_kind,
             " + existing-video prelude" if prelude else "",
-            backend, blend_status, tone_status, color_status, gap_status,
-            order_status,
+            backend, blend_status, tone_status, color_status, trim_status,
+            gap_status, order_status,
             final_path, sidecar_status, copy_status, subtitle_status)
         _LOG.info("H3 Chain %s", status)
         published_video = output_copy or final_path
@@ -23046,6 +23479,7 @@ def _saved_checkpoint_listing(
     except OSError:
         review_filenames = []
     checkpoints = []
+    active_segments: dict[int, dict[str, Any]] = {}
     if os.path.isdir(checkpoint_dir):
         for filename in sorted(os.listdir(checkpoint_dir)):
             match = re.fullmatch(r"clip_(\d{4})\.json", filename)
@@ -23087,13 +23521,32 @@ def _saved_checkpoint_listing(
                 if os.path.isfile(partial_path):
                     item["partial_video"] = _video_output_item(partial_path)
                 checkpoints.append(item)
+                active_segments[index] = segment
             except (OSError, TypeError, ValueError, json.JSONDecodeError,
                     KeyError):
                 continue
+    editorial = _load_run_editorial(run_name)
+    editorial_segments: dict[int, dict[str, Any]] = {}
+    for index, segment in active_segments.items():
+        try:
+            editorial_segments[index] = _editorial_trimmed_segment(
+                segment, editorial)
+        except (TypeError, ValueError) as exc:
+            editorial_segments[index] = segment
+            for item in checkpoints:
+                if int(item["scene"]) == index:
+                    item["editorial_error"] = str(exc)
+                    break
+    stale_dependencies = _editorial_stale_dependencies(editorial_segments)
+    for item in checkpoints:
+        reasons = stale_dependencies.get(int(item["scene"]))
+        if reasons:
+            item["continuation_stale"] = True
+            item["continuation_stale_reason"] = "; ".join(reasons)
     payload: dict[str, Any] = {
         "run_name": run_name,
         "checkpoints": checkpoints,
-        "editorial": _load_run_editorial(run_name),
+        "editorial": editorial,
     }
     if not include_graph:
         return payload
@@ -23148,6 +23601,29 @@ def _save_run_editorial_document(body: Any) -> dict[str, Any]:
     document["updated_at"] = datetime.now(timezone.utc).isoformat(
         timespec="seconds").replace("+00:00", "Z")
     normalized = _normalize_run_editorial(document, body.get("run_name"))
+    checkpoint_dir = os.path.join(
+        _output_root(), "h3_chains", normalized["run_name"], "checkpoints")
+    for trim in normalized.get("trims", []):
+        scene = int(trim["scene"])
+        metadata_path = os.path.join(
+            checkpoint_dir, "clip_%04d.json" % scene)
+        if not os.path.isfile(metadata_path):
+            raise ValueError(
+                "Scene %d must have an active checkpoint before it can be "
+                "trimmed by latent." % scene)
+        metadata = _read_json(metadata_path)
+        segment = metadata.get("segment") if isinstance(metadata, dict) else None
+        if not isinstance(segment, dict):
+            raise ValueError(
+                "Scene %d checkpoint metadata has no segment record." % scene)
+        if (int(segment.get("index", 0)) != scene
+                or str(segment.get("id") or "") != str(trim["scene_id"])):
+            raise ValueError(
+                "Scene %d active checkpoint belongs to %r, not the "
+                "editorial scene %r. Refresh Plan Studio before trimming." %
+                (scene, str(segment.get("id") or ""),
+                 str(trim["scene_id"])))
+        _editorial_trimmed_segment(segment, normalized)
     _atomic_json(_run_editorial_path(normalized["run_name"]), normalized)
     return normalized
 

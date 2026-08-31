@@ -5,6 +5,8 @@ export function studioCheckpointSignature(runName, records) {
             scene: item?.scene,
             scene_id: item?.scene_id,
             ready: item?.ready,
+            continuation_stale: item?.continuation_stale,
+            continuation_stale_reason: item?.continuation_stale_reason,
             delivered_frames: item?.delivered_frames,
             video: item?.video,
             audio: item?.audio,
@@ -87,8 +89,59 @@ function normalizedStartFrame(value) {
         ? Math.max(0, Math.min(864000, Math.round(frames))) : null;
 }
 
+export function studioLatentSafeOutFrames(rawFrames, deliveredFrames) {
+    const raw = Math.round(Number(rawFrames));
+    const delivered = Math.round(Number(deliveredFrames));
+    if (!Number.isInteger(raw) || !Number.isInteger(delivered)
+            || raw < 1 || delivered < 1 || delivered > raw) return [];
+    const technicalTrim = raw - delivered;
+    const boundaries = [];
+    let covered = 0;
+    let step = 0;
+    const framePerToken = [1, 4, 4, 4, 4];
+    while (covered < raw) {
+        covered += framePerToken[step % framePerToken.length];
+        step += 1;
+        if (covered > raw) break;
+        const out = covered - technicalTrim;
+        // A shortened cut must end on both a video-latent boundary and an
+        // integer 40 Hz audio interval measured from the delivered start.
+        if (out > 0 && out <= delivered && out % 3 === 0) boundaries.push(out);
+    }
+    // Keeping the original endpoint is always lossless even when its nominal
+    // 24/40 Hz duration lands between audio ticks; no tensor is sliced.
+    if (!boundaries.includes(delivered)) boundaries.push(delivered);
+    return boundaries.sort((left, right) => left - right);
+}
+
+export function studioNearestLatentSafeOutFrame(
+    rawFrames, deliveredFrames, requestedFrames,
+) {
+    const options = studioLatentSafeOutFrames(rawFrames, deliveredFrames);
+    if (!options.length) return Math.max(1, Math.round(Number(deliveredFrames) || 1));
+    const requested = Number(requestedFrames);
+    return options.reduce((best, candidate) => (
+        Math.abs(candidate - requested) < Math.abs(best - requested)
+            ? candidate : best
+    ), options[0]);
+}
+
+function editorialOutFrame(row, trims) {
+    const sceneId = String(row?.id ?? "");
+    const full = Math.max(
+        0, Math.round(Number(row?.deliveredFrames)
+            || (Number(row?.deliveredSeconds) || 0) * 24),
+    );
+    const trim = (Array.isArray(trims) ? trims : []).find(
+        (item) => String(item?.scene_id ?? "") === sceneId,
+    );
+    const requested = Math.round(Number(trim?.out_frame));
+    return Number.isInteger(requested) && requested > 0 && requested <= full
+        ? requested : full;
+}
+
 export function studioTimelineSegments(
-    rows, placements = [], workspaceEndFrame = null,
+    rows, placements = [], workspaceEndFrame = null, trims = [],
 ) {
     const scenes = Array.isArray(rows) ? rows : [];
     const bySceneId = new Map();
@@ -102,10 +155,7 @@ export function studioTimelineSegments(
     let naturalStartFrame = 0;
     scenes.forEach((row, sceneIndex) => {
         const sceneId = String(row?.id ?? "");
-        const durationFrames = Math.max(
-            0, Math.round(Number(row?.deliveredFrames) ||
-                (Number(row?.deliveredSeconds) || 0) * 24),
-        );
+        const durationFrames = editorialOutFrame(row, trims);
         const explicit = bySceneId.has(sceneId);
         orderedScenes.push({
             row, sceneIndex, sceneId, durationFrames, explicit,
@@ -220,14 +270,15 @@ export function studioEditorialSceneStartSeconds(segments, sceneIndex) {
 
 export function studioTimelineLayout(
     rows, viewportWidth, zoom = 1, placements = [], workspaceEndFrame = null,
+    trims = [],
 ) {
     const packedSceneSeconds = studioTimelineTotalSeconds(
-        studioTimelineSegments(rows),
+        studioTimelineSegments(rows, [], null, trims),
     );
-    const sceneSegments = studioTimelineSegments(rows, placements);
+    const sceneSegments = studioTimelineSegments(rows, placements, null, trims);
     const sceneEndSeconds = studioTimelineTotalSeconds(sceneSegments);
     const segments = studioTimelineSegments(
-        rows, placements, workspaceEndFrame,
+        rows, placements, workspaceEndFrame, trims,
     );
     const width = Math.max(1, Number(viewportWidth) || 1);
     const scale = Math.max(1, Math.min(6, Number(zoom) || 1));

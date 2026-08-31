@@ -4,6 +4,16 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Plan Studio can now shorten a rendered scene non-destructively at a
+  latent-safe endpoint. Its right edge and Scene panel expose only cuts shared
+  by H3's native video-latent cycle and the delivered 24 fps / 40 Hz audio
+  clock; the original complete checkpoint and scene movie remain untouched.
+  Continuation state, generated audio, standard assembly, PNG export, and the
+  Full-Chain Latent Video adapter use the shortened prefix. If an earlier cut
+  changes after dependent scenes were generated, those checkpoints are marked
+  stale and resume requires regeneration from the first affected scene instead
+  of silently mixing incompatible endpoints.
+
 - Fixed scene-2 continuation with simultaneous Ref2VA/source audio. On a
   partially native ComfyUI runtime that drops Guide audio when reference audio
   is also present, Chain now activates its marker-gated payload merge and uses

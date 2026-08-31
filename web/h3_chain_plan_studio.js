@@ -39,18 +39,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.84";
+} from "./h3_chain_plan_core.mjs?v=0.6.85";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.84";
+} from "./h3_prompt_history_core.mjs?v=0.6.85";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.84";
+} from "./h3_reference_preview_core.mjs?v=0.6.85";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -59,16 +59,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.84";
+} from "./h3_policy_core.mjs?v=0.6.85";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.84";
+} from "./h3_socket_presentation_core.mjs?v=0.6.85";
 import {
     availableLoRARoutes,
     loraRouteLabel,
-} from "./h3_lora_scheduler_core.mjs?v=0.6.84";
+} from "./h3_lora_scheduler_core.mjs?v=0.6.85";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -81,6 +81,8 @@ import {
     studioContextWindowStartAtRatio,
     parseTimedLyrics,
     studioEditorialSceneStartSeconds,
+    studioLatentSafeOutFrames,
+    studioNearestLatentSafeOutFrame,
     studioNearestH3FrameLength,
     studioSourceAudioSecond,
     studioSourceSecond,
@@ -93,8 +95,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.84";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.84";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.85";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.85";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -232,6 +234,12 @@ function injectStyles() {
             touch-action:none; opacity:.72; }
         .h3studio-resize-handle:hover, .h3studio-resize-handle:active { width:12px; opacity:1;
             background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--scene) 28%,transparent)); }
+        .h3studio-resize-handle.h3studio-latent-trim { border-right-color:#62e1d1;
+            background:linear-gradient(90deg,transparent,rgba(98,225,209,.16)); }
+        .h3studio-resize-handle.h3studio-latent-trim::before { content:""; position:absolute;
+            right:1px; top:50%; width:0; height:0; transform:translateY(-50%);
+            border-top:5px solid transparent; border-bottom:5px solid transparent;
+            border-right:5px solid #62e1d1; }
         .h3studio-card.h3studio-locked { border-style:dashed !important; cursor:pointer; }
         .h3studio-card.h3studio-locked .h3studio-drag-handle,
         .h3studio-card.h3studio-locked .h3studio-resize-handle { cursor:not-allowed; opacity:.38; }
@@ -240,6 +248,7 @@ function injectStyles() {
         .h3studio-render-dot { position:absolute; right:6px; top:6px; width:8px; height:8px; border-radius:50%;
             background:#687080; box-shadow:0 0 0 1px #111; }
         .h3studio-rendered .h3studio-render-dot { background:#62d58b; }
+        .h3studio-continuation-stale .h3studio-render-dot { background:#f1a44c; }
         .h3studio-source-card { border-style:dashed !important; }
         .h3studio-source-card .h3studio-render-dot { background:#b58cff; }
         .h3studio-source-empty { display:flex; align-items:center; padding:0 10px; color:var(--hs-muted);
@@ -583,7 +592,7 @@ function mount(node) {
         panelHost:null,
         planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
         editorialReady:false, editorialRun:"",
-        editorial:{placements:[], locked_scene_ids:[], subtitles:{}},
+        editorial:{placements:[], trims:[], locked_scene_ids:[], subtitles:{}},
         subtitleAssets:[], subtitleAssetsRun:"", subtitleAssetsToken:0,
         playhead:null, player:null, playerAudio:null, sourceAudioPlayer:null,
         sourcePlayer:null, sourceLayer:null, subtitleOverlay:null,
@@ -746,6 +755,17 @@ function mount(node) {
                 start_frame:startFrame,
             });
         }
+        const trims = [];
+        const trimmed = new Set();
+        for (const item of Array.isArray(value?.trims) ? value.trims : []) {
+            const sceneId = String(item?.scene_id ?? "").trim();
+            const outFrame = Math.round(Number(item?.out_frame));
+            if (!sceneId || !knownIds.has(sceneId) || trimmed.has(sceneId)
+                    || !Number.isInteger(outFrame) || outFrame < 1
+                    || outFrame > MAX_H3_FRAMES) continue;
+            trimmed.add(sceneId);
+            trims.push({scene_id:sceneId, out_frame:outFrame});
+        }
         const rawSubtitles = value?.subtitles && typeof value.subtitles === "object"
             ? value.subtitles : {};
         const mode = ["off", "preview_srt"].includes(rawSubtitles.mode)
@@ -759,6 +779,7 @@ function mount(node) {
         )];
         return {
             placements,
+            trims,
             locked_scene_ids:lockedSceneIds,
             subtitles:{
                 mode,
@@ -772,7 +793,8 @@ function mount(node) {
     function timelineModel() {
         const result = timing();
         const sceneSegments = studioTimelineSegments(
-            result.shots, state.editorial.placements,
+            result.shots, state.editorial.placements, null,
+            state.editorial.trims,
         );
         const sceneEndFrame = Math.max(
             1,
@@ -804,6 +826,7 @@ function mount(node) {
         state.timelineWorkspaceEndFrame = workspaceEndFrame;
         const segments = studioTimelineSegments(
             result.shots, state.editorial.placements, workspaceEndFrame,
+            state.editorial.trims,
         );
         return {
             result, segments,
@@ -845,6 +868,32 @@ function mount(node) {
             (placement) => placement.scene_id === String(row?.id ?? ""),
         ) ?? null;
         return placement ? {...placement} : null;
+    }
+
+    function trimForScene(index) {
+        const row = timing().shots[index];
+        const trim = state.editorial.trims.find(
+            (item) => item.scene_id === String(row?.id ?? ""),
+        ) ?? null;
+        return trim ? {...trim} : null;
+    }
+
+    function setSceneTrim(index, outFrame) {
+        const row = timing().shots[index];
+        if (!row || sceneLocked(index)) return;
+        const sceneId = String(row.id);
+        const fullFrames = Math.max(1, Number(row.deliveredFrames) || 1);
+        const safeOut = studioNearestLatentSafeOutFrame(
+            row.rawFrames, fullFrames, outFrame,
+        );
+        state.editorial.trims = state.editorial.trims.filter(
+            (item) => item.scene_id !== sceneId,
+        );
+        if (safeOut < fullFrames) state.editorial.trims.push({
+            scene_id:sceneId, out_frame:safeOut,
+        });
+        scheduleEditorialSave();
+        renderShell();
     }
 
     function setScenePlacement(index, startFrame) {
@@ -974,6 +1023,11 @@ function mount(node) {
                 scene:sceneById.get(placement.scene_id),
                 start_frame:placement.start_frame,
             })),
+            trims:state.editorial.trims.map((trim) => ({
+                scene_id:trim.scene_id,
+                scene:sceneById.get(trim.scene_id),
+                out_frame:trim.out_frame,
+            })),
             locked_scene_ids:[...state.editorial.locked_scene_ids],
             subtitles:{...state.editorial.subtitles},
         };
@@ -1004,6 +1058,13 @@ function mount(node) {
                     (row) => row.scene_id === placement.scene_id,
                 )?.scene,
                 start_frame:placement.start_frame,
+            })),
+            trims:next.trims.map((trim) => ({
+                scene_id:trim.scene_id,
+                scene:(payload.scene_order ?? []).find(
+                    (row) => row.scene_id === trim.scene_id,
+                )?.scene,
+                out_frame:trim.out_frame,
             })),
             locked_scene_ids:[...next.locked_scene_ids],
             subtitles:{...next.subtitles},
@@ -1436,6 +1497,7 @@ function mount(node) {
         const layout = studioTimelineLayout(
             result.shots, viewport.clientWidth, state.timelineZoom,
             state.editorial.placements, model.workspaceEndFrame,
+            state.editorial.trims,
         );
         state.timelineZoom = layout.zoom;
         state.timelineWidths = layout.widths;
@@ -1973,6 +2035,69 @@ function mount(node) {
         });
     }
 
+    function enableSceneLatentTrimDrag(card, handle, index) {
+        const row = timing().shots[index];
+        if (!row) return;
+        const fullFrames = Math.max(1, Number(row.deliveredFrames) || 1);
+        const options = studioLatentSafeOutFrames(
+            row.rawFrames, fullFrames,
+        );
+        const currentOut = Number(trimForScene(index)?.out_frame) || fullFrames;
+        const defaultTitle = sceneLocked(index)
+            ? "Scene locked · unlock it before changing the used endpoint"
+            : `Latent-safe used end · ${currentOut}/${fullFrames} frames. Drag to trim; double-click to restore the full checkpoint.`;
+        handle.title = defaultTitle;
+        handle.addEventListener("dblclick", (event) => {
+            event.preventDefault(); event.stopPropagation();
+            if (!sceneLocked(index)) setSceneTrim(index, fullFrames);
+        });
+        handle.addEventListener("pointerdown", (event) => {
+            if (event.button !== 0 || sceneLocked(index) || !options.length) return;
+            event.preventDefault(); event.stopPropagation();
+            const model = timelineModel();
+            const contentWidth = Math.max(
+                1, Number(state.timelineContent?.dataset.timelineWidth)
+                    || state.timelineContent?.clientWidth || 1,
+            );
+            const secondsPerPixel = model.totalSeconds / contentWidth;
+            const originX = event.clientX;
+            const originWidth = card.getBoundingClientRect().width;
+            let targetOut = currentOut;
+            let moved = false;
+            state.timelineDragging = true;
+            handle.setPointerCapture?.(event.pointerId);
+            const onMove = (moveEvent) => {
+                const deltaX = moveEvent.clientX - originX;
+                if (Math.abs(deltaX) > 2) moved = true;
+                if (!moved) return;
+                targetOut = studioNearestLatentSafeOutFrame(
+                    row.rawFrames, fullFrames,
+                    currentOut + deltaX * secondsPerPixel * FPS,
+                );
+                card.style.setProperty(
+                    "--h3-scene-width",
+                    `${targetOut / FPS / secondsPerPixel}px`,
+                );
+                handle.title = `${targetOut}/${fullFrames} frames used · ${(targetOut / FPS).toFixed(3)}s · full sampled checkpoint retained`;
+            };
+            const finish = (upEvent) => {
+                handle.removeEventListener("pointermove", onMove);
+                handle.removeEventListener("pointerup", finish);
+                handle.removeEventListener("pointercancel", finish);
+                handle.releasePointerCapture?.(upEvent.pointerId);
+                state.timelineDragging = false;
+                handle.title = defaultTitle;
+                card.style.setProperty("--h3-scene-width", `${originWidth}px`);
+                if (moved && targetOut !== currentOut) {
+                    setSceneTrim(index, targetOut);
+                }
+            };
+            handle.addEventListener("pointermove", onMove);
+            handle.addEventListener("pointerup", finish);
+            handle.addEventListener("pointercancel", finish);
+        });
+    }
+
     function renderTimeline({revealActive = false, restoreScroll = null} = {}) {
         const host = state.timelineHost;
         if (!host || !state.plan) return;
@@ -1995,6 +2120,8 @@ function mount(node) {
             card.title = locked
                 ? `Scene ${index + 1}: ${row.id} · locked`
                 : `Scene ${index + 1}: ${row.id} · drag to move`;
+            if (checkpoint?.continuation_stale) card.title +=
+                ` · regenerate: ${checkpoint.continuation_stale_reason}`;
             card.tabIndex = 0;
             card.setAttribute("role", "button");
             card.addEventListener("click", (event) => {
@@ -2012,7 +2139,7 @@ function mount(node) {
             });
             card.dataset.sceneIndex = String(index);
             card.dataset.timelineKey = `scene:${index}`;
-            card.className = `h3studio-card${index === state.active ? " h3studio-selected" : ""}${checkpoint?.ready ? " h3studio-rendered" : ""}${locked ? " h3studio-locked" : ""}`;
+            card.className = `h3studio-card${index === state.active ? " h3studio-selected" : ""}${checkpoint?.ready ? " h3studio-rendered" : ""}${checkpoint?.continuation_stale ? " h3studio-continuation-stale" : ""}${locked ? " h3studio-locked" : ""}`;
             card.style.setProperty("--scene", automaticSceneColor(index));
             const segmentIndex = state.timelineSegments.findIndex(
                 (segment) => segment.key === card.dataset.timelineKey,
@@ -2024,9 +2151,11 @@ function mount(node) {
             }
             updateTimelineCheckpointCard(card, index, result);
             const sceneSegment = timelineSegment;
+            const usedFrames = Number(sceneSegment?.durationFrames)
+                || Number(row.deliveredFrames) || 0;
             const copy = element("span", "h3studio-card-copy");
             copy.append(element("span", "h3studio-card-title", `${index + 1}. ${row.id}`),
-                element("span", "h3studio-card-meta", `${formatClock(sceneSegment?.startSeconds ?? 0)} → ${formatClock(sceneSegment?.endSeconds ?? row.deliveredSeconds)} · ${row.rawFrames || "—"}f raw${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
+                element("span", "h3studio-card-meta", `${formatClock(sceneSegment?.startSeconds ?? 0)} → ${formatClock(sceneSegment?.endSeconds ?? row.deliveredSeconds)} · ${usedFrames}/${row.deliveredFrames}f used${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
             const dragHandle = element("span", "h3studio-drag-handle", "⋮⋮");
             dragHandle.title = locked
                 ? "Scene locked · unlock it before moving"
@@ -2049,10 +2178,15 @@ function mount(node) {
             lockHandle.append(lockIcon);
             lockHandle.addEventListener("pointerdown", (event) => event.stopPropagation());
             const resizeHandle = element("span", "h3studio-resize-handle");
-            resizeHandle.title = locked
-                ? "Scene locked · unlock it before changing its length"
-                : "Resize scene length · snaps to H3's 17n+5 frame grid";
-            enableSceneDurationDrag(card, resizeHandle, index);
+            if (checkpoint?.ready) {
+                resizeHandle.classList.add("h3studio-latent-trim");
+                enableSceneLatentTrimDrag(card, resizeHandle, index);
+            } else {
+                resizeHandle.title = locked
+                    ? "Scene locked · unlock it before changing its length"
+                    : "Resize generated length · snaps to H3's 17n+5 frame grid";
+                enableSceneDurationDrag(card, resizeHandle, index);
+            }
             card.append(
                 copy, dragHandle, lockHandle, resizeHandle,
                 element("span", "h3studio-render-dot"),
@@ -2463,6 +2597,12 @@ function mount(node) {
     function renderScenePanel() {
         const shot = state.plan.shots[state.active];
         const row = timing().shots[state.active];
+        const checkpoint = matchingStudioCheckpoint(
+            state.checkpoints, state.active, row,
+        );
+        const activeTrim = trimForScene(state.active);
+        const usedFrames = Number(activeTrim?.out_frame)
+            || Number(row.deliveredFrames) || 0;
         const timelineLocked = sceneLocked(state.active);
         const panel = element("div");
         const head = element("div", "h3studio-scene-head");
@@ -2470,7 +2610,11 @@ function mount(node) {
             timelineModel().segments, state.active,
         );
         head.append(element("strong", "", `Scene ${state.active + 1} of ${state.plan.shots.length}`),
-            element("span", "h3studio-scene-label", `${row.rawFrames || "—"} raw · ${row.deliveredFrames || "—"} delivered · ${row.videoBlendFrames}f incoming blend · generation ${formatClock(row.generationStartFrame / 24)} · editorial ${formatClock(editorialStart)}`));
+            element("span", "h3studio-scene-label", `${row.rawFrames || "—"} raw · ${usedFrames}/${row.deliveredFrames || "—"} used · ${row.videoBlendFrames}f incoming blend · generation ${formatClock(row.generationStartFrame / 24)} · editorial ${formatClock(editorialStart)}`));
+        if (checkpoint?.continuation_stale) head.append(element(
+            "span", "h3studio-error",
+            `Regenerate this scene: ${checkpoint.continuation_stale_reason}. Its saved media still plays, but it was generated from the previous cut endpoint.`,
+        ));
         const grid = h3StudioGridMarkers(
             row.rawFrames, row.contextLength, row.continuationMode,
             row.preservesGeneratedAudioPrefix,
@@ -3065,6 +3209,35 @@ function mount(node) {
         );
         const sceneStartWrap = element("span", "h3studio-length");
         sceneStartWrap.append(sceneStart, resetStart);
+        const usedEnd = element("select");
+        for (const frame of studioLatentSafeOutFrames(
+            row.rawFrames, row.deliveredFrames,
+        )) {
+            const option = element(
+                "option", "",
+                frame === Number(row.deliveredFrames)
+                    ? `Full · ${frame}f · ${formatClock(frame / FPS)}`
+                    : `${frame}f · ${formatClock(frame / FPS)}`,
+            );
+            option.value = String(frame);
+            usedEnd.append(option);
+        }
+        usedEnd.value = String(usedFrames);
+        usedEnd.disabled = !checkpoint?.ready || timelineLocked;
+        usedEnd.title = checkpoint?.ready
+            ? "Non-destructive editorial endpoint. Only boundaries shared by the sampled H3 video latent and delivered 40 Hz audio grid are offered. The full checkpoint remains available, while assembly and the next scene use this endpoint."
+            : "Generate this scene first; latent-safe endpoint editing uses its saved checkpoint.";
+        usedEnd.addEventListener("change", () => {
+            setSceneTrim(state.active, Number(usedEnd.value));
+        });
+        const resetUsedEnd = button(
+            "Full", "Use the complete generated checkpoint",
+            () => setSceneTrim(state.active, row.deliveredFrames),
+        );
+        resetUsedEnd.disabled = !checkpoint?.ready || timelineLocked
+            || usedFrames === Number(row.deliveredFrames);
+        const usedEndWrap = element("span", "h3studio-length");
+        usedEndWrap.append(usedEnd, resetUsedEnd);
         const sceneLockControl = button(
             timelineLocked ? "Unlock scene" : "Lock scene",
             timelineLocked
@@ -3081,6 +3254,7 @@ function mount(node) {
             field("LoRA route", loraRoute),
             field("Timeline lock", sceneLockControl),
             field("Editorial start", sceneStartWrap),
+            field("Latent-safe used end", usedEndWrap),
             field("Incoming transition", incomingTransition),
             field("Final assembly crossfade frames", blendFrames),
         );
@@ -4984,7 +5158,7 @@ function mount(node) {
                 state.checkpoints = new Map(); state.checkpointSignature = "";
                 state.checkpointError = ""; state.timelinePosition = null;
                 state.editorialReady = false; state.editorialRun = "";
-                state.editorial = {placements:[], locked_scene_ids:[], subtitles:{
+                state.editorial = {placements:[], trims:[], locked_scene_ids:[], subtitles:{
                     mode:"off", asset_id:"", offset_seconds:0,
                 }};
                 state.timelineWorkspaceEndFrame = 0;
