@@ -4,6 +4,17 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Completed the structured preflight diagnostic contract. All hard preflight
+  categories now carry their precise trigger, including scene ID, setting,
+  value, origin, and tag where applicable; duration/capacity failures report
+  required versus available frames, the last complete scene, and the first
+  affected scene. Diagnostics retain the compatible primary `action` while
+  adding ranked alternative solutions, and validation failures are separated
+  by Plan, scene selection, source, reference, runtime, and resume stage rather
+  than collapsing into one generic internal error. Source-duration validation
+  now measures only through the last scene that actually consumes source audio
+  unless the final soundtrack itself is sourced.
+
 - Made blocking preflight errors identify their actionable origin. Missing
   source-audio diagnostics now list every triggering scene ID, the exact
   effective setting (`source_reference`, `source_audio_target`, or final

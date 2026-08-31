@@ -101,6 +101,14 @@ def semantic_plan(prompt):
         "guide", policy)
 
 
+def assert_complete_diagnostic(issue):
+    assert issue["message"]
+    assert issue["action"]
+    assert issue["solutions"]
+    assert issue["solutions"][0] == issue["action"]
+    assert issue["triggers"]
+
+
 with tempfile.TemporaryDirectory() as temporary:
     root = pathlib.Path(temporary)
     chain._output_root = lambda: str(root)
@@ -241,7 +249,22 @@ with tempfile.TemporaryDirectory() as temporary:
     assert failed["source"]["last_complete_scene"] == 1
     issue = next(item for item in failed["errors"]
                  if item["code"] == "source_audio_too_short")
-    assert issue["action"]
+    assert_complete_diagnostic(issue)
+    assert issue["measurements"] == {
+        "required_frames": 39,
+        "required_seconds": 39 / 24,
+        "available_frames": 30,
+        "available_seconds": 30 / 24,
+        "shortfall_frames": 9,
+        "shortfall_seconds": 9 / 24,
+        "last_complete_scene": {"scene": 1, "scene_id": "one"},
+        "first_affected_scene": {"scene": 2, "scene_id": "two"},
+    }
+    assert len(issue["solutions"]) == 3
+    short_text = chain._preflight_failure_text(failed)
+    assert ('last_complete_scene=Scene 1 "one"' in short_text)
+    assert ('first_affected_scene=Scene 2 "two"' in short_text)
+    assert "Alternative:" in short_text
 
     materialized = []
     original = chain._materialize_source_timeline_audio
@@ -289,11 +312,38 @@ with tempfile.TemporaryDirectory() as temporary:
         "setting": "source_reference", "value": "on",
         "origin": "scene override",
     }]
+    assert_complete_diagnostic(missing_issue)
+    scene_four = scene_override_plan["shots"][3]
+    assert missing_issue["measurements"]["required_frames"] == (
+        scene_four["generation_start_frame"] + scene_four["raw_frames"])
+    assert missing_issue["measurements"]["last_complete_scene"] == {
+        "scene": 3, "scene_id": "3_5"}
+    assert missing_issue["measurements"]["first_affected_scene"] == {
+        "scene": 4, "scene_id": "4_5"}
     failure_text = chain._preflight_failure_text(missing_source)
     assert ("Loop Start source_timeline and legacy source_audio inputs are "
             "both disconnected" in failure_text)
     assert ('Trigger: Scene 4 "4_5": source_reference=on '
             '(scene override)' in failure_text)
+
+    _prepared, invalid_plan = chain._preflight_chain(None)
+    invalid_plan_issue = invalid_plan["errors"][0]
+    assert invalid_plan_issue["code"] == "invalid_plan"
+    assert_complete_diagnostic(invalid_plan_issue)
+    assert invalid_plan_issue["triggers"][0]["value"] == "plan"
+
+    _prepared, invalid_selection = chain._preflight_chain(
+        scene_override_plan, scene_range="99")
+    selection_issue = invalid_selection["errors"][0]
+    assert selection_issue["code"] == "invalid_scene_selection"
+    assert_complete_diagnostic(selection_issue)
+
+    _prepared, invalid_source = chain._preflight_chain(
+        scene_override_plan, source_timeline=deferred_timeline(100),
+        source_audio=deferred_timeline(100)["audio"]["value"])
+    source_issue = invalid_source["errors"][0]
+    assert source_issue["code"] == "invalid_source_input"
+    assert_complete_diagnostic(source_issue)
 
     tagged_picture = chain.MiniMaxH3TaggedPictureReference().add(
         torch.zeros((1, 32, 32, 3)), "replacement")[0]
