@@ -39,6 +39,7 @@ class Frames:
 
 class UpstreamMotionContext:
     calls = []
+    fail_audio_merge = False
     FUNCTION = "apply"
 
     @classmethod
@@ -59,6 +60,12 @@ class UpstreamMotionContext:
 
     def apply(self, **kwargs):
         type(self).calls.append(kwargs)
+        if type(self).fail_audio_merge:
+            raise RuntimeError(
+                "h3_motion_context: this graph requires native MiniMax H3 "
+                "guide/MultiRef support from ComfyUI PR #15439, but the live "
+                "runtime is missing native_keyframe_ref_audio_merge."
+            )
         existing = list(kwargs["conditioning"][0][1].get(
             "minimax_keyframes", []))
         visual = {
@@ -172,6 +179,21 @@ def main():
         result = apply(future_end_anchor=True)
         assert result == ("fallback-conditioning", 22)
         assert len(UpstreamMotionContext.calls) == upstream_calls
+
+        # A partially native ComfyUI can expose arbitrary Guide layout while
+        # still dropping Guide audio when Ref2VA audio is active. The public
+        # provider rejects that safely; Chain repairs its marker-gated payload
+        # merge and runs the retained internal engine instead.
+        original_repair = adapter._enable_internal_payload_merge
+        adapter._enable_internal_payload_merge = lambda: (
+            True, "test payload compatibility enabled")
+        UpstreamMotionContext.fail_audio_merge = True
+        result = apply(context_latent="previous-av-latent")
+        assert result == ("fallback-conditioning", 22)
+        assert FallbackMotionContext.calls[-1][
+            "context_latent"] == "previous-av-latent"
+        UpstreamMotionContext.fail_audio_merge = False
+        adapter._enable_internal_payload_merge = original_repair
 
         # Older ComfyUI falls back even when the provider itself is installed.
         adapter._native_guides_available = lambda: False

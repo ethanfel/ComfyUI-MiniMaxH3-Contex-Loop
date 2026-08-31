@@ -4,6 +4,13 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed scene-2 continuation with simultaneous Ref2VA/source audio. On a
+  partially native ComfyUI runtime that drops Guide audio when reference audio
+  is also present, Chain now activates its marker-gated payload merge and uses
+  the retained internal Motion Context engine. The compatibility merge now
+  preserves keyframe audio followed by reference audio, matching H3 layout
+  order, instead of accidentally retaining only the reference-audio rows.
+
 - Scene LoRA routing now grows with the workflow instead of exposing four
   fixed branches. A new scheduler shows one empty LoRA A socket; connecting it
   reveals B, then C, through Z. Plan Editor and Plan Studio offer only routes

@@ -56,6 +56,39 @@ def _native_guides_available() -> bool:
         return False
 
 
+def _payload_audio_merge_error(exc: BaseException) -> bool:
+    message = str(exc)
+    return bool(
+        "h3_motion_context:" in message
+        and "native_keyframe_ref_audio_merge" in message
+    )
+
+
+def _enable_internal_payload_merge() -> tuple[bool, str]:
+    """Enable the guarded keyframe/ref merge for a partially native core.
+
+    Some ComfyUI builds expose native arbitrary Guides but still drop Guide
+    audio when Ref2VA audio is present. The public upstream provider correctly
+    refuses that combination. Our internal engine can retain it when the
+    marker-gated payload compatibility wrapper owns the merge.
+    """
+    try:
+        from .patch_payload import (
+            apply_patch,
+            claim_patch_ownership,
+            is_applied,
+        )
+
+        if not apply_patch() or not is_applied():
+            return False, "payload compatibility patch could not be enabled"
+        claimed, detail = claim_patch_ownership(require_keyframe_audio=True)
+        if not claimed or not is_applied():
+            return False, str(detail)
+        return True, str(detail)
+    except Exception as exc:
+        return False, str(exc)
+
+
 def _registered_upstream(fallback_node_type: Any):
     """Return (class, accepted input names), or (None, empty set).
 
@@ -345,7 +378,43 @@ def apply_motion_context(
 
     function_name = str(getattr(upstream_type, "FUNCTION", "apply"))
     upstream = upstream_type()
-    result = getattr(upstream, function_name)(**kwargs)
+    try:
+        result = getattr(upstream, function_name)(**kwargs)
+    except RuntimeError as exc:
+        if not _payload_audio_merge_error(exc):
+            raise
+        repaired, detail = _enable_internal_payload_merge()
+        if not repaired:
+            raise RuntimeError(
+                "%s H3 Chain could not enable its guarded internal audio "
+                "merge fallback: %s" % (exc, detail)
+            ) from exc
+        _log_once(
+            "fallback:native-keyframe-ref-audio-merge",
+            logging.WARNING,
+            "H3 Chain Motion Context uses its internal compatibility engine "
+            "because the live ComfyUI payload drops Guide audio when Ref2VA "
+            "audio is also active (%s).",
+            detail,
+        )
+        return fallback_node_type().apply(
+            conditioning=conditioning,
+            vae=vae,
+            latent=latent,
+            context_frames=context_frames,
+            context_length=context_length,
+            encode_mode=encode_mode,
+            anchor_mode=anchor_mode,
+            crop=crop,
+            audio_context_length=audio_context_length,
+            audio_mode=audio_mode,
+            context_latent=context_latent,
+            audio_vae=audio_vae,
+            context_audio=context_audio,
+            video_context_latent=video_context_latent,
+            visual_cond_noise_aug=visual_cond_noise_aug,
+            future_end_anchor=future_end_anchor,
+        )
     output, trim = result[0], int(result[1])
     output = _decorate_output(
         output, prior_count, trim,

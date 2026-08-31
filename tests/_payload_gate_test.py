@@ -91,13 +91,33 @@ def main():
     assert got["cond_video_latents"] == ["REF"], got
     print("1. stock keyframes + stock refs: untouched, stock overwrite intact")
 
-    # 2. this pack's own graph: marked keyframes and a marked audio ref
+    # 2. this pack's own legacy graph: marked keyframes and a marked audio ref
     mc_kf = [{"resolved_frame_index": 0, MC_KEY: 0, "latent": "KF"}]
     mc_ref = [{"kind": "audio", MC_AUDIO_KEY: 22.2, "audio_latent": "A"}]
     got = run(mc_kf, mc_ref)
     assert got["cond_video_latents"] == ["KF"], got
     assert got["cond_audio_latents"] == ["A"], got
     print("2. marked keyframes + marked ref: keyframe latent preserved")
+
+    # Native Guide continuation uses a different private marker and may carry
+    # audio in a keyframe while Ref2VA contributes its own tagged audio ref.
+    # Both audio rows must survive, in the same keyframe-then-ref order as the
+    # packed layout. This is the issue #38 scene-2 regression.
+    native_kfs = [{
+        "resolved_frame_index": 0,
+        "h3_chain_context_visual": True,
+        "latent": "NATIVE_KF",
+        "audio_latent": "GUIDE_AUDIO",
+    }]
+    native_refs = [{
+        "kind": "video_audio",
+        "latent": "NATIVE_REF",
+        "audio_latent": "TAGGED_AUDIO",
+    }]
+    got = run(native_kfs, native_refs)
+    assert got["cond_video_latents"] == ["NATIVE_KF", "NATIVE_REF"], got
+    assert got["cond_audio_latents"] == ["GUIDE_AUDIO", "TAGGED_AUDIO"], got
+    print("2b. native Chain Guide + Ref2VA audio: both audio rows preserved")
 
     # 3. chaining under Ref2VA: the graph's own references are unmarked,
     # ours is marked, and every video latent must survive in list order
@@ -146,6 +166,19 @@ def main():
     assert got["cond_audio_latents"] == ["A2", "A3"], got
     assert got["frame_count"] == 124, got
     print("5. H3-Multishot AV-bank payload owner: compatible and reused")
+
+    # If a live capability probe has specifically found missing keyframe
+    # audio, priority may safely layer the marker-gated AV merge over this
+    # one known video-only wrapper.
+    claimed, detail = pp2.claim_patch_ownership(require_keyframe_audio=True)
+    assert claimed, detail
+    assert mb2.MiniMaxH3.extra_conds is pp2._patched_extra_conds
+    got = mb2.MiniMaxH3().extra_conds(
+        minimax_keyframes=native_kfs, minimax_refs=native_refs,
+        minimax_frame_count=124)["minimax_payload"].cond
+    assert got["cond_video_latents"] == ["NATIVE_KF", "NATIVE_REF"], got
+    assert got["cond_audio_latents"] == ["GUIDE_AUDIO", "TAGGED_AUDIO"], got
+    print("5b. H3-Multishot video merge: missing keyframe audio layered safely")
 
     # The marker alone is not a compatibility contract. Only Multishot's
     # known module is accepted; an unrelated wrapper remains refused.
