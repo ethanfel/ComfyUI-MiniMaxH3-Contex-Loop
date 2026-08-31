@@ -141,10 +141,11 @@ revisions are never included.
 
 ## Checkpoint Manager
 
-Connect the active Plan output to **MiniMax H3 Checkpoint Manager**. It passes
-the Plan through unchanged and never pauses execution, so it can stay between
-Plan and the next consumer. The connected Plan preselects its run; the run
-selector can inspect any other folder under `output/h3_chains`.
+Connect the active Plan to **MiniMax H3 Checkpoint Manager** when you want its
+run preselected or want **Load selected branch** to restore saved Plan values.
+The node outputs only `selected_manifest`; it is not a Plan pass-through and is
+normally kept beside the generation route. Its run selector can inspect any
+other folder under `output/h3_chains`.
 
 The manager groups immutable scene revisions into inferred branches. A revision
 can appear in more than one branch when it is their shared ancestor. Selecting
@@ -198,6 +199,29 @@ Deletion is deliberately one scene revision at a time:
 This first release does not bulk-delete branches. The leaf-first workflow makes
 the exact context consequences visible and avoids silently orphaning later
 checkpoints.
+
+### Alternate final-cut takes
+
+Use an alternate when one accepted scene needs a prompt-level visual correction
+but later scenes already depend on its original checkpoint.
+
+1. Open that scene in Plan Studio and expand **Alternate final-cut take**.
+2. Edit the alternate prompt and seed, then enable the draft.
+3. Queue normally. Loop Start renders only that scene.
+4. Approve the alternate in Review Gate.
+
+Acceptance selects the alternate picture for preview, assembly, PNG export,
+and whole-chain latent finishing. It does not replace the active generation
+checkpoint: later scenes keep their original visual/audio ancestry, and final
+audio for the corrected scene remains the original audio.
+
+Plan Studio marks the selection `ALT`. Checkpoint Manager nests the immutable
+alternate under its base take rather than drawing a new continuation branch.
+Choose **Original** in Plan Studio to restore the base picture at any time.
+
+An alternate must preserve the scene identity and duration. If a later scene
+exists, set the blend entering that scene to `0`: its saved overlap still shows
+the original base take, so assembly rejects a crossfade from an alternate.
 
 ### Whole-chain SeedVR2 finishing
 
