@@ -6064,7 +6064,8 @@ def _plan_with_source_timeline(
         raise ValueError(
             "H3 chain Audio Policy %s requires audio on Source Timeline." %
             _audio_policy_summary({"audio_policy": policy}))
-    required_frames = int(plan["total_delivered_frames"])
+    required_frames = _preflight_source_required_frames(
+        plan, source_requirements)
     silent_padding = bool(
         source.get("recovery", {}).get("silent_padding_frames"))
     if (_audio_policy_requires_source(plan)
@@ -12581,12 +12582,138 @@ class MiniMaxH3ChainRichScenePromptEditor:
 
 def _preflight_issue(
         report: dict[str, Any], level: str, code: str, message: str,
-        action: str = "", **context: Any) -> None:
+        action: str = "", *, solutions: Any = None, triggers: Any = None,
+        measurements: Any = None, **context: Any) -> None:
+    ranked_solutions = []
+    alternatives = ([solutions] if isinstance(solutions, str)
+                    else list(solutions or ()))
+    for candidate in ([action] + alternatives):
+        text = str(candidate or "").strip()
+        if text and text not in ranked_solutions:
+            ranked_solutions.append(text)
+    if level == "errors" and not ranked_solutions:
+        ranked_solutions.append(
+            "Correct the reported input or setting, then run preflight again.")
     issue = {"code": str(code), "message": str(message),
-             "action": str(action or "")}
+             "action": ranked_solutions[0] if ranked_solutions else "",
+             "solutions": ranked_solutions}
+    normalized_triggers = triggers
+    if normalized_triggers is None:
+        normalized_triggers = context.get("requirements")
+    if normalized_triggers:
+        issue["triggers"] = [
+            dict(value) for value in normalized_triggers
+            if isinstance(value, dict)]
+    if isinstance(measurements, dict) and measurements:
+        issue["measurements"] = dict(measurements)
     issue.update({key: value for key, value in context.items()
                   if value is not None})
     report[level].append(issue)
+
+
+def _preflight_scene_trigger(
+        shot: dict[str, Any], setting: str, value: Any,
+        origin: str, *, tag: str = "") -> dict[str, Any]:
+    scene = int(shot.get("index", 0))
+    trigger = {
+        "scope": "scene", "scene": scene,
+        "scene_id": str(shot.get("id") or "scene_%d" % scene),
+        "setting": str(setting), "value": value,
+        "origin": str(origin),
+    }
+    if tag:
+        trigger["tag"] = str(tag)
+    return trigger
+
+
+def _preflight_scene_location(
+        plan: dict[str, Any], scene: int) -> dict[str, Any] | None:
+    if int(scene) < 1 or int(scene) > len(plan.get("shots") or ()):
+        return None
+    shot = plan["shots"][int(scene) - 1]
+    return {
+        "scene": int(shot.get("index", scene)),
+        "scene_id": str(shot.get("id") or "scene_%d" % int(scene)),
+    }
+
+
+def _preflight_source_required_frames(
+        plan: dict[str, Any], requirements: list[dict[str, Any]]) -> int:
+    if any(item.get("scope") == "final output" for item in requirements):
+        return int(plan["total_delivered_frames"])
+    required = 0
+    for item in requirements:
+        if item.get("scope") != "scene":
+            continue
+        scene = int(item["scene"])
+        if 1 <= scene <= len(plan.get("shots") or ()):
+            shot = plan["shots"][scene - 1]
+            required = max(
+                required,
+                max(0, int(shot["generation_start_frame"]))
+                + int(shot["raw_frames"]))
+    return required
+
+
+def _preflight_source_coverage(
+        plan: dict[str, Any], available_frames: int,
+        requirements: list[dict[str, Any]]) -> dict[str, Any]:
+    cumulative = 0
+    last_complete = 0
+    first_affected = None
+    final_output = any(
+        item.get("scope") == "final output" for item in requirements)
+    required_scenes = {
+        int(item["scene"]) for item in requirements
+        if item.get("scope") == "scene" and item.get("scene") is not None}
+    for shot in plan.get("shots") or ():
+        cumulative += int(shot["delivered_frames"])
+        scene = int(shot["index"])
+        required_end = (
+            cumulative if final_output else
+            max(0, int(shot["generation_start_frame"]))
+            + int(shot["raw_frames"]))
+        affected = (
+            (final_output or scene in required_scenes)
+            and int(available_frames) < required_end)
+        if affected and first_affected is None:
+            first_affected = int(shot["index"])
+        if first_affected is None:
+            last_complete = scene
+    return {
+        "last_complete_scene": _preflight_scene_location(plan, last_complete),
+        "first_affected_scene": _preflight_scene_location(
+            plan, first_affected) if first_affected is not None else None,
+    }
+
+
+def _format_preflight_trigger(trigger: dict[str, Any]) -> str:
+    if trigger.get("scope") == "scene":
+        location = 'Scene %d "%s"' % (
+            int(trigger["scene"]), str(trigger.get("scene_id") or
+                                       "scene_%d" % int(trigger["scene"])))
+    else:
+        location = str(trigger.get("scope") or "Plan")
+    details = []
+    if trigger.get("setting"):
+        setting = str(trigger["setting"])
+        if trigger.get("value") is not None:
+            setting += "=%s" % trigger["value"]
+        details.append(setting)
+    if trigger.get("tag"):
+        details.append("tag=%s" % trigger["tag"])
+    rendered = "; ".join(details) or "affected"
+    if trigger.get("origin"):
+        rendered += " (%s)" % trigger["origin"]
+    return "%s: %s" % (location, rendered)
+
+
+def _format_preflight_location(value: Any) -> str:
+    if not isinstance(value, dict) or value.get("scene") is None:
+        return "none"
+    return 'Scene %d "%s"' % (
+        int(value["scene"]), str(value.get("scene_id") or
+                                 "scene_%d" % int(value["scene"])))
 
 
 def _preflight_reference_window(
@@ -12644,7 +12771,14 @@ def _preflight_runtime_compatibility(
             report, "warnings", "runtime_inspection_unavailable",
             "H3 runtime compatibility could not be inspected in this "
             "model-free process: %s" % exc,
-            "Run preflight inside the active ComfyUI process before sampling.")
+            "Run preflight inside the active ComfyUI process before sampling.",
+            solutions=(
+                "Restart ComfyUI if this report came from the active server; "
+                "the runtime modules may not have finished loading.",),
+            triggers=({
+                "scope": "runtime", "setting": "compatibility_inspection",
+                "value": "unavailable", "origin": "H3 preflight",
+            },))
         return runtime
 
     guide = compatibility_report()
@@ -12652,14 +12786,28 @@ def _preflight_runtime_compatibility(
     if not guide["ok"]:
         _preflight_issue(
             report, "errors", "guide_layout_conflict", guide["message"],
-            guide["action"])
+            guide["action"],
+            solutions=(
+                "Remove or update the conflicting H3 layout patch, then "
+                "restart ComfyUI.",
+                "Use a ComfyUI build with the native H3 guide API.",),
+            triggers=({
+                "scope": "runtime", "setting": "guide_layout_owner",
+                "value": str(guide.get("owner") or "unavailable"),
+                "origin": str(guide.get("mode") or "compatibility check"),
+            },))
     masked_scenes = []
+    masked_triggers = []
     default_mode = str(
         plan["compatibility"].get("continuation_mode", "guide"))
     for shot in plan["shots"]:
         mode = str(shot.get("continuation_mode", default_mode))
         if mode in MASKED_CONTINUATION_MODES:
             masked_scenes.append(int(shot["index"]))
+            masked_triggers.append(_preflight_scene_trigger(
+                shot, "continuation_mode", mode,
+                "scene override" if shot.get("continuation_mode") is not None
+                else "Plan compatibility"))
     if not masked_scenes:
         return runtime
     mask: dict[str, Any] = {"needed": True, "scenes": masked_scenes}
@@ -12670,7 +12818,11 @@ def _preflight_runtime_compatibility(
             report, "errors", "masked_av_requires_native_guides",
             "Masked AV continuation requires ComfyUI's native H3 guide API.",
             "Update ComfyUI to a build containing the native H3 Add Guide "
-            "API, then restart ComfyUI.", scenes=masked_scenes)
+            "API, then restart ComfyUI.",
+            solutions=(
+                "Change the reported scenes to a non-masked continuation "
+                "mode until the runtime is updated.",),
+            triggers=masked_triggers, scenes=masked_scenes)
         return runtime
     try:
         from .h3_mask_compat import capability_status as engine_status
@@ -12700,7 +12852,10 @@ def _preflight_runtime_compatibility(
                 report, "errors", "partial_mask_runtime",
                 "A partially updated H3 AV-mask runtime was detected.",
                 "Update ComfyUI and this node pack together, then restart.",
-                scenes=masked_scenes)
+                solutions=(
+                    "Use a non-masked continuation mode for the reported "
+                    "scenes until both components are matched.",),
+                triggers=masked_triggers, scenes=masked_scenes)
     except Exception as exc:
         mask.update({"ok": False, "mode": "inspection_failed",
                      "detail": str(exc)})
@@ -12708,8 +12863,53 @@ def _preflight_runtime_compatibility(
             report, "errors", "mask_runtime_inspection_failed",
             "Could not inspect H3 AV-mask compatibility: %s" % exc,
             "Update ComfyUI and restart before using masked AV transitions.",
-            scenes=masked_scenes)
+            solutions=(
+                "Change the reported scenes to a non-masked continuation "
+                "mode and run preflight again.",
+                "Update this node pack if ComfyUI is already current.",),
+            triggers=masked_triggers, scenes=masked_scenes)
     return runtime
+
+
+def _preflight_source_measurements(
+        plan: dict[str, Any], available_frames: int,
+        requirements: list[dict[str, Any]]) -> dict[str, Any]:
+    required_frames = _preflight_source_required_frames(plan, requirements)
+    shortfall_frames = max(0, required_frames - int(available_frames))
+    coverage = _preflight_source_coverage(
+        plan, int(available_frames), requirements)
+    return {
+        "required_frames": required_frames,
+        "required_seconds": required_frames / float(FPS),
+        "available_frames": int(available_frames),
+        "available_seconds": int(available_frames) / float(FPS),
+        "shortfall_frames": shortfall_frames,
+        "shortfall_seconds": shortfall_frames / float(FPS),
+        **coverage,
+    }
+
+
+def _preflight_shortfall_solutions(
+        measurements: dict[str, Any]) -> tuple[str, tuple[str, ...]]:
+    minimum = "%.3fs (%d frames)" % (
+        float(measurements["required_seconds"]),
+        int(measurements["required_frames"]))
+    primary = "Provide a source track at least %s long." % minimum
+    alternatives = []
+    last_complete = measurements.get("last_complete_scene")
+    if isinstance(last_complete, dict):
+        alternatives.append(
+            "Shorten the Plan through %s, or trim/reposition later scenes "
+            "inside the available source duration." %
+            _format_preflight_location(last_complete))
+    else:
+        alternatives.append(
+            "Shorten or reposition the first scene inside the available "
+            "source duration.")
+    alternatives.append(
+        "If source audio was not intended, change the reported source-audio "
+        "settings instead of supplying a track.")
+    return primary, tuple(alternatives)
 
 
 def _preflight_bind_source(
@@ -12763,19 +12963,44 @@ def _preflight_bind_source(
                     "Source Timeline %s is unavailable: %s" %
                     (item["kind"], item["path"] or "<empty path>"),
                     "Relink the media in Source Timeline or restore its Run "
-                    "Manager archive.", kind=item["kind"])
+                    "Manager archive.",
+                    solutions=(
+                        "Select a replacement %s source in the Project Asset "
+                        "Manager." % item["kind"],
+                        "Remove the unavailable Source track if it is no "
+                        "longer part of this Plan."),
+                    triggers=({
+                        "scope": "Source Timeline",
+                        "setting": "%s_path" % item["kind"],
+                        "value": item["path"] or "<empty path>",
+                        "origin": "connected/recovered media",
+                    },), kind=item["kind"], path=item["path"])
         if required and source["audio"]["kind"] == "none":
             _preflight_issue(
                 report, "errors", "source_audio_missing",
                 "Source Timeline has no audio, but the Plan settings listed "
                 "below require it.",
-                "Choose embedded/external audio, or change the reported "
-                "setting at its reported scope.",
-                requirements=source_requirements)
+                "Choose embedded or external audio for Source Timeline.",
+                solutions=(
+                    "Connect the legacy source_audio input instead of this "
+                    "Source Timeline.",
+                    "Change each reported setting at its reported scope if "
+                    "source audio was not intended."),
+                requirements=source_requirements,
+                measurements=_preflight_source_measurements(
+                    plan, 0, source_requirements))
         shortfall = max(0, required_frames - audio_frames) if required else 0
         source_report["shortfall_frames"] = shortfall
         source_report["shortfall_seconds"] = shortfall / float(FPS)
         if shortfall:
+            measurements = _preflight_source_measurements(
+                plan, audio_frames, source_requirements)
+            source_report.update({
+                "last_complete_scene": (
+                    measurements["last_complete_scene"] or {}).get("scene", 0),
+                "first_affected_scene": (
+                    measurements["first_affected_scene"] or {}).get("scene"),
+            })
             deferred = source["audio"].get("value")
             silent = False
             if source["audio"]["kind"] == "deferred_tensor" and deferred is not None:
@@ -12788,14 +13013,23 @@ def _preflight_bind_source(
                     report, "warnings", "silent_source_will_pad",
                     "Silent placeholder audio is %.3f seconds short and will "
                     "be padded." % (shortfall / float(FPS)),
-                    "No action is required unless real source audio was intended.")
+                    "No action is required unless real source audio was intended.",
+                    solutions=(
+                        "Replace the placeholder with a track at least %.3fs "
+                        "long when real source audio is intended." %
+                        measurements["required_seconds"],),
+                    triggers=source_requirements,
+                    measurements=measurements)
             else:
+                action, alternatives = _preflight_shortfall_solutions(
+                    measurements)
                 _preflight_issue(
                     report, "errors", "source_audio_too_short",
                     "Source audio is %d frames (%.3fs) short." %
                     (shortfall, shortfall / float(FPS)),
-                    "Shorten the Plan to a complete scene or provide a longer "
-                    "source track.")
+                    action, solutions=alternatives,
+                    triggers=source_requirements,
+                    measurements=measurements)
         audio_hash = (str(source["fingerprints"].get("audio") or "none")
                       if required else "none")
         timeline_hash = str(source["fingerprints"]["timeline"])
@@ -12818,9 +13052,14 @@ def _preflight_bind_source(
             "Loop Start source_timeline and legacy source_audio inputs are "
             "both disconnected, but the Plan settings listed below require "
             "source audio.",
-            "Connect one H3 Source Timeline to Loop Start, use the legacy "
-            "source_audio input, or change the reported setting at its "
-            "reported scope.", requirements=source_requirements)
+            "Connect one H3 Source Timeline to Loop Start.",
+            solutions=(
+                "Use the legacy source_audio input instead.",
+                "Change each reported setting at its reported scope if "
+                "source audio was not intended."),
+            requirements=source_requirements,
+            measurements=_preflight_source_measurements(
+                plan, 0, source_requirements))
         source_hash = "none"
     elif source_audio is not None:
         waveform, sample_rate = _validate_audio(
@@ -12836,16 +13075,36 @@ def _preflight_bind_source(
             "shortfall_seconds": shortfall / float(FPS),
         })
         if shortfall and not _audio_is_silent(waveform):
+            measurements = _preflight_source_measurements(
+                plan, available_frames, source_requirements)
+            source_report.update({
+                "last_complete_scene": (
+                    measurements["last_complete_scene"] or {}).get("scene", 0),
+                "first_affected_scene": (
+                    measurements["first_affected_scene"] or {}).get("scene"),
+            })
+            action, alternatives = _preflight_shortfall_solutions(measurements)
             _preflight_issue(
                 report, "errors", "source_audio_too_short",
                 "Legacy source audio is %d frames (%.3fs) short." %
                 (shortfall, shortfall / float(FPS)),
-                "Shorten the Plan to a complete scene or provide a longer track.")
+                action, solutions=alternatives,
+                triggers=source_requirements,
+                measurements=measurements)
         elif shortfall:
+            measurements = _preflight_source_measurements(
+                plan, available_frames, source_requirements)
             _preflight_issue(
                 report, "warnings", "silent_source_will_pad",
                 "Silent placeholder audio is %.3f seconds short and will be "
-                "padded." % (shortfall / float(FPS)))
+                "padded." % (shortfall / float(FPS)),
+                "No action is required unless real source audio was intended.",
+                solutions=(
+                    "Replace the placeholder with a track at least %.3fs "
+                    "long when real source audio is intended." %
+                    measurements["required_seconds"],),
+                triggers=source_requirements,
+                measurements=measurements)
         source_hash = _audio_fingerprint(source_audio) if required else "none"
     else:
         source_hash = "none"
@@ -12939,13 +13198,75 @@ def _preflight_resume(
         except (OSError, TypeError, ValueError) as exc:
             result["eligible"] = False
             item["error"] = str(exc)
+            shot = plan["shots"][index - 1]
             _preflight_issue(
                 report, "errors", "resume_predecessor_invalid", str(exc),
-                ("Regenerate the missing/changed predecessor, or disable "
-                 "verify_resume_history only when intentionally reusing a "
-                 "valid saved predecessor."), scene=index)
+                "Regenerate the reported predecessor scene.",
+                solutions=(
+                    "Restore its metadata and segment artifacts from the "
+                    "correct Run Manager archive.",
+                    "Disable verify_resume_history only when intentionally "
+                    "reusing a predecessor that you have independently "
+                    "verified."),
+                triggers=(_preflight_scene_trigger(
+                    shot, "resume_history", "invalid",
+                    "saved checkpoint lineage"),),
+                measurements={
+                    "dependency_mismatch_count": len(
+                        item.get("mismatches") or ()),
+                }, scene=index, scene_id=str(shot["id"]))
         result["predecessors"].append(item)
     return result
+
+
+def _preflight_validation_recovery(
+        stage: str) -> tuple[str, str, tuple[str, ...]]:
+    recoveries = {
+        "plan": (
+            "invalid_plan",
+            "Reconnect a validated H3 Chain Plan.",
+            ("Rebuild the Plan in Plan Studio if its saved JSON is malformed.",)),
+        "scene_selection": (
+            "invalid_scene_selection",
+            "Choose a start clip and scene range inside the current Plan.",
+            ("Clear scene_range to validate the complete Plan.",)),
+        "source": (
+            "invalid_source_input",
+            "Correct the connected Source Timeline or legacy source_audio input.",
+            ("Connect only one source route, not both.",
+             "Relink or replace malformed source media in the Project Asset "
+             "Manager.")),
+        "scene_metadata": (
+            "invalid_scene_metadata",
+            "Open the reported scene in Plan Studio and correct its settings.",
+            ("Rebuild the Plan if its normalized scene metadata was edited "
+             "outside Plan Studio.",)),
+        "references": (
+            "invalid_reference_input",
+            "Correct or reconnect the active reference registry.",
+            ("Remove malformed @tags/#anchors and add them again through the "
+             "Prompt Editor.",
+             "Use only the Tagged or Scheduled route expected by Ref2VA.")),
+        "generation": (
+            "invalid_generation_fingerprint",
+            "Reconnect the automatic generation fingerprint source.",
+            ("Rebuild the Plan if its compatibility metadata was edited "
+             "manually.",)),
+        "runtime": (
+            "runtime_compatibility_validation_failed",
+            "Update ComfyUI and this node pack together, then restart.",
+            ("Use non-masked continuation settings until runtime inspection "
+             "passes.",)),
+        "resume": (
+            "resume_validation_failed",
+            "Regenerate or restore the reported predecessor lineage.",
+            ("Start from Scene 1 to build a fresh verified lineage.",)),
+    }
+    return recoveries.get(stage, (
+        "preflight_internal_validation",
+        "Correct the reported Plan or media input and run preflight again.",
+        ("Restart ComfyUI and retry once; if it persists, include this full "
+         "diagnostic in a bug report.",)))
 
 
 def _preflight_chain(
@@ -12960,12 +13281,15 @@ def _preflight_chain(
         "generation": {},
     }
     prepared = plan
+    stage = "plan"
     try:
         if not isinstance(plan, dict) or not isinstance(plan.get("shots"), list):
             raise ValueError("Preflight requires a validated H3 Chain Plan.")
+        stage = "scene_selection"
         start, end = _parse_scene_range(
             scene_range, len(plan["shots"]), start_clip)
         report["selection"] = {"start": start, "end": end}
+        stage = "source"
         prepared, runtime_timeline = _preflight_bind_source(
             plan, report, source_timeline, source_audio)
         if not report.get("source"):
@@ -12982,14 +13306,14 @@ def _preflight_chain(
                 "origin": dict(source["origin"]),
                 "timeline_fingerprint": source["fingerprints"]["timeline"],
             }
+        stage = "scene_metadata"
         available = int(report["source"].get(
             "audio_frames", report["source"].get("extent_frames", 0)))
-        cumulative = 0
-        last_complete = 0
+        source_coverage = _preflight_source_coverage(
+            prepared, available, _audio_source_requirements(prepared))
+        last_complete = int((
+            source_coverage.get("last_complete_scene") or {}).get("scene", 0))
         for shot in prepared["shots"]:
-            cumulative += int(shot["delivered_frames"])
-            if available >= cumulative or not _audio_policy_requires_source(prepared):
-                last_complete = int(shot["index"])
             context = int(shot["raw_frames"]) - int(shot["delivered_frames"])
             mode = str(shot.get(
                 "continuation_mode",
@@ -13023,12 +13347,27 @@ def _preflight_chain(
                     prepared, int(shot["index"]), source_dependency)
             report["scenes"].append(record)
         report["source"]["last_complete_scene"] = last_complete
+        report["source"]["first_affected_scene"] = (
+            source_coverage.get("first_affected_scene") or {}).get("scene")
 
+        stage = "references"
         if tagged_references is not None and reference_schedule is not None:
             _preflight_issue(
                 report, "errors", "multiple_reference_routes",
                 "Connect tagged_references or reference_schedule, not both.",
-                "Keep the reference system used by the active Ref2VA node.")
+                "Keep the reference input used by the active Ref2VA node and "
+                "disconnect the other route.",
+                solutions=(
+                    "Use tagged_references for prompt-activated @tags and "
+                    "#semantic anchors.",
+                    "Use reference_schedule only for the legacy scheduled "
+                    "reference workflow."),
+                triggers=(
+                    {"scope": "Preflight", "setting": "tagged_references",
+                     "value": "connected", "origin": "input socket"},
+                    {"scope": "Preflight", "setting": "reference_schedule",
+                     "value": "connected", "origin": "input socket"},
+                ))
         references = (tagged_references if tagged_references is not None
                       else reference_schedule)
         route = ("tagged" if tagged_references is not None else
@@ -13098,7 +13437,14 @@ def _preflight_chain(
                                 float(anchor["timestamp_seconds"])),
                             "Use Tagged Picture Ref + Tagged Ref2VA, or remove "
                             "the #anchor from this scheduled workflow.",
-                            scene=int(shot["index"]), tag=anchor["tag"])
+                            solutions=(
+                                "Replace the #anchor with an @tag only if a "
+                                "native visual reference was intended.",),
+                            triggers=(_preflight_scene_trigger(
+                                shot, "prompt", syntax, "scene prompt",
+                                tag=anchor["tag"]),),
+                            scene=int(shot["index"]),
+                            scene_id=str(shot["id"]), tag=anchor["tag"])
                     unresolved = sorted(prompt_tags - set(registered))
                     for tag in unresolved:
                         _preflight_issue(
@@ -13106,7 +13452,14 @@ def _preflight_chain(
                             "Scene %d uses unresolved scheduled reference @%s."
                             % (int(shot["index"]), tag),
                             "Register that tag or remove it from the scene prompt.",
-                            scene=int(shot["index"]), tag=tag)
+                            solutions=(
+                                "Rename the prompt @tag to one of the "
+                                "registered scheduled reference tags.",),
+                            triggers=(_preflight_scene_trigger(
+                                shot, "prompt_reference", "@%s" % tag,
+                                "scene prompt", tag=tag),),
+                            scene=int(shot["index"]),
+                            scene_id=str(shot["id"]), tag=tag)
                 else:
                     active = []
                     for tag in sorted(prompt_tags):
@@ -13117,7 +13470,16 @@ def _preflight_chain(
                                 int(shot["index"]), tag),
                             "Connect Semantic Anchor Bundle's references "
                             "passthrough or remove the @tag.",
-                            scene=int(shot["index"]), tag=tag)
+                            solutions=(
+                                "Connect the active Tagged reference registry "
+                                "directly to preflight.",
+                                "Remove the @tag if it is only descriptive "
+                                "text and not a visual reference."),
+                            triggers=(_preflight_scene_trigger(
+                                shot, "prompt_reference", "@%s" % tag,
+                                "scene prompt", tag=tag),),
+                            scene=int(shot["index"]),
+                            scene_id=str(shot["id"]), tag=tag)
                 if route != "scheduled":
                     entries_by_tag = {
                         tag: entry for entry in semantic_entries
@@ -13133,7 +13495,14 @@ def _preflight_chain(
                                 (int(shot["index"]), tag),
                                 "Register a Semantic Picture Anchor with that "
                                 "tag or remove the semantic anchor.",
-                                scene=int(shot["index"]), tag=tag)
+                                solutions=(
+                                    "Rename the #anchor to a registered "
+                                    "semantic-picture tag.",),
+                                triggers=(_preflight_scene_trigger(
+                                    shot, "prompt_semantic_anchor",
+                                    "#%s" % tag, "scene prompt", tag=tag),),
+                                scene=int(shot["index"]),
+                                scene_id=str(shot["id"]), tag=tag)
                         elif entry.get("kind") not in (
                                 "picture", "semantic_anchor"):
                             _preflight_issue(
@@ -13144,8 +13513,21 @@ def _preflight_chain(
                                     str(entry.get("kind") or "unknown")),
                                 "Use a Semantic Picture Anchor (or a legacy "
                                 "Tagged Picture compatibility source).",
-                                scene=int(shot["index"]), tag=tag)
-                        if float(anchor["timestamp_seconds"]) > (
+                                solutions=(
+                                    "Change this prompt token to an @tag if "
+                                    "the registered non-picture reference was "
+                                    "intended.",
+                                    "Register a semantic picture under a "
+                                    "different tag and update the prompt."),
+                                triggers=(_preflight_scene_trigger(
+                                    shot, "prompt_semantic_anchor",
+                                    "#%s" % tag, "scene prompt", tag=tag),),
+                                scene=int(shot["index"]),
+                                scene_id=str(shot["id"]), tag=tag,
+                                resolved_kind=str(
+                                    entry.get("kind") or "unknown"))
+                        timestamp = anchor["timestamp_seconds"]
+                        if float(timestamp) > (
                                 int(shot["raw_frames"]) / float(FPS)):
                             _preflight_issue(
                                 report, "errors", "semantic_anchor_out_of_range",
@@ -13155,7 +13537,22 @@ def _preflight_chain(
                                     float(anchor["timestamp_seconds"]),
                                     int(shot["raw_frames"]) / float(FPS)),
                                 "Use a scene-local timestamp inside this scene.",
-                                scene=int(shot["index"]), tag=tag)
+                                solutions=(
+                                    "Lengthen the scene so it includes the "
+                                    "requested anchor timestamp.",
+                                    "Remove the timestamp to use an untimed "
+                                    "semantic anchor."),
+                                triggers=(_preflight_scene_trigger(
+                                    shot, "prompt_semantic_anchor",
+                                    "#%s[%.3fs]" % (tag, float(timestamp)),
+                                    "scene prompt", tag=tag),),
+                                measurements={
+                                    "anchor_seconds": float(timestamp),
+                                    "scene_duration_seconds": (
+                                        int(shot["raw_frames"]) / float(FPS)),
+                                },
+                                scene=int(shot["index"]),
+                                scene_id=str(shot["id"]), tag=tag)
                 for entry in active:
                     detail = {"tag": str(entry.get("tag") or ""),
                               "kind": str(entry.get("kind") or ""),
@@ -13185,17 +13582,57 @@ def _preflight_chain(
                                     window["end_frame"], int(shot["index"]),
                                     capacity),
                                 "Provide a longer reference or change its timeline mode.",
-                                scene=int(shot["index"]), tag=detail["tag"])
+                                solutions=(
+                                    "Reduce the scene duration or reference "
+                                    "activation range.",
+                                    "Use restart_each_scene when each scene "
+                                    "should reuse the reference from frame 0.",
+                                    "Remove @%s from this scene if the "
+                                    "reference is not required." % detail["tag"],),
+                                triggers=(_preflight_scene_trigger(
+                                    shot, "prompt_reference",
+                                    "@%s" % detail["tag"], "scene prompt",
+                                    tag=detail["tag"]),),
+                                measurements={
+                                    "required_start_frame": int(
+                                        window["start_frame"]),
+                                    "required_end_frame": int(
+                                        window["end_frame"]),
+                                    "required_frame_count": int(
+                                        window["frame_count"]),
+                                    "available_frames": capacity,
+                                    "timeline_mode": str(window["mode"]),
+                                },
+                                scene=int(shot["index"]),
+                                scene_id=str(shot["id"]), tag=detail["tag"])
                     scene_record["references"].append(detail)
         elif any(item["prompt_tags"] or item["semantic_anchors"]
                  for item in report["scenes"]):
+            unresolved_triggers = []
+            for scene_record, shot in zip(
+                    report["scenes"], prepared["shots"]):
+                unresolved_triggers.extend(
+                    _preflight_scene_trigger(
+                        shot, "prompt_reference", "@%s" % tag,
+                        "scene prompt", tag=tag)
+                    for tag in scene_record["prompt_tags"])
+                unresolved_triggers.extend(
+                    _preflight_scene_trigger(
+                        shot, "prompt_semantic_anchor", "#%s" % anchor["tag"],
+                        "scene prompt", tag=anchor["tag"])
+                    for anchor in scene_record["semantic_anchors"])
             _preflight_issue(
                 report, "warnings", "reference_registry_not_connected",
                 "Scene prompts contain @tags or #semantic anchors, but no "
                 "reference registry is connected to preflight.",
                 "Connect the active Tagged or Scheduled reference output to "
-                "preflight for scene-window validation.")
+                "preflight for scene-window validation.",
+                solutions=(
+                    "Remove prompt tags that are not intended to resolve to "
+                    "project references.",),
+                triggers=unresolved_triggers)
 
+        stage = "generation"
         fingerprint = str(
             prepared["compatibility"].get("generation_fingerprint") or "")
         report["generation"] = {
@@ -13209,15 +13646,30 @@ def _preflight_chain(
                 "Model, sampler, CFG, scheduler, and reference graph are not "
                 "covered by the Plan's generation fingerprint.",
                 "Connect an automatic generation fingerprint before relying "
-                "on strict resume verification.")
+                "on strict resume verification.",
+                solutions=(
+                    "Disable strict resume verification only when knowingly "
+                    "reusing checkpoints across generation-setting changes.",),
+                triggers=({
+                    "scope": "Plan", "setting": "generation_fingerprint",
+                    "value": "missing", "origin": "generation graph",
+                },))
+        stage = "runtime"
         report["runtime"] = _preflight_runtime_compatibility(prepared, report)
+        stage = "resume"
         report["resume"] = _preflight_resume(
             prepared, start, verify_resume_history, report,
             runtime_timeline, source_audio)
     except Exception as exc:
+        code, action, alternatives = _preflight_validation_recovery(stage)
         _preflight_issue(
-            report, "errors", "preflight_internal_validation", str(exc),
-            "Correct the reported Plan or media input and run preflight again.")
+            report, "errors", code,
+            "%s validation failed: %s" % (stage.replace("_", " "), exc),
+            action, solutions=alternatives,
+            triggers=({
+                "scope": "Preflight", "setting": "validation_stage",
+                "value": stage, "origin": "preflight pipeline",
+            },), stage=stage, exception_type=type(exc).__name__)
     report["ok"] = not report["errors"]
     report["status"] = (
         "ready" if report["ok"] and not report["warnings"]
@@ -13234,34 +13686,53 @@ def _preflight_failure_text(report: dict[str, Any]) -> str:
     for issue in report.get("errors") or ():
         line = "%s: %s" % (issue.get("code", "error"), issue.get("message", ""))
         lines.append(line)
-        for requirement in issue.get("requirements") or ():
-            if isinstance(requirement, dict):
-                lines.append(
-                    "  Trigger: %s" %
-                    _format_audio_source_requirement(requirement))
+        triggers = issue.get("triggers") or issue.get("requirements") or ()
+        for trigger in triggers:
+            if isinstance(trigger, dict):
+                lines.append("  Trigger: %s" %
+                             _format_preflight_trigger(trigger))
         context = []
-        if issue.get("scene") is not None:
+        if not triggers and issue.get("scene") is not None:
             scene = "scene=%s" % issue["scene"]
             if issue.get("scene_id"):
                 scene += ' "%s"' % issue["scene_id"]
             context.append(scene)
-        elif issue.get("scenes"):
+        elif not triggers and issue.get("scenes"):
             context.append(
                 "scenes=%s" % ",".join(
                     str(value) for value in issue["scenes"]))
-        if issue.get("setting"):
+        if not triggers and issue.get("setting"):
             setting = "setting=%s" % issue["setting"]
             if issue.get("value") is not None:
                 setting += "=%s" % issue["value"]
             context.append(setting)
-        if issue.get("origin"):
+        if not triggers and issue.get("origin"):
             context.append("origin=%s" % issue["origin"])
-        if issue.get("tag"):
+        if not triggers and issue.get("tag"):
             context.append("tag=%s" % issue["tag"])
         if context:
             lines.append("  Context: %s" % "; ".join(context))
-        if issue.get("action"):
-            lines.append("  Action: %s" % issue["action"])
+        measurements = issue.get("measurements") or {}
+        if isinstance(measurements, dict) and measurements:
+            details = []
+            for key, value in measurements.items():
+                if value is None:
+                    continue
+                if (key in ("last_complete_scene", "first_affected_scene")
+                        and isinstance(value, dict)):
+                    rendered = _format_preflight_location(value)
+                elif isinstance(value, float):
+                    rendered = "%.3f" % value
+                else:
+                    rendered = str(value)
+                details.append("%s=%s" % (key, rendered))
+            if details:
+                lines.append("  Details: %s" % "; ".join(details))
+        solutions = issue.get("solutions") or (
+            (issue.get("action"),) if issue.get("action") else ())
+        for index, solution in enumerate(solutions):
+            lines.append("  %s: %s" % (
+                "Action" if index == 0 else "Alternative", solution))
     return "\n".join(lines)
 
 
@@ -14689,11 +15160,10 @@ class MiniMaxH3ChainLoopStart:
             if not preflight["ok"]:
                 raise ValueError(_preflight_failure_text(preflight))
             for issue in preflight["warnings"]:
-                _LOG.warning(
-                    "H3 preflight warning [%s]: %s%s",
-                    issue.get("code", "warning"), issue.get("message", ""),
-                    (" Action: %s" % issue["action"]
-                     if issue.get("action") else ""))
+                _LOG.warning("%s", _preflight_failure_text({
+                    "summary": "H3 preflight warning.",
+                    "errors": [issue],
+                }))
             runtime_timeline = None
             if source_timeline is not None:
                 prepared_plan, runtime_timeline = _plan_with_source_timeline(
