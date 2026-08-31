@@ -39,18 +39,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.85";
+} from "./h3_chain_plan_core.mjs?v=0.6.86";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.85";
+} from "./h3_prompt_history_core.mjs?v=0.6.86";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.85";
+} from "./h3_reference_preview_core.mjs?v=0.6.86";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -59,16 +59,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.85";
+} from "./h3_policy_core.mjs?v=0.6.86";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.85";
+} from "./h3_socket_presentation_core.mjs?v=0.6.86";
 import {
     availableLoRARoutes,
     loraRouteLabel,
-} from "./h3_lora_scheduler_core.mjs?v=0.6.85";
+} from "./h3_lora_scheduler_core.mjs?v=0.6.86";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -95,8 +95,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.85";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.85";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.86";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.86";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -209,6 +209,9 @@ function injectStyles() {
             background:color-mix(in srgb,var(--scene) 13%,var(--comfy-input-bg,#15171d)) !important; }
         .h3studio-card.h3studio-moving { cursor:grabbing; }
         .h3studio-card.h3studio-selected { box-shadow:0 0 0 2px var(--scene) inset; }
+        .h3studio-card.h3studio-alternate-selected::before { content:"ALT"; position:absolute;
+            z-index:4; right:17px; top:4px; padding:1px 4px; border:1px solid #b493f0;
+            border-radius:3px; color:#eadfff; background:rgba(45,25,78,.88); font-size:8px; font-weight:800; }
         .h3studio-card video, .h3studio-card-thumbnail { position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
             opacity:.58; z-index:-1; background:#08090c; pointer-events:none; }
         .h3studio-card::after { content:""; position:absolute; inset:0; z-index:-1;
@@ -295,6 +298,17 @@ function injectStyles() {
         .h3studio-advanced summary { cursor:pointer; font-weight:700; }
         .h3studio-advanced-grid { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr));
             gap:7px; margin-top:7px; align-items:end; }
+        .h3studio-alternate { margin:0 0 9px; padding:9px; border:1px solid #7259a8;
+            border-radius:7px; background:color-mix(in srgb,var(--hs-panel) 88%,#3b245f); }
+        .h3studio-alternate-title { display:flex; align-items:center; gap:7px; margin-bottom:4px; }
+        .h3studio-alternate-enable { display:flex; align-items:center; gap:5px; margin:8px 0;
+            color:var(--hs-text); }
+        .h3studio-alternate-enable input { width:auto; }
+        .h3studio-alternate-grid { display:grid; grid-template-columns:minmax(260px,1fr) 180px;
+            gap:8px; margin-top:7px; align-items:end; }
+        .h3studio-alternate-prompt { min-height:105px; }
+        .h3studio-alternate-diff { margin:6px 0; color:#d6c7f4; font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;
+            white-space:pre-wrap; overflow-wrap:anywhere; }
         .h3studio-plan-settings { display:grid; grid-template-columns:repeat(3,minmax(170px,1fr));
             gap:9px; align-items:end; }
         .h3studio-plan-settings-section { grid-column:1 / -1; margin-top:5px; padding-top:7px;
@@ -400,7 +414,7 @@ function injectStyles() {
             gap:8px; align-items:start; color:var(--hs-muted); }
         .h3studio-ref-preview img,.h3studio-ref-preview video { width:100%; max-height:150px; object-fit:contain; background:#08090c; }
         .h3studio-ref-preview audio { width:100%; height:36px; }
-        @media(max-width:760px) { .h3studio-form,.h3studio-advanced-grid,.h3studio-plan-settings,
+        @media(max-width:760px) { .h3studio-form,.h3studio-advanced-grid,.h3studio-plan-settings,.h3studio-alternate-grid,
             .h3studio-audio-overrides { grid-template-columns:1fr 1fr; }
             .h3studio-defaults,.h3studio-context-blocks { grid-template-columns:1fr; } }
     `;
@@ -552,6 +566,13 @@ function mount(node) {
     node._h3PlanStudioMounted = true;
     injectStyles();
     node.properties ??= {};
+    const alternateTakeWidget = widget(node, "alternate_take_json");
+    if (alternateTakeWidget) {
+        alternateTakeWidget.hidden = true;
+        alternateTakeWidget.type = "hidden";
+        alternateTakeWidget.computeSize = () => [0, -4];
+        alternateTakeWidget.draw = () => {};
+    }
 
     const root = element("div", "h3studio");
     root.title = "Timeline Plan editor: use it standalone or synchronize it with a connected H3 Chain Plan.";
@@ -592,7 +613,8 @@ function mount(node) {
         panelHost:null,
         planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
         editorialReady:false, editorialRun:"",
-        editorial:{placements:[], trims:[], locked_scene_ids:[], subtitles:{}},
+        editorial:{placements:[], trims:[], locked_scene_ids:[], subtitles:{},
+            alternate_draft:null, replacements:[]},
         subtitleAssets:[], subtitleAssetsRun:"", subtitleAssetsToken:0,
         playhead:null, player:null, playerAudio:null, sourceAudioPlayer:null,
         sourcePlayer:null, sourceLayer:null, subtitleOverlay:null,
@@ -777,6 +799,47 @@ function mount(node) {
                 .map((sceneId) => String(sceneId ?? "").trim())
                 .filter((sceneId) => knownIds.has(sceneId)),
         )];
+        const revisionPattern = /^[0-9a-f]{32}$/;
+        let alternateDraft = null;
+        const rawAlternate = value?.alternate_draft;
+        if (rawAlternate && typeof rawAlternate === "object") {
+            const sceneId = String(rawAlternate.scene_id ?? "").trim();
+            const scene = (state.plan?.shots ?? []).findIndex((shot, index) =>
+                safeShotId(shot?.id, `clip_${String(index + 1).padStart(4, "0")}`) === sceneId) + 1;
+            const baseRevision = String(rawAlternate.base_revision ?? "").toLowerCase();
+            const prompt = String(rawAlternate.prompt ?? "").trim();
+            let seed = "0";
+            try {
+                const parsed = BigInt(String(rawAlternate.seed ?? "0"));
+                if (parsed >= 0n && parsed <= MAX_SEED) seed = parsed.toString();
+            } catch (_error) {}
+            if (scene > 0 && revisionPattern.test(baseRevision) && prompt) {
+                alternateDraft = {
+                    enabled:rawAlternate.enabled !== false,
+                    scene, scene_id:sceneId, base_revision:baseRevision,
+                    prompt, seed, media_mode:"picture_only",
+                };
+            }
+        }
+        const replacements = [];
+        const replaced = new Set();
+        for (const item of Array.isArray(value?.replacements)
+            ? value.replacements : []) {
+            const sceneId = String(item?.scene_id ?? "").trim();
+            const scene = (state.plan?.shots ?? []).findIndex((shot, index) =>
+                safeShotId(shot?.id, `clip_${String(index + 1).padStart(4, "0")}`) === sceneId) + 1;
+            const baseRevision = String(item?.base_revision ?? "").toLowerCase();
+            const alternateRevision = String(item?.alternate_revision ?? "").toLowerCase();
+            if (scene < 1 || replaced.has(sceneId)
+                    || !revisionPattern.test(baseRevision)
+                    || !revisionPattern.test(alternateRevision)) continue;
+            replaced.add(sceneId);
+            replacements.push({
+                scene, scene_id:sceneId, base_revision:baseRevision,
+                alternate_revision:alternateRevision,
+                media_mode:"picture_only",
+            });
+        }
         return {
             placements,
             trims,
@@ -787,6 +850,8 @@ function mount(node) {
                 offset_seconds:Number.isFinite(offset)
                     ? Math.max(-3600, Math.min(3600, offset)) : 0,
             },
+            alternate_draft:alternateDraft,
+            replacements,
         };
     }
 
@@ -1030,6 +1095,10 @@ function mount(node) {
             })),
             locked_scene_ids:[...state.editorial.locked_scene_ids],
             subtitles:{...state.editorial.subtitles},
+            alternate_draft:state.editorial.alternate_draft
+                ? {...state.editorial.alternate_draft} : null,
+            replacements:state.editorial.replacements.map(
+                (replacement) => ({...replacement})),
         };
     }
 
@@ -1068,12 +1137,26 @@ function mount(node) {
             })),
             locked_scene_ids:[...next.locked_scene_ids],
             subtitles:{...next.subtitles},
+            alternate_draft:next.alternate_draft
+                ? {...next.alternate_draft} : null,
+            replacements:next.replacements.map(
+                (replacement) => ({...replacement})),
         });
         scheduleEditorialSave();
         return previous !== JSON.stringify(next);
     }
 
     function scheduleEditorialSave() {
+        if (alternateTakeWidget) {
+            const serialized = JSON.stringify(
+                state.editorial.alternate_draft ?? null,
+            );
+            if (alternateTakeWidget.value !== serialized) {
+                alternateTakeWidget.value = serialized;
+                alternateTakeWidget.callback?.(serialized);
+                dirty();
+            }
+        }
         if (!state.plan) return;
         if (!state.editorialReady || state.editorialRun !== runName()) return;
         const payload = editorialPayload();
@@ -1631,7 +1714,9 @@ function mount(node) {
     }
 
     function checkpointThumbnailUrl(index, checkpoint) {
-        const revision = String(checkpoint?.revision ?? "").trim().toLowerCase();
+        const revision = String(
+            checkpoint?.presentation_revision ?? checkpoint?.revision ?? "",
+        ).trim().toLowerCase();
         if (!checkpoint?.ready || !/^[0-9a-f]{32}$/.test(revision) || !runName()) {
             return "";
         }
@@ -1815,6 +1900,10 @@ function mount(node) {
             state.checkpoints, index, row,
         );
         card.classList.toggle("h3studio-rendered", Boolean(checkpoint?.ready));
+        card.classList.toggle(
+            "h3studio-alternate-selected",
+            Boolean(checkpoint?.presentation_revision),
+        );
         const url = checkpointThumbnailUrl(index, checkpoint);
         const current = card.querySelector(".h3studio-card-thumbnail");
         if (!url) {
@@ -3335,6 +3424,149 @@ function mount(node) {
         );
         advanced.append(advancedGrid);
 
+        function alternateTakePanel() {
+            const section = element("section", "h3studio-alternate");
+            const title = element("div", "h3studio-alternate-title");
+            title.append(
+                element("strong", "", "Alternate final-cut take"),
+                element("span", "h3studio-grid-marker h3studio-grid-experimental",
+                    "Picture only"),
+            );
+            section.append(title, element(
+                "div", "h3studio-hint",
+                "Regenerate this scene with a small prompt change without replacing its generation checkpoint. Later scenes keep depending on the original take; preview and final assembly use the accepted alternate picture with the original audio.",
+            ));
+            if (!checkpoint?.ready) {
+                section.append(element(
+                    "div", "h3studio-message",
+                    "Generate and accept the original scene before creating an alternate.",
+                ));
+                return section;
+            }
+            const sceneId = String(row.id);
+            const baseRevision = String(checkpoint.revision ?? "");
+            const draft = state.editorial.alternate_draft;
+            const thisDraft = draft
+                && draft.scene_id === sceneId
+                && draft.base_revision === baseRevision ? draft : null;
+            const selected = state.editorial.replacements.find(
+                (item) => item.scene_id === sceneId
+                    && item.base_revision === baseRevision,
+            ) ?? null;
+            const select = element("select");
+            const original = element("option", "", `Original · ${baseRevision.slice(0, 8)}`);
+            original.value = ""; select.append(original);
+            for (const alternate of checkpoint.alternates ?? []) {
+                if (!alternate.ready || alternate.base_revision !== baseRevision) continue;
+                const option = element(
+                    "option", "",
+                    `ALT ${String(alternate.revision).slice(0, 8)} · seed ${alternate.seed || "?"}`,
+                );
+                option.value = String(alternate.revision);
+                option.title = String(alternate.prompt ?? "");
+                select.append(option);
+            }
+            select.value = selected?.alternate_revision ?? "";
+            select.title = "Choose the picture shown in Plan Studio and final assembly. This never changes the active checkpoint used by following scenes.";
+            select.addEventListener("change", () => {
+                state.editorial.replacements = state.editorial.replacements.filter(
+                    (item) => item.scene_id !== sceneId,
+                );
+                if (select.value) state.editorial.replacements.push({
+                    scene:state.active + 1, scene_id:sceneId,
+                    base_revision:baseRevision,
+                    alternate_revision:select.value,
+                    media_mode:"picture_only",
+                });
+                scheduleEditorialSave();
+                renderShell();
+            });
+            section.append(field("Used in final cut", select));
+
+            const enabled = element("input"); enabled.type = "checkbox";
+            enabled.checked = Boolean(thisDraft?.enabled);
+            enabled.title = "When enabled, the next queued execution generates only this scene as an immutable alternate. The original active checkpoint remains untouched.";
+            const enabledLabel = element("label", "h3studio-alternate-enable");
+            enabledLabel.append(enabled, document.createTextNode(
+                " Generate a prompt-word alternate on the next queue",
+            ));
+            section.append(enabledLabel);
+            const editor = element("textarea", "h3studio-prompt h3studio-alternate-prompt");
+            const basePrompt = promptValueToText(
+                shot.prompt, `Scene ${state.active + 1} prompt`,
+            );
+            editor.value = thisDraft?.prompt ?? basePrompt;
+            editor.disabled = !enabled.checked;
+            editor.spellcheck = true;
+            editor.placeholder = "Change only the words needed for this alternate…";
+            const altSeed = element("input");
+            altSeed.type = "text"; altSeed.inputMode = "numeric";
+            altSeed.value = String(thisDraft?.seed ?? shot.seed ?? row.seed ?? 0);
+            altSeed.disabled = !enabled.checked;
+            const diff = element("div", "h3studio-alternate-diff");
+            const refreshDiff = () => {
+                const before = basePrompt.trim().split(/\s+/);
+                const after = editor.value.trim().split(/\s+/);
+                let prefix = 0;
+                while (prefix < before.length && prefix < after.length
+                        && before[prefix] === after[prefix]) prefix += 1;
+                let suffix = 0;
+                while (suffix < before.length - prefix
+                        && suffix < after.length - prefix
+                        && before[before.length - 1 - suffix]
+                            === after[after.length - 1 - suffix]) suffix += 1;
+                const removed = before.slice(prefix, before.length - suffix).join(" ");
+                const added = after.slice(prefix, after.length - suffix).join(" ");
+                diff.textContent = removed || added
+                    ? `Prompt change: “${removed || "∅"}” → “${added || "∅"}”`
+                    : "Prompt is unchanged from the original take.";
+            };
+            const storeDraft = () => {
+                if (!enabled.checked) return;
+                let seedValue;
+                try {
+                    const parsed = BigInt(altSeed.value.trim() || "0");
+                    if (parsed < 0n || parsed > MAX_SEED) throw new Error();
+                    seedValue = parsed.toString();
+                } catch (_error) {
+                    altSeed.setCustomValidity("Seed must be an unsigned 64-bit integer.");
+                    return;
+                }
+                altSeed.setCustomValidity("");
+                state.editorial.alternate_draft = {
+                    enabled:true, scene:state.active + 1, scene_id:sceneId,
+                    base_revision:baseRevision, prompt:editor.value.trim(),
+                    seed:seedValue, media_mode:"picture_only",
+                };
+                scheduleEditorialSave();
+            };
+            enabled.addEventListener("change", () => {
+                editor.disabled = !enabled.checked;
+                altSeed.disabled = !enabled.checked;
+                if (enabled.checked) storeDraft();
+                else if (thisDraft || state.editorial.alternate_draft?.scene_id === sceneId) {
+                    state.editorial.alternate_draft = null;
+                    scheduleEditorialSave();
+                }
+                refreshDiff();
+            });
+            editor.addEventListener("input", () => {
+                refreshDiff(); storeDraft();
+            });
+            altSeed.addEventListener("change", storeDraft);
+            refreshDiff();
+            const draftForm = element("div", "h3studio-alternate-grid");
+            draftForm.append(field("Alternate prompt", editor), field("Seed", altSeed));
+            section.append(draftForm, diff, element(
+                "div", "h3studio-message",
+                enabled.checked
+                    ? `Ready: queue normally; Loop Start will render only scene ${state.active + 1}. Review acceptance selects it for the final cut.`
+                    : "Enable only while you are ready to queue the alternate.",
+            ));
+            return section;
+        }
+        const alternate = alternateTakePanel();
+
         if (state.promptEditors.length) {
             const delegated = element("div", "h3studio-prompt-delegated");
             delegated.append(
@@ -3344,7 +3576,7 @@ function mount(node) {
                     "Scene selection is synchronized in both directions; Studio keeps scene ID, length, steps, seed, timeline, and playback controls.",
                 ),
             );
-            panel.append(head, form, audioOverrides, advanced, delegated);
+            panel.append(head, form, audioOverrides, advanced, alternate, delegated);
             return panel;
         }
 
@@ -3375,7 +3607,7 @@ function mount(node) {
         const history = element("div", "h3studio-history");
         state.history.host = history; state.history.textarea = prompt; state.history.status = message;
         panel.append(
-            head, form, audioOverrides, advanced, prompt, tools, tray, history,
+            head, form, audioOverrides, advanced, alternate, prompt, tools, tray, history,
         );
         void loadHistory(row.id, prompt.value);
         return panel;
@@ -3615,10 +3847,14 @@ function mount(node) {
         );
         if (!item) return null;
         return {
-            video:item.preview_video ?? item.video,
+            video:item.presentation_video ?? item.preview_video ?? item.video,
             // Review previews already contain synchronized audio. Raw saved
             // segments do not, so pair those with their delivered WAV.
-            audio:item.preview_video ? null : (item.audio ?? null),
+            // Picture-only alternates deliberately keep the original take's
+            // generated audio sidecar.
+            audio:item.presentation_video
+                ? (item.audio ?? null)
+                : item.preview_video ? null : (item.audio ?? null),
         };
     }
 
@@ -5160,7 +5396,7 @@ function mount(node) {
                 state.editorialReady = false; state.editorialRun = "";
                 state.editorial = {placements:[], trims:[], locked_scene_ids:[], subtitles:{
                     mode:"off", asset_id:"", offset_seconds:0,
-                }};
+                }, alternate_draft:null, replacements:[]};
                 state.timelineWorkspaceEndFrame = 0;
                 state.timelineSceneEndFrame = 0;
                 state.timelineRenderedActive = null;
@@ -5205,6 +5441,13 @@ function mount(node) {
                 && String(sourcePayload.run_name ?? "") === runName()) {
             state.presentationToken += 1;
             applySourcePresentation(sourcePayload);
+        }
+        // Plan Studio executes near the start of a recursive queue, while the
+        // alternate is accepted by Loop End. Refresh after later node events
+        // so the armed draft becomes the selected ALT without waiting for the
+        // periodic poll (the refresh queue coalesces repeated events).
+        if (state.editorial.alternate_draft) {
+            setTimeout(() => void refreshCheckpoints(), 250);
         }
         const values = event.detail?.output?.h3_chain_active_scene;
         const scene = Array.isArray(values) ? values.at(-1) : null;

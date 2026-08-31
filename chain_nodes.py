@@ -7539,6 +7539,83 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         "asset_id": _safe_name(raw_subtitles.get("asset_id"), "")[:160],
         "offset_seconds": subtitle_offset,
     }
+
+    raw_alternate = value.get("alternate_draft")
+    alternate_draft = None
+    if raw_alternate is not None:
+        if not isinstance(raw_alternate, dict):
+            raise ValueError("alternate_draft must be null or a JSON object.")
+        scene = int(raw_alternate.get("scene", 0))
+        scene_id = _safe_name(raw_alternate.get("scene_id"), "")
+        if scene < 1 or scene > MAX_SHOTS:
+            raise ValueError(
+                "Alternate draft scene must be between 1 and %d." % MAX_SHOTS)
+        if (not scene_id or
+                (scene_by_id and scene_by_id.get(scene_id) != scene)):
+            raise ValueError(
+                "Alternate draft must target its current scene in scene_order.")
+        base_revision = str(
+            raw_alternate.get("base_revision") or "").strip().lower()
+        if not re.fullmatch(r"[0-9a-f]{32}", base_revision):
+            raise ValueError(
+                "Alternate draft base_revision must be a saved revision id.")
+        prompt = str(raw_alternate.get("prompt") or "").replace(
+            "\r\n", "\n").replace("\r", "\n").strip()
+        if not prompt:
+            raise ValueError("Alternate draft requires a scene prompt.")
+        if len(prompt.encode("utf-8")) > 2 * 1024 * 1024:
+            raise ValueError("Alternate draft prompt exceeds 2 MiB.")
+        seed = int(raw_alternate.get("seed", 0))
+        if seed < 0 or seed > MAX_SEED:
+            raise ValueError("Alternate draft seed is outside the uint64 range.")
+        alternate_draft = {
+            "enabled": bool(raw_alternate.get("enabled", True)),
+            "scene": scene,
+            "scene_id": scene_id,
+            "base_revision": base_revision,
+            "prompt": prompt,
+            "seed": str(seed),
+            "media_mode": "picture_only",
+        }
+
+    raw_replacements = value.get("replacements", [])
+    if not isinstance(raw_replacements, list) or len(
+            raw_replacements) > MAX_SHOTS:
+        raise ValueError(
+            "replacements must contain at most %d entries." % MAX_SHOTS)
+    replacements: list[dict[str, Any]] = []
+    replaced_ids: set[str] = set()
+    for offset, item in enumerate(raw_replacements):
+        if not isinstance(item, dict):
+            raise ValueError(
+                "Editorial replacement %d must be an object." % (offset + 1))
+        scene = int(item.get("scene", offset + 1))
+        scene_id = _safe_name(item.get("scene_id"), "")
+        if (scene < 1 or scene > MAX_SHOTS or not scene_id or
+                (scene_by_id and scene_by_id.get(scene_id) != scene)):
+            raise ValueError(
+                "Editorial replacement %d must target its current scene in "
+                "scene_order." % (offset + 1))
+        if scene_id in replaced_ids:
+            raise ValueError(
+                "Scene %s has more than one final-cut replacement." % scene_id)
+        base_revision = str(
+            item.get("base_revision") or "").strip().lower()
+        alternate_revision = str(
+            item.get("alternate_revision") or "").strip().lower()
+        if (not re.fullmatch(r"[0-9a-f]{32}", base_revision) or
+                not re.fullmatch(r"[0-9a-f]{32}", alternate_revision)):
+            raise ValueError(
+                "Editorial replacement revisions must be saved revision ids.")
+        replaced_ids.add(scene_id)
+        replacements.append({
+            "scene": scene,
+            "scene_id": scene_id,
+            "base_revision": base_revision,
+            "alternate_revision": alternate_revision,
+            "media_mode": "picture_only",
+        })
+    replacements.sort(key=lambda item: int(item["scene"]))
     return {
         "format": "h3_chain_editorial_v1",
         "run_name": normalized_run,
@@ -7551,6 +7628,8 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         "trims": trims,
         "locked_scene_ids": locked_scene_ids,
         "subtitles": subtitles,
+        "alternate_draft": alternate_draft,
+        "replacements": replacements,
     }
 
 
@@ -7561,6 +7640,7 @@ def _load_run_editorial(run_name: Any) -> dict[str, Any]:
         "chapters": [], "scene_order": [], "placements": [], "trims": [],
         "locked_scene_ids": [],
         "subtitles": {"mode": "off", "asset_id": "", "offset_seconds": 0.0},
+        "alternate_draft": None, "replacements": [],
     }
     if not normalized:
         return empty
@@ -7573,6 +7653,193 @@ def _load_run_editorial(run_name: Any) -> dict[str, Any]:
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         _LOG.warning("Ignoring invalid H3 run editorial sidecar %s: %s", path, exc)
         return empty
+
+
+def _alternate_take_descriptor(plan: Any) -> dict[str, Any] | None:
+    value = plan.get("alternate_take") if isinstance(plan, dict) else None
+    if not isinstance(value, dict) or not bool(value.get("enabled", True)):
+        return None
+    scene = int(value.get("scene", 0))
+    revision = str(value.get("base_revision") or "").strip().lower()
+    if (scene < 1 or scene > len(plan.get("shots") or []) or
+            not re.fullmatch(r"[0-9a-f]{32}", revision)):
+        raise ValueError("H3 alternate-take Plan has an invalid target scene.")
+    return value
+
+
+def _alternate_take_plan(
+        plan: dict[str, Any], editorial: dict[str, Any]
+) -> dict[str, Any]:
+    """Derive one prompt-only Plan without mutating the canonical Plan."""
+    draft = editorial.get("alternate_draft")
+    if not isinstance(draft, dict) or not bool(draft.get("enabled", True)):
+        return plan
+    scene = int(draft["scene"])
+    shot = plan["shots"][scene - 1]
+    if str(shot.get("id") or "") != str(draft["scene_id"]):
+        raise ValueError(
+            "Alternate draft scene %d is now %r instead of %r. Refresh Plan "
+            "Studio and create the draft again." %
+            (scene, str(shot.get("id") or ""), str(draft["scene_id"])))
+    active_path = _artifact_paths(plan, scene)["metadata"]
+    if not os.path.isfile(active_path):
+        raise ValueError(
+            "Alternate take scene %d has no active base checkpoint yet." % scene)
+    active_metadata = _read_json(active_path)
+    active_segment = (active_metadata.get("segment")
+                      if isinstance(active_metadata, dict) else None)
+    if not isinstance(active_segment, dict):
+        raise ValueError(
+            "Alternate take scene %d active checkpoint has no segment record."
+            % scene)
+    active_revision = checkpoint_revision_token(scene, active_segment)
+    if active_revision != str(draft["base_revision"]):
+        raise ValueError(
+            "Alternate take scene %d was drafted from revision %s, but the "
+            "active generation checkpoint is now %s. Refresh Plan Studio "
+            "before generating the alternate." %
+            (scene, str(draft["base_revision"])[:8],
+             active_revision[:8] or "unknown"))
+    derived = _plan_with_review_revision(
+        plan, scene, str(draft["prompt"]), int(draft["seed"]))
+    derived["alternate_take"] = {
+        "version": 1,
+        "enabled": True,
+        "scene": scene,
+        "scene_id": str(draft["scene_id"]),
+        "base_revision": active_revision,
+        "base_checkpoint_sha256": str(
+            active_segment.get("checkpoint_sha256") or ""),
+        "media_mode": "picture_only",
+    }
+    derived["summary"] = "%s; alternate take for scene %d (base %s)" % (
+        plan["summary"], scene, active_revision[:8])
+    return derived
+
+
+def _select_editorial_alternate(
+        plan: dict[str, Any], segment: dict[str, Any]) -> dict[str, Any]:
+    """Publish an accepted alternate to final-cut state, never generation."""
+    descriptor = _alternate_take_descriptor(plan)
+    if descriptor is None:
+        raise ValueError("Accepted alternate segment has no alternate Plan data.")
+    scene = int(descriptor["scene"])
+    revision = str(segment.get("revision") or "").lower()
+    if (int(segment.get("index", 0)) != scene or
+            str(segment.get("take_kind") or "") != "editorial_alternate" or
+            str(segment.get("alternate_of_revision") or "") !=
+            str(descriptor["base_revision"])):
+        raise ValueError(
+            "Accepted alternate segment does not match its immutable base take.")
+    with checkpoint_run_lock(_output_root(), plan["run_name"]):
+        # Read and publish under one run lock so a simultaneous Plan Studio
+        # schedule save cannot erase a newly accepted alternate (or restore an
+        # already-cleared draft).
+        editorial = _load_run_editorial(plan["run_name"])
+        replacements = [
+            item for item in editorial.get("replacements", [])
+            if str(item.get("scene_id") or "") !=
+            str(descriptor["scene_id"])
+        ]
+        replacements.append({
+            "scene": scene,
+            "scene_id": str(descriptor["scene_id"]),
+            "base_revision": str(descriptor["base_revision"]),
+            "alternate_revision": revision,
+            "media_mode": "picture_only",
+        })
+        editorial["replacements"] = replacements
+        editorial["alternate_draft"] = None
+        editorial["updated_at"] = datetime.now(timezone.utc).isoformat(
+            timespec="seconds").replace("+00:00", "Z")
+        normalized = _normalize_run_editorial(editorial, plan["run_name"])
+        _atomic_json(_run_editorial_path(plan["run_name"]), normalized)
+    return normalized
+
+
+def _editorial_presentation_segments(
+        run_name: Any, segments: list[dict[str, Any]],
+        editorial: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    """Resolve picture-only final-cut alternates over immutable base lineage."""
+    editorial = editorial or _load_run_editorial(run_name)
+    replacements = {
+        int(item["scene"]): item
+        for item in editorial.get("replacements", [])
+        if isinstance(item, dict)
+    }
+    if not replacements:
+        return list(segments)
+    result = []
+    for offset, base in enumerate(segments, start=1):
+        scene = int(base.get("index", offset))
+        replacement = replacements.get(scene)
+        if replacement is None:
+            result.append(base)
+            continue
+        base_revision = checkpoint_revision_token(scene, base)
+        expected_base = str(replacement["base_revision"])
+        if base_revision != expected_base:
+            raise ValueError(
+                "Final-cut alternate for scene %d belongs to base %s, but "
+                "this manifest selects %s. Choose an alternate for this "
+                "lineage or restore the original take." %
+                (scene, expected_base[:8], base_revision[:8] or "unknown"))
+        revision = str(replacement["alternate_revision"])
+        metadata_path = _versioned_path(
+            _artifact_paths({"run_name": _safe_name(run_name, "h3_chain")},
+                            scene)["metadata"], revision)
+        if not os.path.isfile(metadata_path):
+            raise FileNotFoundError(
+                "Selected scene %d alternate revision is missing: %s" %
+                (scene, metadata_path))
+        metadata = _read_json(metadata_path)
+        alternate = metadata.get("segment") if isinstance(metadata, dict) else None
+        if (not isinstance(alternate, dict) or
+                checkpoint_revision_token(scene, alternate) != revision or
+                str(alternate.get("take_kind") or "") !=
+                "editorial_alternate" or
+                str(alternate.get("alternate_of_revision") or "") !=
+                expected_base):
+            raise ValueError(
+                "Selected scene %d alternate revision has invalid metadata."
+                % scene)
+        _verify_segment_artifacts(alternate, scene)
+        for key in ("id", "raw_frames", "delivered_frames"):
+            if str(alternate.get(key)) != str(base.get(key)):
+                raise ValueError(
+                    "Scene %d alternate changes %s (%r vs %r). Prompt-word "
+                    "alternates must preserve scene identity and duration." %
+                    (scene, key, alternate.get(key), base.get(key)))
+        presented = dict(alternate)
+        # Picture-only means final audio and every downstream generation edge
+        # continue to use the base take. Keep provenance visible to exporters.
+        presented.update({
+            "presentation_base_revision": expected_base,
+            "presentation_alternate_revision": revision,
+            "presentation_media_mode": "picture_only",
+        })
+        result.append(presented)
+    return result
+
+
+def _require_alternate_hard_cut_boundaries(
+        records: list[dict[str, Any]], segments: list[dict[str, Any]],
+        purpose: str) -> None:
+    """Prevent a later scene's base overlap from revealing the original take."""
+    replaced = {
+        int(item.get("index", 0)) for item in segments
+        if item.get("presentation_media_mode") == "picture_only"
+    }
+    for record in records:
+        scene = int(record.get(
+            "scene_index", record.get("segment", {}).get("index", 0)))
+        if scene - 1 in replaced and int(record.get("blend_frames", 0)) > 0:
+            raise ValueError(
+                "%s cannot blend scene %d into scene %d: the later scene's "
+                "saved overlap still contains the original base take. Set "
+                "that boundary to a hard cut (0 blend frames)." %
+                (purpose, scene - 1, scene))
 
 
 def _editorial_trimmed_segment(
@@ -7806,13 +8073,20 @@ def _editorial_timeline_records(
             dict[str, Any], list[dict[str, Any]], int]:
     """Resolve editorial clip positions without changing the chain manifest."""
     editorial = _load_run_editorial(run_name)
-    editorial_segments = {
+    base_editorial_segments = {
         int(segment.get("index", offset)):
             _editorial_trimmed_segment(segment, editorial)
         for offset, segment in enumerate(segments, start=1)
     }
     _require_current_editorial_dependencies(
-        editorial_segments, "H3 editorial assembly")
+        base_editorial_segments, "H3 editorial assembly")
+    presentation_segments = _editorial_presentation_segments(
+        run_name, segments, editorial)
+    editorial_segments = {
+        int(segment.get("index", offset)):
+            _editorial_trimmed_segment(segment, editorial)
+        for offset, segment in enumerate(presentation_segments, start=1)
+    }
     requested = {
         str(item.get("scene_id") or ""): int(item.get("start_frame", 0))
         for item in editorial.get("placements", [])
@@ -7821,7 +8095,7 @@ def _editorial_timeline_records(
     ordered: list[dict[str, Any]] = []
     natural_start = 0
     source_cursor = 0
-    for offset, segment in enumerate(segments, start=1):
+    for offset, segment in enumerate(presentation_segments, start=1):
         editorial_segment = editorial_segments[
             int(segment.get("index", offset))]
         scene_id = str(segment.get("id") or "clip_%04d" % offset)
@@ -8701,7 +8975,10 @@ def _public_segment(value: dict[str, Any]) -> dict[str, Any]:
         "checkpoint_sha256", "prompt_file_sha256", "predecessor_revision",
         "predecessor_checkpoint_sha256", "predecessor_editorial_out_frames",
         "visual_context_source_editorial_out_frames",
-        "visual_context_lead_editorial_out_frames") if key in value}
+        "visual_context_lead_editorial_out_frames",
+        "take_kind", "alternate_of_revision", "alternate_media_mode",
+        "presentation_base_revision", "presentation_alternate_revision",
+        "presentation_media_mode") if key in value}
 
 
 def _visual_context_state(
@@ -15142,6 +15419,13 @@ class MiniMaxH3ChainPlanStudio:
             fingerprint_type, fingerprint_options)
         optional["chain_policy"] = plan_inputs["optional"]["chain_policy"]
         optional["project_assets"] = plan_inputs["optional"]["project_assets"]
+        optional["alternate_take_json"] = ("STRING", {
+            "default": "",
+            "multiline": True,
+            "tooltip": "Internal serialized Plan Studio alternate draft. "
+                       "The frontend keeps this hidden and synchronized so "
+                       "queueing cannot race the editorial sidecar save.",
+        })
         return {
             "required": {},
             "optional": optional,
@@ -15157,8 +15441,10 @@ class MiniMaxH3ChainPlanStudio:
         "video_blend_frames",
     )
     OUTPUT_TOOLTIPS = (
-        "The connected Plan unchanged, or the complete validated standalone "
-        "Plan authored by Studio.",
+        "The connected Plan, or the complete validated standalone Plan "
+        "authored by Studio. When an alternate draft is armed, this output "
+        "is a temporary one-scene execution Plan; it never mutates the "
+        "canonical generation Plan.",
         "Structured model-free preflight report.",
         "True when no blocking preflight error remains.",
         "Concise error/warning count.",
@@ -15178,9 +15464,22 @@ class MiniMaxH3ChainPlanStudio:
 
     @classmethod
     def IS_CHANGED(cls, plan=None, plan_json="", **_kwargs):
+        queued_alternate = str(_kwargs.get("alternate_take_json") or "")
         if plan is not None:
-            return False
-        return MiniMaxH3ChainPlan.IS_CHANGED(plan_json)
+            run_name = str(plan.get("run_name") or "")
+            draft = _load_run_editorial(run_name).get("alternate_draft")
+            return _fingerprint({
+                "plan_hash": str(plan.get("plan_hash") or ""),
+                "alternate_draft": draft,
+                "queued_alternate": queued_alternate,
+            })
+        run_name = str(_kwargs.get("run_name") or "")
+        return _fingerprint({
+            "plan": MiniMaxH3ChainPlan.IS_CHANGED(plan_json),
+            "alternate_draft": _load_run_editorial(
+                run_name).get("alternate_draft"),
+            "queued_alternate": queued_alternate,
+        })
 
     def passthrough(self, plan=None, source_timeline=None, source_audio=None,
                     start_clip=1, scene_range="", verify_resume_history=True,
@@ -15193,7 +15492,7 @@ class MiniMaxH3ChainPlanStudio:
                     default_duration_seconds=15.0, default_steps=20,
                     base_seed=0, segment_crf=18, video_blend_frames=0,
                     continuation_mode="guide", chain_policy=None,
-                    project_assets=None):
+                    project_assets=None, alternate_take_json=None):
         if project_assets is not None:
             project = _validate_project_assets(project_assets)
             if tagged_references is None:
@@ -15212,6 +15511,26 @@ class MiniMaxH3ChainPlanStudio:
                 continuation_mode, chain_policy=chain_policy,
                 project_assets=project_assets,
             )[0]
+        editorial = _load_run_editorial(plan.get("run_name"))
+        if alternate_take_json is None:
+            editorial = dict(editorial)
+            editorial["alternate_draft"] = None
+        queued_alternate_text = str(alternate_take_json or "").strip()
+        if queued_alternate_text:
+            try:
+                queued_alternate = json.loads(queued_alternate_text)
+            except json.JSONDecodeError as exc:
+                raise ValueError(
+                    "Plan Studio alternate draft is not valid JSON.") from exc
+            editorial = dict(editorial)
+            editorial["alternate_draft"] = queued_alternate
+            editorial = _normalize_run_editorial(
+                editorial, plan.get("run_name"))
+        plan = _alternate_take_plan(plan, editorial)
+        alternate = _alternate_take_descriptor(plan)
+        if alternate is not None:
+            start_clip = int(alternate["scene"])
+            scene_range = str(start_clip)
         prepared, report = _preflight_chain(
             plan, source_timeline=source_timeline, source_audio=source_audio,
             start_clip=start_clip, scene_range=scene_range,
@@ -16135,6 +16454,10 @@ class MiniMaxH3ChainLoopStart:
               source_timeline=None,
               initial_state=None):
         if initial_state is None:
+            alternate = _alternate_take_descriptor(plan)
+            if alternate is not None:
+                start_clip = int(alternate["scene"])
+                scene_range = str(start_clip)
             prepared_plan = _plan_with_external_context(plan, external_context)
             if source_timeline is None and isinstance(
                     plan.get("source_timeline"), dict):
@@ -16183,6 +16506,10 @@ class MiniMaxH3ChainLoopStart:
         status = "clip %d/%d; selected range %d:%d" % (
             state["index"], len(prepared_plan["shots"]),
             int(state.get("range_start", state["index"])), end_clip)
+        alternate = _alternate_take_descriptor(prepared_plan)
+        if alternate is not None:
+            status += "; editorial ALT of generation revision %s" % str(
+                alternate["base_revision"])[:8]
         if state.get("resumed_from"):
             status += "; resumed from clip %d" % state["resumed_from"]
         if state.get("resume_history_verification_disabled"):
@@ -17388,7 +17715,15 @@ class MiniMaxH3ChainSegmentSave:
         os.makedirs(os.path.dirname(paths["segment"]), exist_ok=True)
         os.makedirs(os.path.dirname(paths["blend_segment"]), exist_ok=True)
         os.makedirs(os.path.dirname(paths["checkpoint"]), exist_ok=True)
-        archives = _write_run_archives(plan, prompt, extra_pnginfo)
+        alternate_take = _alternate_take_descriptor(plan)
+        archives = (_available_run_archives(plan)
+                    if alternate_take is not None else
+                    _write_run_archives(plan, prompt, extra_pnginfo))
+        if (alternate_take is not None and
+                int(alternate_take["scene"]) != index):
+            raise ValueError(
+                "Alternate-take execution reached scene %d instead of its "
+                "target scene %d." % (index, int(alternate_take["scene"])))
         previous_metadata = None
         replacing_scene = os.path.isfile(paths["metadata"])
         if replacing_scene:
@@ -17399,6 +17734,23 @@ class MiniMaxH3ChainSegmentSave:
                              index, exc)
         previous_revision = _preserve_previous_revision(
             plan, index, previous_metadata)
+        if alternate_take is not None:
+            if not replacing_scene or not isinstance(previous_metadata, dict):
+                raise ValueError(
+                    "Alternate take scene %d no longer has an active base "
+                    "checkpoint." % index)
+            previous_segment = previous_metadata.get("segment")
+            active_revision = checkpoint_revision_token(
+                index, previous_segment)
+            if active_revision != str(alternate_take["base_revision"]):
+                raise ValueError(
+                    "Alternate take scene %d targets base %s, but active "
+                    "generation revision is %s." %
+                    (index, str(alternate_take["base_revision"])[:8],
+                     active_revision[:8] or "unknown"))
+            # The base pointer remains the generation truth. From here on this
+            # save behaves as a new immutable sibling, not a replacement.
+            replacing_scene = False
 
         transaction = uuid.uuid4().hex
         published_segment = _versioned_path(paths["segment"], transaction)
@@ -17520,6 +17872,13 @@ class MiniMaxH3ChainSegmentSave:
                 "checkpoint_sha256": _file_sha256(published_checkpoint),
                 "prompt_file_sha256": _file_sha256(published_prompt),
             }
+            if alternate_take is not None:
+                segment.update({
+                    "take_kind": "editorial_alternate",
+                    "alternate_of_revision": str(
+                        alternate_take["base_revision"]),
+                    "alternate_media_mode": "picture_only",
+                })
             if (visual_source_index is not None
                     and visual_source_segment is not None):
                 segment.update({
@@ -17659,7 +18018,7 @@ class MiniMaxH3ChainSegmentSave:
                     if forked_from:
                         segment["forked_from_branch_id"] = forked_from
             segment["branch_id"] = branch_id
-            if previous_revision is not None:
+            if previous_revision is not None and alternate_take is None:
                 segment["supersedes"] = previous_revision
             metadata = {
                 "format": "h3_chain_segment_v3",
@@ -17678,7 +18037,8 @@ class MiniMaxH3ChainSegmentSave:
             # it succeeds, resume keeps referencing the previous immutable pair.
             with checkpoint_run_lock(_output_root(), plan["run_name"]):
                 _atomic_json(published_metadata, metadata)
-                _atomic_json(paths["metadata"], metadata)
+                if alternate_take is None:
+                    _atomic_json(paths["metadata"], metadata)
             committed = True
         finally:
             _safe_unlink(checkpoint_tmp)
@@ -17692,15 +18052,21 @@ class MiniMaxH3ChainSegmentSave:
                 _safe_unlink(published_prompt)
                 _safe_unlink(published_metadata)
 
-        retained = "; previous revision retained" if previous_revision else ""
+        retained = (
+            "; original generation checkpoint retained"
+            if alternate_take is not None else
+            "; previous revision retained" if previous_revision else "")
         audio_status = (" + generated WAV %s" % published_audio
                         if published_audio is not None else "")
         blend_status = (" + %d-frame blend artifact %s" %
                         (blend_frames, published_blend)
                         if published_blend is not None else "")
-        status = ("saved clip %d/%d revision %s: %s + checkpoint %s%s%s%s" %
-                  (index, len(plan["shots"]), transaction, published_segment,
-                   published_checkpoint, audio_status, blend_status, retained))
+        save_kind = "saved editorial alternate" if alternate_take is not None \
+            else "saved clip"
+        status = ("%s %d/%d revision %s: %s + checkpoint %s%s%s%s" %
+                  (save_kind, index, len(plan["shots"]), transaction,
+                   published_segment, published_checkpoint, audio_status,
+                   blend_status, retained))
         _LOG.info("H3 Chain %s", status)
         return {
             "ui": {
@@ -19139,6 +19505,34 @@ class MiniMaxH3ChainLoopEnd:
                 raise ValueError(
                     "Selected H3 candidate is missing its continuation state.")
             plan = selected_plan
+        alternate_take = _alternate_take_descriptor(plan)
+        if alternate_take is not None:
+            public_alternate = _public_segment(segment)
+            editorial = _select_editorial_alternate(plan, public_alternate)
+            values = list(state.get("segments", [])) + [public_alternate]
+            manifest = _manifest_from_segments(plan, values, complete=False)
+            manifest["format"] = "h3_chain_alternate_manifest_v1"
+            manifest["alternate_take"] = _json_document(alternate_take)
+            manifest["editorial_replacement"] = next(
+                item for item in editorial["replacements"]
+                if int(item["scene"]) == index)
+            alternate_dir = os.path.join(_run_dir(plan), "alternates")
+            os.makedirs(alternate_dir, exist_ok=True)
+            manifest_path = os.path.join(
+                alternate_dir, "scene_%04d.%s.manifest.json" %
+                (index, str(segment["revision"])))
+            _atomic_json(manifest_path, manifest)
+            manifest_json = json.dumps(
+                manifest, ensure_ascii=False, indent=2, sort_keys=True)
+            context_length = min(
+                _plan_context_storage_length(plan), int(selected_frames.shape[0]))
+            return (
+                manifest, manifest_json,
+                _tensor_cpu_clone(
+                    selected_frames[:0] if context_length == 0 else
+                    selected_frames[-context_length:]),
+                _compact_latent(selected_latent),
+            )
         editorial = _load_run_editorial(plan.get("run_name"))
         next_segment = _editorial_trimmed_segment(
             _public_segment(segment), editorial)
@@ -21186,6 +21580,11 @@ class MiniMaxH3ChainExportPNG:
             int(segment.get("index", offset)): segment
             for offset, segment in enumerate(editorial_segments, start=1)
         }, "H3 PNG export")
+        editorial_segments = [
+            _editorial_trimmed_segment(segment, editorial)
+            for segment in _editorial_presentation_segments(
+                manifest.get("run_name"), segments, editorial)
+        ]
         output_dir = _new_export_directory(manifest, export_name)
         partial_path = os.path.join(output_dir, "export.partial.json")
         final_path = os.path.join(output_dir, "export.json")
@@ -21707,8 +22106,13 @@ class MiniMaxH3ChainLatentVideoAdapter:
             int(segment.get("index", offset)): segment
             for offset, segment in enumerate(editorial_segments, start=1)
         }, "H3 Full-Chain Latent Video")
+        editorial_segments = [
+            _editorial_trimmed_segment(segment, editorial)
+            for segment in _editorial_presentation_segments(
+                manifest.get("run_name"), segments, editorial)
+        ]
         schedule = _full_chain_blend_schedule(
-            manifest, segments, prelude, blend_schedule)
+            manifest, editorial_segments, prelude, blend_schedule)
         selected_audio = str(audio_source or "plan").strip().lower()
         if selected_audio == "plan":
             selected_audio = _audio_policy_final(manifest)
@@ -21723,7 +22127,8 @@ class MiniMaxH3ChainLatentVideoAdapter:
             for segment in editorial_segments)
         total_frames = prelude_frames + editorial_frames
         digest, identity = _full_chain_cache_identity(
-            manifest, segments, prelude, schedule, selected_audio, video_vae,
+            manifest, editorial_segments, prelude, schedule, selected_audio,
+            video_vae,
             editorial_trims=[{
                 "scene_id": str(item.get("scene_id") or ""),
                 "out_frame": int(item.get("out_frame", 0)),
@@ -21790,6 +22195,8 @@ class MiniMaxH3ChainLatentVideoAdapter:
             raise RuntimeError(
                 "H3 Full-Chain Latent Video did not consume its complete "
                 "blend schedule.")
+        _require_alternate_hard_cut_boundaries(
+            records, editorial_segments, "H3 Full-Chain Latent Video")
 
         def consume(iterator: Any, expected: int, blend: int,
                     next_blend: int, label: str) -> None:
@@ -22095,6 +22502,8 @@ class MiniMaxH3ChainAssemble:
         run_name = _safe_name(manifest.get("run_name"), "h3_chain")
         editorial, editorial_records, editorial_extension_frames = (
             _editorial_timeline_records(run_name, segments))
+        presentation_segments = _editorial_presentation_segments(
+            run_name, segments, editorial)
         generated_extension_frames = int(manifest["total_delivered_frames"])
         editorial_used_frames = sum(
             int(item.get("frame_count", 0)) for item in editorial_records
@@ -22246,7 +22655,7 @@ class MiniMaxH3ChainAssemble:
         if prelude is not None:
             segment_paths.append(_absolute_output_path(prelude["video"]))
             delivered_frames.append(prelude_frames)
-        for item in segments:
+        for item in presentation_segments:
             path = _absolute_output_path(item["segment"])
             if not os.path.isfile(path):
                 raise FileNotFoundError("H3 chain segment is missing: %s" % path)
@@ -22266,15 +22675,17 @@ class MiniMaxH3ChainAssemble:
         scheduled_blend_temps: list[str] = []
         try:
             blend_records = _blend_video_records(
-                manifest, segments, prelude,
+                manifest, presentation_segments, prelude,
                 blend_schedule=blend_schedule,
                 video_vae=blend_video_vae,
                 temporary_paths=scheduled_blend_temps,
                 force_records=(color_stabilization_mode != "off"
                                or editorial_changed))
+            _require_alternate_hard_cut_boundaries(
+                blend_records, presentation_segments, "H3 Chain Assemble")
             if editorial_changed:
                 blend_records = _apply_editorial_timeline_records(
-                    blend_records, editorial_records, segments,
+                    blend_records, editorial_records, presentation_segments,
                     manifest.get("compatibility") or {})
             if tone_match_mode == "auto" and blend_records:
                 blend_records = _auto_boundary_tone_match_records(
@@ -23005,6 +23416,13 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 "1 through %d." % len(lineage))
         metadata, _metadata_path = _load_checkpoint_revision(
             run_name, index, item.get("revision"))
+        if str(metadata["segment"].get("take_kind") or "") == \
+                "editorial_alternate":
+            raise ValueError(
+                "Scene %d revision %s is a picture-only editorial alternate, "
+                "not a generation checkpoint. Select it in Plan Studio's "
+                "final cut instead." %
+                (index, str(item.get("revision") or "")[:8]))
         dependency_record = dependency_records.get(
             (index, str(item.get("revision") or "").lower()), {})
         for dependency in dependency_record.get("dependencies", []):
@@ -23233,6 +23651,12 @@ async def _restore_checkpoint_revisions(request):
         }
         for scene, revision in by_scene.items():
             record = graph_records.get((scene, revision.lower()), {})
+            if record.get("take_kind") == "editorial_alternate":
+                raise ValueError(
+                    "Scene %d revision %s is a picture-only editorial "
+                    "alternate and cannot become an active generation "
+                    "checkpoint. Select it in Plan Studio's final cut."
+                    % (scene, revision[:8]))
             for dependency in record.get("dependencies", []):
                 dependency_scene = int(dependency.get("scene", 0))
                 if (dependency_scene in by_scene and
@@ -23273,6 +23697,12 @@ async def _restore_checkpoint_revisions(request):
                 # the activation caller does not rewrite an editable Plan.
                 compatibility = current_compatibility
             segment = metadata["segment"]
+            if str(segment.get("take_kind") or "") == \
+                    "editorial_alternate":
+                raise ValueError(
+                    "Scene %d revision %s is a picture-only editorial "
+                    "alternate and cannot be restored into generation "
+                    "lineage." % (scene, by_scene[scene][:8]))
             current_prefix = str(segment.get("prompt_prefix") or "")
             if prompt_prefix is None:
                 prompt_prefix = current_prefix
@@ -23480,6 +23910,7 @@ def _saved_checkpoint_listing(
         review_filenames = []
     checkpoints = []
     active_segments: dict[int, dict[str, Any]] = {}
+    alternates: dict[int, list[dict[str, Any]]] = {}
     if os.path.isdir(checkpoint_dir):
         for filename in sorted(os.listdir(checkpoint_dir)):
             match = re.fullmatch(r"clip_(\d{4})\.json", filename)
@@ -23525,7 +23956,72 @@ def _saved_checkpoint_listing(
             except (OSError, TypeError, ValueError, json.JSONDecodeError,
                     KeyError):
                 continue
+        for filename in sorted(os.listdir(checkpoint_dir)):
+            match = re.fullmatch(
+                r"clip_(\d{4})\.([0-9a-f]{32})\.json", filename)
+            if match is None:
+                continue
+            try:
+                metadata = _read_json(os.path.join(checkpoint_dir, filename))
+                segment = metadata.get("segment")
+                scene = int(match.group(1))
+                revision = str(match.group(2))
+                if (not isinstance(segment, dict) or
+                        str(segment.get("take_kind") or "") !=
+                        "editorial_alternate" or
+                        checkpoint_revision_token(scene, segment) != revision):
+                    continue
+                segment_path = _absolute_output_path(segment["segment"])
+                checkpoint_path = _absolute_output_path(segment["checkpoint"])
+                item = {
+                    "scene": scene,
+                    "scene_id": str(
+                        segment.get("id") or "clip_%04d" % scene),
+                    "revision": revision,
+                    "base_revision": str(
+                        segment.get("alternate_of_revision") or ""),
+                    "ready": (os.path.isfile(segment_path) and
+                              os.path.isfile(checkpoint_path)),
+                    "prompt": str(segment.get("scene_prompt") or
+                                  segment.get("prompt") or ""),
+                    "seed": str(segment.get("seed") or ""),
+                    "created_at": str(segment.get("created_at") or ""),
+                    "media_mode": "picture_only",
+                }
+                if os.path.isfile(segment_path):
+                    item["video"] = _video_output_item(segment_path)
+                alternates.setdefault(scene, []).append(item)
+            except (OSError, TypeError, ValueError, json.JSONDecodeError,
+                    KeyError):
+                continue
     editorial = _load_run_editorial(run_name)
+    replacements = {
+        int(item["scene"]): item
+        for item in editorial.get("replacements", [])
+        if isinstance(item, dict)
+    }
+    checkpoint_items = {
+        int(item["scene"]): item for item in checkpoints
+    }
+    for scene, values in alternates.items():
+        selected_revision = str(
+            replacements.get(scene, {}).get("alternate_revision") or "")
+        for value in values:
+            value["used_in_final_cut"] = (
+                str(value["revision"]) == selected_revision)
+        values.sort(key=lambda item: (
+            not bool(item.get("used_in_final_cut")),
+            str(item.get("created_at") or "")), reverse=False)
+        active_item = checkpoint_items.get(scene)
+        if active_item is not None:
+            active_item["alternates"] = values
+            selected = next((
+                item for item in values if item.get("used_in_final_cut")
+            ), None)
+            if selected is not None:
+                active_item["presentation_revision"] = selected["revision"]
+                active_item["presentation_video"] = selected.get("video")
+                active_item["presentation_media_mode"] = "picture_only"
     editorial_segments: dict[int, dict[str, Any]] = {}
     for index, segment in active_segments.items():
         try:
@@ -23603,6 +24099,59 @@ def _save_run_editorial_document(body: Any) -> dict[str, Any]:
     normalized = _normalize_run_editorial(document, body.get("run_name"))
     checkpoint_dir = os.path.join(
         _output_root(), "h3_chains", normalized["run_name"], "checkpoints")
+    draft = normalized.get("alternate_draft")
+    if isinstance(draft, dict):
+        scene = int(draft["scene"])
+        metadata_path = os.path.join(
+            checkpoint_dir, "clip_%04d.json" % scene)
+        if not os.path.isfile(metadata_path):
+            raise ValueError(
+                "Scene %d must have an active checkpoint before creating an "
+                "alternate take." % scene)
+        metadata = _read_json(metadata_path)
+        segment = metadata.get("segment") if isinstance(metadata, dict) else None
+        if (not isinstance(segment, dict) or
+                str(segment.get("id") or "") != str(draft["scene_id"]) or
+                checkpoint_revision_token(scene, segment) !=
+                str(draft["base_revision"])):
+            raise ValueError(
+                "Scene %d alternate draft no longer matches the active base "
+                "checkpoint. Refresh Plan Studio before saving it." % scene)
+    for replacement in normalized.get("replacements", []):
+        scene = int(replacement["scene"])
+        active_path = os.path.join(
+            checkpoint_dir, "clip_%04d.json" % scene)
+        if not os.path.isfile(active_path):
+            raise ValueError(
+                "Scene %d final-cut alternate has no active base checkpoint."
+                % scene)
+        active_metadata = _read_json(active_path)
+        active_segment = (active_metadata.get("segment")
+                          if isinstance(active_metadata, dict) else None)
+        if (not isinstance(active_segment, dict) or
+                checkpoint_revision_token(scene, active_segment) !=
+                str(replacement["base_revision"])):
+            raise ValueError(
+                "Scene %d final-cut alternate belongs to a different active "
+                "generation revision." % scene)
+        alternate_path = os.path.join(
+            checkpoint_dir, "clip_%04d.%s.json" %
+            (scene, replacement["alternate_revision"]))
+        if not os.path.isfile(alternate_path):
+            raise ValueError(
+                "Scene %d selected alternate revision no longer exists." % scene)
+        alternate_metadata = _read_json(alternate_path)
+        alternate_segment = (alternate_metadata.get("segment")
+                             if isinstance(alternate_metadata, dict) else None)
+        if (not isinstance(alternate_segment, dict) or
+                str(alternate_segment.get("take_kind") or "") !=
+                "editorial_alternate" or
+                str(alternate_segment.get("alternate_of_revision") or "") !=
+                str(replacement["base_revision"])):
+            raise ValueError(
+                "Scene %d selected alternate does not belong to its base take."
+                % scene)
+        _verify_segment_artifacts(alternate_segment, scene)
     for trim in normalized.get("trims", []):
         scene = int(trim["scene"])
         metadata_path = os.path.join(

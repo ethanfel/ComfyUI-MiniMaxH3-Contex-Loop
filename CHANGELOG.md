@@ -4,6 +4,16 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Plan Studio can now create a prompt-word alternate for an already accepted
+  scene. Queueing an enabled draft renders only that scene and saves an
+  immutable `editorial_alternate` revision without changing the active
+  generation checkpoint. Accepting it selects its picture for preview,
+  assembly, PNG export, and whole-chain latent finishing, while later scenes
+  continue to depend on the original take and final audio remains original.
+  The timeline marks selected clips `ALT`; Checkpoint Manager nests alternates
+  under their immutable base and distinguishes generation lineage from the
+  final-cut choice. Selected base/alternate revisions are deletion-protected.
+
 - Plan Studio can now shorten a rendered scene non-destructively at a
   latent-safe endpoint. Its right edge and Scene panel expose only cuts shared
   by H3's native video-latent cycle and the delivered 24 fps / 40 Hz audio

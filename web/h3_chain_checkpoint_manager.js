@@ -10,18 +10,18 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.6.85";
+} from "./h3_checkpoint_manager_core.mjs?v=0.6.86";
 import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.6.85";
-import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.85";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.85";
+} from "./h3_chain_plan_core.mjs?v=0.6.86";
+import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.86";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.86";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.85";
+} from "./h3_plan_restore_core.mjs?v=0.6.86";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -206,6 +206,12 @@ function injectStyles() {
       .h3cm-arrow { align-self:center; color:var(--h3cm-muted); }
       .h3cm-revision { position:relative; min-width:112px; text-align:left; white-space:nowrap; }
       .h3cm-revision small { display:block; color:var(--h3cm-muted); font-size:10px; }
+      .h3cm-alternates { display:flex; flex-direction:column; gap:3px; min-width:104px;
+        padding-left:7px; border-left:2px solid #8264bd; }
+      .h3cm-alternate { min-width:100px; min-height:24px !important; padding:3px 6px !important;
+        border-color:#7259a8 !important; color:#d9c9f7 !important; font-size:10px !important; }
+      .h3cm-alternate-used { background:color-mix(in srgb,var(--h3cm-panel) 68%,#56358b) !important;
+        box-shadow:inset 3px 0 0 #b493f0; }
       .h3cm-revision-empty { border-style:dashed !important; color:var(--h3cm-muted) !important;
         background:color-mix(in srgb,var(--h3cm-panel) 72%,transparent) !important; }
       .h3cm-revision-empty-selected { border-color:var(--h3cm-accent) !important;
@@ -375,6 +381,7 @@ function mount(node) {
         const lineage = selectedLineage();
         const scope = selectedChapterRange();
         return Boolean(state.selected?.ready &&
+            state.selected?.take_kind !== "editorial_alternate" &&
             lineage.length === Number(state.selected.scene) - scope.start + 1);
     }
 
@@ -593,6 +600,33 @@ function mount(node) {
                     card.classList.add("h3cm-revision-selected");
                 }
                 path.append(card);
+                const alternates = (revision.alternates ?? []).filter(
+                    (alternate) => alternate.ready,
+                );
+                if (alternates.length) {
+                    const group = element("span", "h3cm-alternates");
+                    for (const alternate of alternates) {
+                        const alt = button(
+                            `ALT · ${String(alternate.revision).slice(0, 8)}`,
+                            alternate.prompt_preview || alternate.prompt ||
+                                "Prompt-only editorial alternate",
+                            () => selectRevision(alternate),
+                            "h3cm-alternate",
+                        );
+                        if (alternate.used_in_final_cut) {
+                            alt.classList.add("h3cm-alternate-used");
+                            alt.append(element("small", "", "used in final cut"));
+                        } else {
+                            alt.append(element("small", "", "available take"));
+                        }
+                        if (state.selected?.scene === alternate.scene
+                                && state.selected?.revision === alternate.revision) {
+                            alt.classList.add("h3cm-revision-selected");
+                        }
+                        group.append(alt);
+                    }
+                    path.append(group);
+                }
             });
             const slot = branch.attribution_slot;
             if (slot?.candidates?.length && tip && sceneVisible(slot.scene)) {
@@ -745,7 +779,14 @@ function mount(node) {
             delete audio.dataset.source;
         }
         addInspector("Identity", `${state.attribution ? "Candidate " : ""}Scene ${record.scene} · ${record.scene_id} · ${record.revision}`);
-        addInspector("State", `${record.active ? "Active" : "Inactive"} · ${record.ready ? "Ready" : "Broken"}`);
+        addInspector("State", record.take_kind === "editorial_alternate"
+            ? `Editorial alternate · ${record.used_in_final_cut ? "used in final cut" : "available"} · ${record.ready ? "Ready" : "Broken"}`
+            : `${record.active ? "Active generation checkpoint" : "Inactive generation checkpoint"} · ${record.ready ? "Ready" : "Broken"}`);
+        if (record.take_kind === "editorial_alternate") {
+            addInspector("Original base", `Scene ${record.scene} · ${String(record.alternate_of_revision).slice(0, 8)}`);
+            addInspector("Media", "Picture only · original audio and downstream lineage stay unchanged");
+            addInspector("Use", "Select Original or ALT for this scene in Plan Studio; ALT cannot be loaded or activated as generation lineage");
+        }
         addInspector("Branches", (record.branches ?? []).map((item) => item.label).join(", ") || "Unresolved lineage");
         addInspector("Created", localTime(record.created_at));
         addInspector("Frames", `${record.raw_frames} raw · ${record.delivered_frames} delivered`);

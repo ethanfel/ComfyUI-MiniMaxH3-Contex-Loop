@@ -217,6 +217,16 @@ selected prefix. Changing a cut that an already-rendered later scene depended
 on marks that later continuation stale so it can be regenerated from the
 correct endpoint.
 
+For a small visual correction that must not invalidate later scenes, use the
+Scene panel's **Alternate final-cut take**. Edit the scene prompt, enable the
+draft, and queue normally; Loop Start renders only that scene. Review acceptance
+stores the result as a picture-only alternate and selects it for the final cut.
+The original take remains the active generation checkpoint, downstream scenes
+keep their original context ancestry, and their audio is unchanged. Plan Studio
+shows an `ALT` badge, while Checkpoint Manager nests each alternate under its
+base take instead of drawing it as a new continuity branch. Restore **Original**
+from the take selector at any time.
+
 Checkpoint Manager identifies saved takes by scene and inferred branch, previews
 saved media and exact video/audio dependencies, and safely deletes inactive
 leaves one revision at a time. When an independent saved take can safely fill

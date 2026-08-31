@@ -337,6 +337,15 @@ gap. Source Timeline audio instead remains locked to the absolute project clock,
 so a song continues through black. These positions live in the run's
 `editorial.json`, outside the Plan hash, and do not invalidate checkpoints.
 
+Prompt-word alternates use the same non-destructive editorial layer. An enabled
+`alternate_draft` identifies one active base revision, prompt, and seed. Its
+accepted immutable revision is recorded under `replacements` as
+`media_mode: picture_only`; the canonical `clip_NNNN.json` pointer is never
+changed. Final picture consumers resolve that replacement, while generated
+audio and every later scene dependency continue to resolve the base lineage.
+The boundary after an alternate must be a hard cut because a saved incoming
+blend contains frames from the original base take.
+
 An audio asset may also store lyrics. Timestamp lines as LRC (`[MM:SS.xx]`) or
 paste SRT, then select that asset in Plan Studio's Subtitles tab. Subtitle
 preview and exported `.srt` use the same absolute editorial clock and optional

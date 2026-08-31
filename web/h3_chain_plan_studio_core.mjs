@@ -12,6 +12,18 @@ export function studioCheckpointSignature(runName, records) {
             audio: item?.audio,
             preview_video: item?.preview_video,
             partial_video: item?.partial_video,
+            presentation_revision:item?.presentation_revision,
+            presentation_video:item?.presentation_video,
+            alternates:(Array.isArray(item?.alternates) ? item.alternates : [])
+                .map((alternate) => ({
+                    revision:alternate?.revision,
+                    base_revision:alternate?.base_revision,
+                    ready:alternate?.ready,
+                    prompt:alternate?.prompt,
+                    seed:alternate?.seed,
+                    used_in_final_cut:alternate?.used_in_final_cut,
+                    video:alternate?.video,
+                })),
         })),
     });
 }
