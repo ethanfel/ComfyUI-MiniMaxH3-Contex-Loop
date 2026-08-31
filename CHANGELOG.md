@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Scene LoRA routing now grows with the workflow instead of exposing four
+  fixed branches. A new scheduler shows one empty LoRA A socket; connecting it
+  reveals B, then C, through Z. Plan Editor and Plan Studio offer only routes
+  connected to their scheduler plus a scene's already-saved route. Existing
+  A-D plans and scheduler links remain compatible, and every route stays lazy.
+
 - Run name now suggests existing live Asset Carousel projects. Choosing a
   suggestion switches the Carousel and its connected Plan, while the same
   field still accepts a new Run name and remains the only serialized source of

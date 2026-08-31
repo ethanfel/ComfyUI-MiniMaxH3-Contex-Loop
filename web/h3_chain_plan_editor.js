@@ -3,7 +3,6 @@ import {api} from "/scripts/api.js";
 import {
     H3_CONTEXT_LENGTHS,
     MAX_SHOTS,
-    SCENE_LORA_ROUTES,
     automaticSceneColor,
     calculatePlanTiming,
     derivedSceneSeed,
@@ -32,8 +31,8 @@ import {
     shotLengthMode,
     sharedPrompt,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.82";
-import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.6.82";
+} from "./h3_chain_plan_core.mjs?v=0.6.83";
+import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.6.83";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -42,12 +41,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.82";
+} from "./h3_policy_core.mjs?v=0.6.83";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.82";
+} from "./h3_socket_presentation_core.mjs?v=0.6.83";
+import {
+    availableLoRARoutes,
+    loraRouteLabel,
+} from "./h3_lora_scheduler_core.mjs?v=0.6.83";
 
 // This scene editor is an original implementation. Its quick @ reference and
 // # dialogue interactions are inspired by nkxx188/ComfyUI-MiniMaxH3-Easy,
@@ -986,15 +989,16 @@ function mountEditor(node) {
         void refreshSeedStatus();
 
         const loraRoute = element("select", "h3c-lora-route");
-        for (const route of SCENE_LORA_ROUTES) {
-            const label = route === "base"
-                ? "Base model" : `LoRA ${route.toUpperCase()}`;
-            const option = element("option", "", label);
+        const selectedLoRARoute = sceneLoRARoute(shot);
+        for (const route of availableLoRARoutes(
+            node.graph ?? app.graph, [node], selectedLoRARoute,
+        )) {
+            const option = element("option", "", loraRouteLabel(route));
             option.value = route;
             loraRoute.append(option);
         }
-        loraRoute.value = sceneLoRARoute(shot);
-        loraRoute.title = "Select the Base or A-D MODEL branch on MiniMax H3 Scene LoRA Scheduler. The scheduler routes models already patched by ordinary ComfyUI LoRA loaders; it does not load a LoRA itself.";
+        loraRoute.value = selectedLoRARoute;
+        loraRoute.title = "Select Base or a connected A-Z MODEL branch on MiniMax H3 Scene LoRA Scheduler. Connecting the scheduler's last empty route reveals the next one automatically; the scheduler routes already-patched models and does not load a LoRA itself.";
         loraRoute.addEventListener("change", () => {
             if (loraRoute.value === "base") delete shot.lora_route;
             else shot.lora_route = loraRoute.value;
@@ -1744,9 +1748,13 @@ function mountEditor(node) {
     syncProjectAssetManagedWidgets();
     loadFromWidget(true);
     scheduleResponsiveSize();
+    const onLoRARoutesChanged = () => render();
+    document.addEventListener("h3-lora-routes-changed", onLoRARoutesChanged);
     const removed = node.onRemoved;
     node.onRemoved = function () {
         disconnectResizeObservers();
+        document.removeEventListener(
+            "h3-lora-routes-changed", onLoRARoutesChanged);
         return removed?.apply(this, arguments);
     };
 }

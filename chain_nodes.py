@@ -183,7 +183,8 @@ CONTINUATION_MODES = (
     "guide", "tone_carry_guide", "latent_guide", "tapered_guide",
     "masked_av", "tapered_av", "feathered_av", "audio_feathered_av",
     "drift_control_av", "color_stable_drift_av")
-SCENE_LORA_ROUTES = ("base", "a", "b", "c", "d")
+SCENE_LORA_ROUTES = (
+    "base", *(chr(ord("a") + offset) for offset in range(26)))
 LOOP_MEMORY_POLICIES = ("off", "unload_models", "fresh_scene")
 GUIDE_CONTINUATION_MODES = frozenset((
     "guide", "tone_carry_guide", "latent_guide", "tapered_guide"))
@@ -16158,10 +16159,7 @@ class MiniMaxH3ChainLoRAScheduler:
 
     _ROUTE_INPUTS = {
         "base": "base_model",
-        "a": "lora_a",
-        "b": "lora_b",
-        "c": "lora_c",
-        "d": "lora_d",
+        **{route: "lora_%s" % route for route in SCENE_LORA_ROUTES[1:]},
     }
 
     @classmethod
@@ -16178,22 +16176,13 @@ class MiniMaxH3ChainLoRAScheduler:
                                "feeds your workflow."}),
             },
             "optional": {
-                "lora_a": ("MODEL", {
+                "lora_%s" % route: ("MODEL", {
                     "lazy": True,
-                    "tooltip": "Route A MODEL from an existing ComfyUI LoRA "
-                               "loader or a stack of LoRA loaders."}),
-                "lora_b": ("MODEL", {
-                    "lazy": True,
-                    "tooltip": "Route B MODEL from an existing ComfyUI LoRA "
-                               "loader or a stack of LoRA loaders."}),
-                "lora_c": ("MODEL", {
-                    "lazy": True,
-                    "tooltip": "Route C MODEL from an existing ComfyUI LoRA "
-                               "loader or a stack of LoRA loaders."}),
-                "lora_d": ("MODEL", {
-                    "lazy": True,
-                    "tooltip": "Route D MODEL from an existing ComfyUI LoRA "
-                               "loader or a stack of LoRA loaders."}),
+                    "tooltip": "Route %s MODEL from an existing ComfyUI LoRA "
+                               "loader or a stack of LoRA loaders." %
+                               route.upper(),
+                })
+                for route in SCENE_LORA_ROUTES[1:]
             },
         }
 
@@ -16209,10 +16198,11 @@ class MiniMaxH3ChainLoRAScheduler:
     CATEGORY = "conditioning/minimax/contex_loop"
     DESCRIPTION = (
         "Route a pre-patched MODEL per scene without loading or applying any "
-        "LoRA. Build Base and A-D branches with ordinary ComfyUI model/LoRA "
-        "loaders, then choose Base or LoRA A-D on each Plan scene. Inputs are "
-        "lazy, so an unused branch is not evaluated merely because it is "
-        "connected.")
+        "LoRA. Build Base and A-Z branches with ordinary ComfyUI model/LoRA "
+        "loaders. The frontend reveals the next route socket when the current "
+        "one is connected, and Plan scenes offer the routes that actually "
+        "exist. Inputs are lazy, so an unused branch is not evaluated merely "
+        "because it is connected.")
 
     @classmethod
     def _selection(cls, state: Any) -> tuple[int, str, str]:
@@ -16233,39 +16223,22 @@ class MiniMaxH3ChainLoRAScheduler:
         self,
         state,
         base_model=None,
-        lora_a=_LAZY_INPUT_MISSING,
-        lora_b=_LAZY_INPUT_MISSING,
-        lora_c=_LAZY_INPUT_MISSING,
-        lora_d=_LAZY_INPUT_MISSING,
+        **lora_models,
     ):
         _index, _route, input_name = self._selection(state)
-        values = {
-            "base_model": base_model,
-            "lora_a": lora_a,
-            "lora_b": lora_b,
-            "lora_c": lora_c,
-            "lora_d": lora_d,
-        }
-        return [input_name] if values[input_name] is None else []
+        selected = (base_model if input_name == "base_model"
+                    else lora_models.get(input_name, _LAZY_INPUT_MISSING))
+        return [input_name] if selected is None else []
 
     def select(
         self,
         state,
         base_model,
-        lora_a=_LAZY_INPUT_MISSING,
-        lora_b=_LAZY_INPUT_MISSING,
-        lora_c=_LAZY_INPUT_MISSING,
-        lora_d=_LAZY_INPUT_MISSING,
+        **lora_models,
     ):
         index, route, input_name = self._selection(state)
-        values = {
-            "base_model": base_model,
-            "lora_a": lora_a,
-            "lora_b": lora_b,
-            "lora_c": lora_c,
-            "lora_d": lora_d,
-        }
-        selected = values[input_name]
+        selected = (base_model if input_name == "base_model"
+                    else lora_models.get(input_name, _LAZY_INPUT_MISSING))
         if selected is _LAZY_INPUT_MISSING or selected is None:
             label = "Base" if route == "base" else "LoRA %s" % route.upper()
             raise ValueError(

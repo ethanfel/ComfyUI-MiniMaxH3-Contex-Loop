@@ -63,7 +63,8 @@ H3_CONTEXT_LENGTHS = (
     141, 158, 175, 192, 209, 226, 243,
 )
 CONTINUATION_MODES = tuple(CONTINUATION_POLICIES)
-SCENE_LORA_ROUTES = ("base", "a", "b", "c", "d")
+SCENE_LORA_ROUTES = (
+    "base", *(chr(ord("a") + offset) for offset in range(26)))
 
 
 def _safe_name(value: Any, fallback: str = "") -> str:

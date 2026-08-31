@@ -14,7 +14,9 @@ export const CONTINUATION_MODES = Object.freeze([
 export const CONTEXT_SPATIAL_PROXY_MODES = Object.freeze([
     "off", "rgb_5_6", "latent_5_6",
 ]);
-export const SCENE_LORA_ROUTES = Object.freeze(["base", "a", "b", "c", "d"]);
+export const SCENE_LORA_ROUTES = Object.freeze([
+    "base", ..."abcdefghijklmnopqrstuvwxyz",
+]);
 export const SCENE_PROMPT_SEED_MODES = Object.freeze([
     "inherit", "fixed", "randomize",
 ]);

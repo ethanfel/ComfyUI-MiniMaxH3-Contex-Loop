@@ -479,6 +479,8 @@ assert.match(source, /field\("Lock source audio", lockSourceAudio\)/);
 assert.match(source, /applySceneAudioOverride/);
 assert.match(source, /field\("LoRA route", loraRoute\)/);
 assert.match(source, /MiniMax H3 Scene LoRA Scheduler/);
+assert.match(source, /availableLoRARoutes/);
+assert.match(source, /h3-lora-routes-changed/);
 assert.match(source, /row\.loraRoute/);
 assert.match(source, /Advanced boundary controls/);
 assert.match(source, /advanced\.open = state\.advancedBoundaryOpen/);

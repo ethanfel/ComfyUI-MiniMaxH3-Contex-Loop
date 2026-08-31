@@ -7,7 +7,6 @@ import {
     MAX_H3_FRAMES,
     MAX_SEED,
     MAX_SHOTS,
-    SCENE_LORA_ROUTES,
     automaticSceneColor,
     calculatePlanTiming,
     duplicateShot,
@@ -40,18 +39,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.82";
+} from "./h3_chain_plan_core.mjs?v=0.6.83";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.82";
+} from "./h3_prompt_history_core.mjs?v=0.6.83";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.82";
+} from "./h3_reference_preview_core.mjs?v=0.6.83";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +59,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.82";
+} from "./h3_policy_core.mjs?v=0.6.83";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.82";
+} from "./h3_socket_presentation_core.mjs?v=0.6.83";
+import {
+    availableLoRARoutes,
+    loraRouteLabel,
+} from "./h3_lora_scheduler_core.mjs?v=0.6.83";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -90,8 +93,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.82";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.82";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.83";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.83";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -2610,16 +2613,18 @@ function mount(node) {
         const reroll = button("↻", "Store a new random seed for this scene", () => { seed.value = randomSceneSeed(); shot.seed = seed.value; writePlan(); });
         seedWrap.append(seed, reroll);
         const loraRoute = element("select");
-        for (const route of SCENE_LORA_ROUTES) {
-            const option = element(
-                "option", "",
-                route === "base" ? "Base model" : `LoRA ${route.toUpperCase()}`,
-            );
+        const selectedLoRARoute = sceneLoRARoute(shot);
+        for (const route of availableLoRARoutes(
+            node.graph ?? app.graph,
+            [node, state.planNode],
+            selectedLoRARoute,
+        )) {
+            const option = element("option", "", loraRouteLabel(route));
             option.value = route;
             loraRoute.append(option);
         }
-        loraRoute.value = sceneLoRARoute(shot);
-        loraRoute.title = "Select the Base or A-D MODEL branch on MiniMax H3 Scene LoRA Scheduler. Branches come from ordinary ComfyUI LoRA loaders.";
+        loraRoute.value = selectedLoRARoute;
+        loraRoute.title = "Select Base or a connected A-Z MODEL branch on MiniMax H3 Scene LoRA Scheduler. Connecting its last empty route reveals the next one automatically; branches come from ordinary ComfyUI LoRA loaders.";
         loraRoute.addEventListener("change", () => {
             if (loraRoute.value === "base") delete shot.lora_route;
             else shot.lora_route = loraRoute.value;
@@ -5041,6 +5046,13 @@ function mount(node) {
         }, 50);
     };
     api.addEventListener("executed", onPromptExecuted);
+    const onLoRARoutesChanged = () => {
+        if (!state.disposed && state.plan) {
+            renderPanel();
+            renderTimeline();
+        }
+    };
+    document.addEventListener("h3-lora-routes-changed", onLoRARoutesChanged);
     const removed = node.onRemoved;
     node.onRemoved = function () {
         state.disposed = true;
@@ -5052,6 +5064,8 @@ function mount(node) {
         if (state.editorialTimer != null) clearTimeout(state.editorialTimer);
         state.timelineResizeObserver?.disconnect();
         api.removeEventListener("executed", onPromptExecuted);
+        document.removeEventListener(
+            "h3-lora-routes-changed", onLoRARoutesChanged);
         document.removeEventListener("keydown", onPlayerKeydown, true);
         delete node._h3PromptCompanionSetActiveScene;
         delete node._h3PromptCompanionSetScenePrompt;

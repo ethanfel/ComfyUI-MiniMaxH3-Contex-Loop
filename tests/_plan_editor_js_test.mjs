@@ -130,12 +130,15 @@ assert.deepEqual(AV_CONTEXT_LENGTHS, [39, 90, 141, 192, 243]);
 assert.deepEqual(CONTEXT_SPATIAL_PROXY_MODES, [
     "off", "rgb_5_6", "latent_5_6",
 ]);
-assert.deepEqual(SCENE_LORA_ROUTES, ["base", "a", "b", "c", "d"]);
+assert.deepEqual(SCENE_LORA_ROUTES, [
+    "base", ..."abcdefghijklmnopqrstuvwxyz",
+]);
 assert.equal(sceneLoRARoute({}), "base");
 assert.equal(sceneLoRARoute({lora_route: " B "}), "b");
+assert.equal(sceneLoRARoute({lora_route: " Z "}), "z");
 assert.throws(
     () => sceneLoRARoute({lora_route: "hero"}),
-    /LoRA route must be one of base, a, b, c, d/,
+    /LoRA route must be one of base, a/,
 );
 assert.equal(new Set(AUTO_SCENE_COLORS).size, AUTO_SCENE_COLORS.length);
 assert.equal(automaticSceneColor(0), AUTO_SCENE_COLORS[0]);
@@ -371,6 +374,7 @@ const loraPlan = parsePlanJson(JSON.stringify({shots: [
     {id: "base", prompt: "Base scene.", lora_route: "base"},
     {id: "hero", prompt: "Hero LoRA.", lora_route: "A"},
     {id: "style", prompt: "Style LoRA.", lora_route: "d"},
+    {id: "final", prompt: "Final LoRA.", lora_route: "Z"},
 ]}));
 assert.equal(Object.hasOwn(loraPlan.shots[0], "lora_route"), false);
 assert.equal(loraPlan.shots[1].lora_route, "a");
@@ -380,7 +384,7 @@ assert.deepEqual(calculatePlanTiming(loraPlan, {
     anchorMode: "head",
     continuationMode: "guide",
     defaultDurationSeconds: 5,
-}).shots.map((shot) => shot.loraRoute), ["base", "a", "d"]);
+}).shots.map((shot) => shot.loraRoute), ["base", "a", "d", "z"]);
 assert.match(calculatePlanTiming({shots: [
     {id: "bad", prompt: "Bad route.", lora_route: "hero"},
 ]}, {
@@ -389,7 +393,7 @@ assert.match(calculatePlanTiming({shots: [
     anchorMode: "head",
     continuationMode: "guide",
     defaultDurationSeconds: 5,
-}).errors.join("\n"), /LoRA route must be one of base, a, b, c, d/);
+}).errors.join("\n"), /LoRA route must be one of base, a/);
 
 const perSceneBlendTiming = calculatePlanTiming({shots: [
     {id: "one", prompt: "One.", length: 124},
@@ -883,6 +887,8 @@ assert.match(editorSource, /Randomize each queue/);
 assert.match(editorSource, /setScenePromptSeedMode/);
 assert.match(editorSource, /Scene LoRA route/);
 assert.match(editorSource, /MiniMax H3 Scene LoRA Scheduler/);
+assert.match(editorSource, /availableLoRARoutes/);
+assert.match(editorSource, /h3-lora-routes-changed/);
 assert.match(editorSource, /delete shot\.lora_route/);
 assert.match(editorSource, /Incoming transition/);
 assert.match(editorSource, /Final assembly crossfade frames/);

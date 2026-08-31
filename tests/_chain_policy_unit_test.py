@@ -223,12 +223,15 @@ lora_plan = chain._normalize_plan(
          "lora_route": "base"},
         {"id": "hero", "prompt": "Hero scene.", "length": 73,
          "lora_route": "A"},
+        {"id": "final", "prompt": "Final style.", "length": 73,
+         "lora_route": "Z"},
     ]}),
     "lora-route-test", 64, 64, 22, "video", "head", "disabled",
     "generated_audio", 22, 3.0, 8, 7, 18, "model-stack", 0,
     "guide")
 assert "lora_route" not in lora_plan["shots"][0]
 assert lora_plan["shots"][1]["lora_route"] == "a"
+assert lora_plan["shots"][2]["lora_route"] == "z"
 assert chain._effective_editor_plan(lora_plan)["shots"][1][
     "lora_route"] == "a"
 assert chain._shot_lora_route(lora_plan["shots"][0]) == "base"
@@ -256,8 +259,10 @@ scheduler = chain.MiniMaxH3ChainLoRAScheduler()
 scheduler_inputs = scheduler.INPUT_TYPES()
 assert scheduler_inputs["required"]["base_model"][1]["lazy"] is True
 assert scheduler_inputs["optional"]["lora_a"][1]["lazy"] is True
+assert scheduler_inputs["optional"]["lora_z"][1]["lazy"] is True
 base_state = {"index": 1, "plan": lora_plan}
 hero_state = {"index": 2, "plan": lora_plan}
+final_state = {"index": 3, "plan": lora_plan}
 base_model = object()
 hero_model = object()
 assert scheduler.check_lazy_status(base_state, None) == ["base_model"]
@@ -265,11 +270,14 @@ assert scheduler.check_lazy_status(
     hero_state, None, lora_a=None) == ["lora_a"]
 assert scheduler.check_lazy_status(
     hero_state, None, lora_a=hero_model) == []
+assert scheduler.check_lazy_status(
+    final_state, None, lora_z=None) == ["lora_z"]
 assert scheduler.select(base_state, base_model)[0] is base_model
 selected, selected_status = scheduler.select(
     hero_state, None, lora_a=hero_model)
 assert selected is hero_model
 assert "scene 2" in selected_status and "LoRA A" in selected_status
+assert scheduler.select(final_state, None, lora_z=hero_model)[0] is hero_model
 try:
     scheduler.select(hero_state, None)
 except ValueError as exc:
@@ -282,6 +290,6 @@ assert chain.CHAIN_NODE_DISPLAY_NAME_MAPPINGS[
     "MiniMaxH3ChainLoRAScheduler"] == "MiniMax H3 Scene LoRA Scheduler"
 
 print(
-    "generation profiles, legacy manual policy, and lazy scene LoRA routing: "
+    "generation profiles, legacy manual policy, and dynamic lazy scene LoRA routing: "
     "clear one-wire Plan intent, canonical compatibility, and existing-loader "
     "MODEL selection pass")
