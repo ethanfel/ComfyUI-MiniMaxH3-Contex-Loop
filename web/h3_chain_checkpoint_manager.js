@@ -10,18 +10,18 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.5.57";
+} from "./h3_checkpoint_manager_core.mjs?v=0.5.58";
 import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.5.57";
-import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.5.57";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.57";
+} from "./h3_chain_plan_core.mjs?v=0.5.58";
+import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.5.58";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.58";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.5.57";
+} from "./h3_plan_restore_core.mjs?v=0.5.58";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -30,6 +30,7 @@ const RUN_PROPERTY = "h3_checkpoint_manager_run";
 const SCENE_PROPERTY = "h3_checkpoint_manager_scene";
 const REVISION_PROPERTY = "h3_checkpoint_manager_revision";
 const CHAPTER_PROPERTY = "h3_checkpoint_manager_chapter";
+const COLLAPSED_CHAPTERS_PROPERTY = "h3_checkpoint_manager_collapsed_chapters";
 const SHARED_COLORS = ["#6ea8ff", "#58c99d", "#bd8cff", "#e8a84f", "#f07f8c", "#55bfd0"];
 
 function nodeType(node) {
@@ -203,8 +204,6 @@ function injectStyles() {
       .h3cm-branch-active { color:var(--h3cm-accent); font-weight:700; }
       .h3cm-branch-path { position:relative; z-index:3; align-items:stretch; overflow:auto; padding-bottom:2px; }
       .h3cm-arrow { align-self:center; color:var(--h3cm-muted); }
-      .h3cm-prior { align-self:center; padding:3px 6px; border:1px dashed var(--h3cm-border);
-        border-radius:999px; color:var(--h3cm-muted); white-space:nowrap; }
       .h3cm-revision { position:relative; min-width:112px; text-align:left; white-space:nowrap; }
       .h3cm-revision small { display:block; color:var(--h3cm-muted); font-size:10px; }
       .h3cm-revision-empty { border-style:dashed !important; color:var(--h3cm-muted) !important;
@@ -262,6 +261,10 @@ function mount(node) {
         scene:Number(node.properties[SCENE_PROPERTY]) || null,
         revision:String(node.properties[REVISION_PROPERTY] ?? ""),
         chapterTab:String(node.properties[CHAPTER_PROPERTY] ?? "all"),
+        collapsedChapters:new Set(
+            Array.isArray(node.properties[COLLAPSED_CHAPTERS_PROPERTY])
+                ? node.properties[COLLAPSED_CHAPTERS_PROPERTY].map(String) : [],
+        ),
         selected:null, deletion:null, busy:false, requestToken:0,
         initialRefresh:true, attribution:null, attributionButton:null,
     };
@@ -463,6 +466,21 @@ function mount(node) {
         return !range || (number >= range.start && number <= range.end);
     }
 
+    function chapterCollapseKey(range) {
+        return `${state.runName}:${String(range.id)}`;
+    }
+
+    function setChapterCollapsed(range, collapsed) {
+        const key = chapterCollapseKey(range);
+        if (collapsed) state.collapsedChapters.add(key);
+        else state.collapsedChapters.delete(key);
+        node.properties[COLLAPSED_CHAPTERS_PROPERTY] = [
+            ...state.collapsedChapters,
+        ].sort();
+        node.graph?.setDirtyCanvas?.(true, true);
+        renderBranches();
+    }
+
     function selectChapterTab(chapterId) {
         state.chapterTab = chapterId;
         const visibleScenes = (state.payload?.scenes ?? []).filter(
@@ -519,20 +537,9 @@ function mount(node) {
         }
     }
 
-    function renderBranches() {
-        branches.replaceChildren();
-        const allRows = checkpointBranchRows(state.payload);
-        const rows = allRows.map((branch) => ({
-            ...branch,
-            allRevisions:branch.revisions,
-            revisions:branch.revisions.filter((revision) => sceneVisible(revision.scene)),
-        })).filter((branch) => branch.revisions.length);
-        if (!rows.length) {
-            branches.append(element("div", "h3cm-muted", "No versioned checkpoints were found."));
-            return;
-        }
+    function renderBranchRows(container, rows) {
         const occurrences = new Map();
-        for (const branch of allRows) {
+        for (const branch of rows) {
             for (const revision of branch.revisions) {
                 const key = checkpointRevisionKey(revision.scene, revision.revision);
                 occurrences.set(key, (occurrences.get(key) ?? 0) + 1);
@@ -561,16 +568,8 @@ function mount(node) {
             const count = element("span", "h3cm-muted", `${branch.revisions.length} visible scene${branch.revisions.length === 1 ? "" : "s"}`);
             header.append(name, count);
             const path = element("div", "h3cm-branch-path");
-            const prior = branch.allRevisions.filter(
-                (revision) => Number(revision.scene) < Number(branch.revisions[0]?.scene),
-            ).length;
-            if (prior) {
-                path.append(element(
-                    "span", "h3cm-prior", `← ${prior} prior scene${prior === 1 ? "" : "s"}`,
-                ));
-            }
             branch.revisions.forEach((revision, index) => {
-                if (index || prior) path.append(element("span", "h3cm-arrow", "→"));
+                if (index) path.append(element("span", "h3cm-arrow", "→"));
                 const key = checkpointRevisionKey(revision.scene, revision.revision);
                 const sharedCount = occurrences.get(key) ?? 1;
                 const card = button(

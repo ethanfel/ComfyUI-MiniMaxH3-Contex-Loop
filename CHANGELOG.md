@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Completed the Checkpoint Manager chapter UI backport on `main`. **All
+  scenes** now renders one independent branch graph per chapter, chapter
+  headers collapse and remember their state per run, and chapter rows no
+  longer show inherited prior-scene placeholders.
+
 - Fixed Tagged Audio `source_timeline` identity validation for the shipped
   full-track workflow. Loop Start's route fingerprint and Tagged Audio's
   waveform-content fingerprint are now recognized as two identities of the
