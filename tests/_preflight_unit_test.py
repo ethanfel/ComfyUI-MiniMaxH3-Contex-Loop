@@ -107,6 +107,13 @@ with tempfile.TemporaryDirectory() as temporary:
     plan = make_plan("preflight")
     timeline = deferred_timeline(39)
 
+    _prepared, inherited_missing = chain._preflight_chain(plan)
+    inherited_text = chain._preflight_failure_text(inherited_missing)
+    assert ("Trigger: final output: final_audio=source (Chain Policy)"
+            in inherited_text)
+    assert ('Trigger: Scene 1 "one": source_reference=on (Chain Policy)'
+            in inherited_text)
+
     prepared, report = chain._preflight_chain(
         plan, source_timeline=timeline)
     assert report["ok"] is True
@@ -251,6 +258,42 @@ with tempfile.TemporaryDirectory() as temporary:
     finally:
         chain._materialize_source_timeline_audio = original
     assert materialized == []
+
+    # A later scene override must be named explicitly when it makes source
+    # audio mandatory. Loop Start validates the complete Plan before Scene 1,
+    # so a generic "active policy" error otherwise gives no clue where to fix.
+    generated_policy = chain._contract_compose_chain_policy(
+        chain._contract_audio_policy("generated", "off", "on"),
+        chain._contract_transition_policy("cut"),
+        audio_context_length=0)
+    scene_override_plan = chain._normalize_plan(
+        json.dumps({"shots": [
+            {"id": "1_5", "prompt": "Scene one.", "length": 22},
+            {"id": "2_5", "prompt": "Scene two.", "length": 22},
+            {"id": "3_5", "prompt": "Scene three.", "length": 22},
+            {"id": "4_5", "prompt": "Scene four.", "length": 22,
+             "source_reference": "on"},
+            {"id": "5_5", "prompt": "Scene five.", "length": 22},
+        ]}),
+        "preflight-scene-source-override", 64, 64, 1,
+        "video", "head", "disabled", "generated_audio", 0,
+        1.0, 8, 7, 18, "stack:auto:v1", 0, "guide",
+        generated_policy)
+    _prepared, missing_source = chain._preflight_chain(
+        scene_override_plan)
+    missing_issue = next(
+        item for item in missing_source["errors"]
+        if item["code"] == "source_audio_missing")
+    assert missing_issue["requirements"] == [{
+        "scope": "scene", "scene": 4, "scene_id": "4_5",
+        "setting": "source_reference", "value": "on",
+        "origin": "scene override",
+    }]
+    failure_text = chain._preflight_failure_text(missing_source)
+    assert ("Loop Start source_timeline and legacy source_audio inputs are "
+            "both disconnected" in failure_text)
+    assert ('Trigger: Scene 4 "4_5": source_reference=on '
+            '(scene override)' in failure_text)
 
     tagged_picture = chain.MiniMaxH3TaggedPictureReference().add(
         torch.zeros((1, 32, 32, 3)), "replacement")[0]

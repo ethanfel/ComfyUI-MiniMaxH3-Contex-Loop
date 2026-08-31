@@ -4,6 +4,14 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Made blocking preflight errors identify their actionable origin. Missing
+  source-audio diagnostics now list every triggering scene ID, the exact
+  effective setting (`source_reference`, `source_audio_target`, or final
+  output audio), and whether it came from a scene override or Chain Policy;
+  they also name the disconnected Loop Start sockets. Other structured
+  preflight errors now render their available scene, setting, origin, and tag
+  context on separate readable lines before the corrective action.
+
 - Fixed Issue #38's remaining Scene 2 failure on installations where
   ComfyUI retains a compatible H3 payload wrapper after its temporary module
   alias is removed. Patch Priority now recovers that wrapper's captured stock

@@ -370,6 +370,67 @@ def _audio_policy_locks_source_audio(value: Any, shot: Any = None) -> bool:
         "source_audio_target", "off") == "locked"
 
 
+def _audio_source_requirements(value: Any) -> list[dict[str, Any]]:
+    """Describe every effective setting that makes source audio mandatory."""
+    policy = _resolved_audio_policy(value)
+    requirements: list[dict[str, Any]] = []
+    if policy["final_audio"] == "source":
+        requirements.append({
+            "scope": "final output",
+            "setting": "final_audio",
+            "value": "source",
+            "origin": "Chain Policy",
+        })
+
+    shots = value.get("shots") if isinstance(value, dict) else None
+    if isinstance(shots, list):
+        for fallback_index, shot in enumerate(shots, 1):
+            resolved = _resolved_scene_audio_policy(value, shot)
+            scene = int(shot.get("index", fallback_index))
+            scene_id = str(shot.get("id") or "scene_%d" % scene)
+            for setting, active_value, allowed in (
+                    ("source_reference", "on", SOURCE_REFERENCE_POLICIES),
+                    ("source_audio_target", "locked", ("off", "locked"))):
+                if resolved.get(setting, "off") != active_value:
+                    continue
+                override = _optional_scene_audio_axis(
+                    shot, setting, allowed)
+                requirements.append({
+                    "scope": "scene",
+                    "scene": scene,
+                    "scene_id": scene_id,
+                    "setting": setting,
+                    "value": active_value,
+                    "origin": (
+                        "scene override" if override is not None
+                        else "Chain Policy"),
+                })
+    else:
+        for setting, active_value in (
+                ("source_reference", "on"),
+                ("source_audio_target", "locked")):
+            if policy.get(setting, "off") == active_value:
+                requirements.append({
+                    "scope": "Plan",
+                    "setting": setting,
+                    "value": active_value,
+                    "origin": "Chain Policy",
+                })
+    return requirements
+
+
+def _format_audio_source_requirement(requirement: dict[str, Any]) -> str:
+    if requirement.get("scope") == "scene":
+        location = 'Scene %d "%s"' % (
+            int(requirement["scene"]), str(requirement["scene_id"]))
+    else:
+        location = str(requirement.get("scope") or "Plan")
+    return "%s: %s=%s (%s)" % (
+        location, str(requirement.get("setting") or "audio_policy"),
+        str(requirement.get("value") or "required"),
+        str(requirement.get("origin") or "effective policy"))
+
+
 def _audio_policy_requires_source(value: Any) -> bool:
     policy = _resolved_audio_policy(value)
     if policy["final_audio"] == "source":
@@ -14520,7 +14581,8 @@ def _preflight_bind_source(
     if source_timeline is None and isinstance(plan.get("source_timeline"), dict):
         source_timeline = _source_timeline_from_recovery(
             plan["source_timeline"])
-    required = _audio_policy_requires_source(plan)
+    source_requirements = _audio_source_requirements(plan)
+    required = bool(source_requirements)
     prepared = dict(plan)
     prepared["base_plan_hash"] = str(
         plan.get("base_plan_hash") or plan["plan_hash"])
@@ -14529,6 +14591,7 @@ def _preflight_bind_source(
     source_report: dict[str, Any] = {
         "route": "none", "required_frames": required_frames,
         "required_seconds": required_frames / float(FPS),
+        "requirements": source_requirements,
     }
     if source_timeline is not None:
         source = _validate_source_timeline(source_timeline)
@@ -14563,10 +14626,11 @@ def _preflight_bind_source(
         if required and source["audio"]["kind"] == "none":
             _preflight_issue(
                 report, "errors", "source_audio_missing",
-                "The active Audio Policy requires source audio, but Source "
-                "Timeline has none.",
-                "Choose embedded/external audio or disable source reference "
-                "and source final audio in H3 Audio Policy.")
+                "Source Timeline has no audio, but the Plan settings listed "
+                "below require it.",
+                "Choose embedded/external audio, or change the reported "
+                "setting at its reported scope.",
+                requirements=source_requirements)
         shortfall = max(0, required_frames - audio_frames) if required else 0
         source_report["shortfall_frames"] = shortfall
         source_report["shortfall_seconds"] = shortfall / float(FPS)
@@ -14610,9 +14674,12 @@ def _preflight_bind_source(
     if required and source_audio is None:
         _preflight_issue(
             report, "errors", "source_audio_missing",
-            "The active Audio Policy requires source audio.",
-            "Connect one H3 Source Timeline to Loop Start, or use the legacy "
-            "source_audio input.")
+            "Loop Start source_timeline and legacy source_audio inputs are "
+            "both disconnected, but the Plan settings listed below require "
+            "source audio.",
+            "Connect one H3 Source Timeline to Loop Start, use the legacy "
+            "source_audio input, or change the reported setting at its "
+            "reported scope.", requirements=source_requirements)
         source_hash = "none"
     elif source_audio is not None:
         waveform, sample_rate = _validate_audio(
@@ -15030,9 +15097,35 @@ def _preflight_failure_text(report: dict[str, Any]) -> str:
     lines = [str(report.get("summary") or "H3 preflight failed.")]
     for issue in report.get("errors") or ():
         line = "%s: %s" % (issue.get("code", "error"), issue.get("message", ""))
-        if issue.get("action"):
-            line += " Action: %s" % issue["action"]
         lines.append(line)
+        for requirement in issue.get("requirements") or ():
+            if isinstance(requirement, dict):
+                lines.append(
+                    "  Trigger: %s" %
+                    _format_audio_source_requirement(requirement))
+        context = []
+        if issue.get("scene") is not None:
+            scene = "scene=%s" % issue["scene"]
+            if issue.get("scene_id"):
+                scene += ' "%s"' % issue["scene_id"]
+            context.append(scene)
+        elif issue.get("scenes"):
+            context.append(
+                "scenes=%s" % ",".join(
+                    str(value) for value in issue["scenes"]))
+        if issue.get("setting"):
+            setting = "setting=%s" % issue["setting"]
+            if issue.get("value") is not None:
+                setting += "=%s" % issue["value"]
+            context.append(setting)
+        if issue.get("origin"):
+            context.append("origin=%s" % issue["origin"])
+        if issue.get("tag"):
+            context.append("tag=%s" % issue["tag"])
+        if context:
+            lines.append("  Context: %s" % "; ".join(context))
+        if issue.get("action"):
+            lines.append("  Action: %s" % issue["action"])
     return "\n".join(lines)
 
 
