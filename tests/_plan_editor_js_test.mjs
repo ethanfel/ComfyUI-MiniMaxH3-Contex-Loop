@@ -23,6 +23,7 @@ import {
     planToJson,
     promptValueToText,
     randomSceneSeed,
+    renamePlanShot,
     removePlanShot,
     sceneAudioContextLength,
     sceneContextLength,
@@ -42,6 +43,28 @@ import {
     validateH3Length,
     visualContextCompositions,
 } from "../web/h3_chain_plan_core.mjs";
+
+const renamePlan = {
+    shots:[
+        {id:"scene_1", prompt:["one"]},
+        {id:"scene_2", prompt:["two"]},
+        {id:"scene_3", prompt:["three"], visual_context_source:"scene_1",
+            visual_context_lead_source:"scene_2"},
+    ],
+    chapters:[{id:"chapter_1", title:"One", start_scene_id:"scene_2"}],
+};
+assert.deepEqual(renamePlanShot(renamePlan, 1, "middle scene"), {
+    previousId:"scene_2", id:"middle_scene", changed:true,
+});
+assert.equal(renamePlan.shots.length, 3);
+assert.equal(renamePlan.chapters[0].start_scene_id, "middle_scene");
+assert.equal(renamePlan.shots[2].visual_context_lead_source, "middle_scene");
+const beforeDuplicateRename = JSON.stringify(renamePlan);
+assert.throws(
+    () => renamePlanShot(renamePlan, 2, "scene_1"),
+    /already uses the ID/,
+);
+assert.equal(JSON.stringify(renamePlan), beforeDuplicateRename);
 import {
     PRIMARY_TRANSITION_PRESETS,
     applySceneAudioOverride,

@@ -11,13 +11,17 @@ import {
     matchingStudioSourceScene,
     parseStudioTimecode,
     parseTimedLyrics,
+    remapStudioEditorialSceneId,
+    restoreStudioCheckpointCache,
     studioCheckpointSignature,
+    studioCheckpointCacheSnapshot,
     studioContextWindowLayout,
     studioContextWindowStartAtRatio,
     studioEditorialSceneStartSeconds,
     studioLatentSafeOutFrames,
     studioNearestLatentSafeOutFrame,
     studioNearestH3FrameLength,
+    studioPlayerSegmentClock,
     studioRulerTicks,
     studioSceneStartSeconds,
     studioSourceAudioSecond,
@@ -61,6 +65,19 @@ assert.deepEqual(trimmedTimeline.filter(
     (segment) => segment.kind === "scene",
 ).map((segment) => segment.durationFrames), [72, 340]);
 assert.equal(trimmedTimeline.at(-1).endFrame, 412);
+const beforeTrimEnd = studioPlayerSegmentClock(
+    trimmedTimeline, "scene:0", 2.99,
+);
+assert.equal(beforeTrimEnd.boundaryReached, false);
+const trimEnd = studioPlayerSegmentClock(
+    trimmedTimeline, "scene:0", 3,
+);
+assert.equal(trimEnd.boundaryReached, true);
+assert.equal(trimEnd.timelineSeconds, 3);
+assert.equal(
+    studioPlayerSegmentClock(trimmedTimeline, "scene:0", 99).timelineSeconds,
+    3,
+);
 assert.equal(studioSceneStartSeconds(rows, 1), 362 / 24);
 assert.equal(locateStudioTimelineSecond(rows, 0).index, 0);
 assert.equal(locateStudioTimelineSecond(rows, 362 / 24).index, 1);
@@ -222,6 +239,26 @@ assert.notEqual(
     studioCheckpointSignature("run-a", [...checkpoints.values()]),
     studioCheckpointSignature("run-b", [...checkpoints.values()]),
 );
+const cache = studioCheckpointCacheSnapshot(
+    "run-a", [...checkpoints.values()], {
+        run_name:"run-a", placements:[], trims:[{scene_id:"one", out_frame:72}],
+    },
+);
+assert.equal(restoreStudioCheckpointCache(cache, "run-a").checkpoints.length, 1);
+assert.equal(restoreStudioCheckpointCache(cache, "run-b"), null);
+const editorialRename = {
+    placements:[{scene_id:"one", start_frame:2}],
+    trims:[{scene_id:"one", out_frame:72}],
+    locked_scene_ids:["one"],
+    alternate_draft:{scene_id:"one"},
+    replacements:[{scene_id:"one"}],
+};
+remapStudioEditorialSceneId(editorialRename, "one", "opening");
+assert.equal(editorialRename.placements[0].scene_id, "opening");
+assert.equal(editorialRename.trims[0].scene_id, "opening");
+assert.deepEqual(editorialRename.locked_scene_ids, ["opening"]);
+assert.equal(editorialRename.alternate_draft.scene_id, "opening");
+assert.equal(editorialRename.replacements[0].scene_id, "opening");
 assert.notEqual(
     studioCheckpointSignature("run-a", [...checkpoints.values()]),
     studioCheckpointSignature("run-a", [{

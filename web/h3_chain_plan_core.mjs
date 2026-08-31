@@ -436,6 +436,49 @@ export function safeShotId(value, fallback) {
     return (text || fallback).slice(0, 96);
 }
 
+export function renamePlanShot(plan, index, requestedId) {
+    const shots = Array.isArray(plan?.shots) ? plan.shots : [];
+    const position = Number(index);
+    if (!Number.isInteger(position) || position < 0 || position >= shots.length) {
+        throw new Error("Scene rename target is outside the Plan.");
+    }
+    const shot = shots[position];
+    const fallback = `clip_${String(position + 1).padStart(4, "0")}`;
+    const previousId = safeShotId(shot?.id, fallback);
+    const nextId = safeShotId(requestedId, previousId);
+    const duplicate = shots.some((candidate, offset) => (
+        offset !== position && safeShotId(
+            candidate?.id,
+            `clip_${String(offset + 1).padStart(4, "0")}`,
+        ) === nextId
+    ));
+    if (duplicate) {
+        throw new Error(`Another scene already uses the ID “${nextId}”.`);
+    }
+    if (nextId === previousId) return {previousId, id:nextId, changed:false};
+
+    shot.id = nextId;
+    for (const chapter of Array.isArray(plan?.chapters) ? plan.chapters : []) {
+        if (String(chapter?.start_scene_id ?? "") === previousId) {
+            chapter.start_scene_id = nextId;
+        }
+    }
+    // Authored visual-context links use stable scene IDs. Numeric spellings
+    // deliberately remain scene indexes and must not be rewritten as IDs.
+    if (!/^\d+$/.test(previousId)) {
+        for (const candidate of shots) {
+            for (const field of [
+                "visual_context_source", "visual_context_lead_source",
+            ]) {
+                if (String(candidate?.[field] ?? "").trim() === previousId) {
+                    candidate[field] = nextId;
+                }
+            }
+        }
+    }
+    return {previousId, id:nextId, changed:true};
+}
+
 export function safeChapterId(value, fallback = "chapter") {
     return safeShotId(value, fallback);
 }

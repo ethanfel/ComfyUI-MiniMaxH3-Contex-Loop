@@ -4,7 +4,19 @@ import assert from "node:assert/strict";
 import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
     publishProjectAssetCatalogChanged,
+    serializedProjectAssetCatalog,
 } from "../web/h3_project_asset_sync_core.mjs";
+
+const serializedCatalog = serializedProjectAssetCatalog(JSON.stringify({
+    project:"episode", revision:"rev-1", assets:[{id:"asset-1"}],
+    reference_slots:[],
+}), "episode");
+assert.equal(serializedCatalog.assets[0].id, "asset-1");
+assert.deepEqual(serializedCatalog.folders, []);
+assert.equal(serializedProjectAssetCatalog("not json", "episode"), null);
+assert.equal(serializedProjectAssetCatalog(JSON.stringify({
+    project:"other", assets:[], reference_slots:[],
+}), "episode"), null);
 
 const originalCustomEvent = globalThis.CustomEvent;
 const originalDispatchEvent = globalThis.dispatchEvent;

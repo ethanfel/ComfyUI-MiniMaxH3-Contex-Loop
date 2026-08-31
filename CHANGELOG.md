@@ -4,6 +4,16 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed delayed and inconsistent workflow hydration. Project Asset Carousel
+  now paints its serialized catalog immediately while refreshing in the
+  background, and Plan Studio keeps a lightweight serialized presentation
+  cache so saved thumbnails, placements, and latent-safe trims appear on its
+  first render instead of snapping into place after the checkpoint scan.
+  Player transport now advances at the trimmed endpoint instead of continuing
+  through discarded media. Scene renaming is atomic, rejects duplicate IDs,
+  and migrates chapters, visual-context links, placements, trims, locks, and
+  alternate final-cut metadata so an ungenerated rename cannot hide a scene.
+
 - Plan Studio can now create a prompt-word alternate for an already accepted
   scene. Queueing an enabled draft renders only that scene and saves an
   immutable `editorial_alternate` revision without changing the active

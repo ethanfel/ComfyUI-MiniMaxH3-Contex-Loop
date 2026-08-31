@@ -28,6 +28,57 @@ export function studioCheckpointSignature(runName, records) {
     });
 }
 
+export function studioCheckpointCacheSnapshot(runName, records, editorial) {
+    const run = String(runName ?? "").trim();
+    if (!run) return null;
+    // The include_graph=false response is intentionally small and contains
+    // only media descriptors plus active/alternate revision presentation.
+    // Clone it so later response mutation cannot change serialized UI state.
+    try {
+        return JSON.parse(JSON.stringify({
+            version:1,
+            run_name:run,
+            checkpoints:Array.isArray(records) ? records : [],
+            editorial:editorial && typeof editorial === "object"
+                ? editorial : null,
+        }));
+    } catch (_error) {
+        return null;
+    }
+}
+
+export function restoreStudioCheckpointCache(value, runName) {
+    const requested = String(runName ?? "").trim();
+    if (!value || typeof value !== "object" || Array.isArray(value)
+            || Number(value.version) !== 1
+            || String(value.run_name ?? "").trim() !== requested
+            || !Array.isArray(value.checkpoints)) return null;
+    return studioCheckpointCacheSnapshot(
+        requested, value.checkpoints, value.editorial,
+    );
+}
+
+export function remapStudioEditorialSceneId(editorial, previousId, nextId) {
+    if (!editorial || typeof editorial !== "object") return editorial;
+    const previous = String(previousId ?? "");
+    const next = String(nextId ?? "");
+    if (!previous || !next || previous === next) return editorial;
+    for (const field of ["placements", "trims", "replacements"]) {
+        for (const item of Array.isArray(editorial[field]) ? editorial[field] : []) {
+            if (String(item?.scene_id ?? "") === previous) item.scene_id = next;
+        }
+    }
+    if (Array.isArray(editorial.locked_scene_ids)) {
+        editorial.locked_scene_ids = editorial.locked_scene_ids.map(
+            (sceneId) => String(sceneId) === previous ? next : sceneId,
+        );
+    }
+    if (String(editorial.alternate_draft?.scene_id ?? "") === previous) {
+        editorial.alternate_draft.scene_id = next;
+    }
+    return editorial;
+}
+
 export function matchingStudioCheckpoint(checkpoints, index, timingRow) {
     const scene = Number(index) + 1;
     const item = checkpoints instanceof Map
@@ -357,6 +408,27 @@ export function locateStudioTimelineSegment(segments, seconds) {
         ...values.at(-1), index:Number(values.at(-1)?.sceneIndex),
         segmentIndex:values.length - 1, localSeconds:0,
         targetSeconds, totalSeconds,
+    };
+}
+
+export function studioPlayerSegmentClock(
+    segments, segmentKey, mediaSeconds, fps = 24,
+) {
+    const segment = (Array.isArray(segments) ? segments : []).find(
+        (candidate) => candidate?.key === segmentKey,
+    );
+    if (!segment || segment.kind !== "scene") return null;
+    const localSeconds = Math.max(0, Number(mediaSeconds) || 0);
+    const durationSeconds = Math.max(0, Number(segment.durationSeconds) || 0);
+    const tolerance = 1 / Math.max(1, (Number(fps) || 24) * 8);
+    return {
+        segment,
+        localSeconds:Math.min(durationSeconds, localSeconds),
+        timelineSeconds:Math.min(
+            Number(segment.endSeconds) || 0,
+            (Number(segment.startSeconds) || 0) + localSeconds,
+        ),
+        boundaryReached:localSeconds >= Math.max(0, durationSeconds - tolerance),
     };
 }
 

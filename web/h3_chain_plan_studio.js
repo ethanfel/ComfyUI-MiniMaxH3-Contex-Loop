@@ -28,6 +28,7 @@ import {
     sceneContinuationMode,
     sceneLoRARoute,
     scenePromptSeedMode,
+    renamePlanShot,
     sceneVisualContextSource,
     sceneVisualContextLeadFrames,
     sceneVisualContextLeadSource,
@@ -39,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.86";
+} from "./h3_chain_plan_core.mjs?v=0.6.87";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.86";
+} from "./h3_prompt_history_core.mjs?v=0.6.87";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.86";
+} from "./h3_reference_preview_core.mjs?v=0.6.87";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -59,16 +60,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.86";
+} from "./h3_policy_core.mjs?v=0.6.87";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.86";
+} from "./h3_socket_presentation_core.mjs?v=0.6.87";
 import {
     availableLoRARoutes,
     loraRouteLabel,
-} from "./h3_lora_scheduler_core.mjs?v=0.6.86";
+} from "./h3_lora_scheduler_core.mjs?v=0.6.87";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -76,7 +77,10 @@ import {
     matchingStudioSourceAudio,
     matchingStudioSourceScene,
     parseStudioTimecode,
+    remapStudioEditorialSceneId,
     studioCheckpointSignature,
+    restoreStudioCheckpointCache,
+    studioCheckpointCacheSnapshot,
     studioContextWindowLayout,
     studioContextWindowStartAtRatio,
     parseTimedLyrics,
@@ -84,6 +88,7 @@ import {
     studioLatentSafeOutFrames,
     studioNearestLatentSafeOutFrame,
     studioNearestH3FrameLength,
+    studioPlayerSegmentClock,
     studioSourceAudioSecond,
     studioSourceSecond,
     studioTimelineLayout,
@@ -95,8 +100,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.86";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.86";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.87";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.87";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -114,6 +119,7 @@ const SOURCE_AUDIO_MUTES_PROPERTY = "h3_plan_studio_source_audio_mutes";
 const GENERATED_VOLUME_PROPERTY = "h3_plan_studio_generated_volume";
 const SOURCE_VOLUME_PROPERTY = "h3_plan_studio_source_volume";
 const MOTION_VOLUME_PROPERTY = "h3_plan_studio_motion_volume";
+const CHECKPOINT_CACHE_PROPERTY = "h3_plan_studio_checkpoint_cache_v1";
 const MIN_WIDTH = 820;
 const MIN_HEIGHT = 690;
 const PLAN_SETTING_WIDGETS = Object.freeze([
@@ -1146,6 +1152,13 @@ function mount(node) {
         return previous !== JSON.stringify(next);
     }
 
+    function cacheStudioPresentation(records, editorial) {
+        const snapshot = studioCheckpointCacheSnapshot(
+            runName(), records, editorial,
+        );
+        if (snapshot) node.properties[CHECKPOINT_CACHE_PROPERTY] = snapshot;
+    }
+
     function scheduleEditorialSave() {
         if (alternateTakeWidget) {
             const serialized = JSON.stringify(
@@ -1160,6 +1173,7 @@ function mount(node) {
         if (!state.plan) return;
         if (!state.editorialReady || state.editorialRun !== runName()) return;
         const payload = editorialPayload();
+        cacheStudioPresentation([...state.checkpoints.values()], payload);
         const signature = JSON.stringify(payload);
         if (signature === state.lastEditorialSignature) return;
         state.lastEditorialSignature = signature;
@@ -1348,6 +1362,7 @@ function mount(node) {
             if (changed) { refreshTimelineCheckpoints(); renderStatus(); }
             return;
         }
+        let editorialChanged = false;
         try {
             const query = new URLSearchParams({
                 run_name:currentRun, include_graph:"false",
@@ -1356,8 +1371,9 @@ function mount(node) {
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
             if (state.disposed || token !== state.checkpointToken || currentRun !== runName()) return;
-            const editorialChanged = applyEditorialPayload(payload.editorial);
+            editorialChanged = applyEditorialPayload(payload.editorial);
             const records = payload.checkpoints ?? [];
+            cacheStudioPresentation(records, payload.editorial);
             const signature = studioCheckpointSignature(currentRun, records);
             const recoveredFromError = Boolean(state.checkpointError);
             state.checkpointError = "";
@@ -1377,8 +1393,13 @@ function mount(node) {
             renderStatus();
             return;
         }
-        refreshTimelineCheckpoints(); renderStatus();
+        if (editorialChanged) renderTimeline();
+        else refreshTimelineCheckpoints();
+        renderStatus();
         if (state.view === "context") renderPanel();
+        if (editorialChanged && ["player", "subtitles"].includes(state.view)) {
+            renderPanel();
+        }
         if (state.view === "player" && state.player?.paused) {
             const media = playerCheckpoint(state.playerIndex);
             const desired = media?.video ? videoUrl(media.video) : "";
@@ -2747,18 +2768,20 @@ function mount(node) {
         const id = element("input");
         id.value = shot.id ?? "";
         id.addEventListener("change", () => {
-            const previousId = safeShotId(shot.id, row.id);
-            shot.id = safeShotId(id.value, row.id); id.value = shot.id;
-            for (const chapter of state.plan.chapters ?? []) {
-                if (chapter.start_scene_id === previousId) {
-                    chapter.start_scene_id = shot.id;
-                }
+            let renamed;
+            try {
+                renamed = renamePlanShot(state.plan, state.active, id.value);
+                id.setCustomValidity("");
+            } catch (error) {
+                id.value = safeShotId(shot.id, row.id);
+                id.setCustomValidity(error?.message || String(error));
+                id.reportValidity();
+                return;
             }
-            for (const placement of state.editorial.placements) {
-                if (placement.scene_id === previousId) placement.scene_id = shot.id;
-            }
-            state.editorial.locked_scene_ids = state.editorial.locked_scene_ids.map(
-                (sceneId) => sceneId === previousId ? shot.id : sceneId,
+            const previousId = renamed.previousId;
+            shot.id = renamed.id; id.value = renamed.id;
+            remapStudioEditorialSceneId(
+                state.editorial, previousId, renamed.id,
             );
             writePlan(); renderShell();
         });
@@ -4550,6 +4573,11 @@ function mount(node) {
         };
         const playerTimelineSecond = () => {
             const model = timelineModel();
+            const clock = studioPlayerSegmentClock(
+                model.segments, state.playerSegmentKey,
+                Number(video.currentTime) || 0, FPS,
+            );
+            if (clock) return Math.min(model.totalSeconds, clock.timelineSeconds);
             return Math.min(
                 model.totalSeconds,
                 studioEditorialSceneStartSeconds(model.segments, state.playerIndex) +
@@ -4598,10 +4626,47 @@ function mount(node) {
                     Math.max(0, Number(descriptor.seek_seconds) || 0),
             );
         };
+        let videoAdvancePending = false;
+        const advanceVideoSegment = (autoplay = true) => {
+            if (videoAdvancePending) return false;
+            const model = timelineModel();
+            const currentSegment = model.segments.findIndex(
+                (segment) => segment.key === state.playerSegmentKey,
+            );
+            const current = model.segments[currentSegment];
+            const next = model.segments[currentSegment + 1];
+            if (!current) return false;
+            videoAdvancePending = true;
+            stopMediaClock("video");
+            captureHandoffFrame();
+            generatedAudio.pause(); sourceVideo.pause();
+            updateTransportPosition(current.endSeconds);
+            if (!next) {
+                video.pause();
+                sourceTimelineAudio.pause();
+                play.textContent = "▶";
+                videoAdvancePending = false;
+                return false;
+            }
+            if (next.kind === "scene") promotePrimedSegment(next.sceneIndex);
+            seekTimeline(next.startSeconds, autoplay);
+            setTimeout(() => { videoAdvancePending = false; }, 0);
+            return true;
+        };
         const refreshVideoTransport = () => {
             if (!video.dataset.source) return;
-            const current = playerTimelineSecond();
+            const model = timelineModel();
+            const segmentClock = studioPlayerSegmentClock(
+                model.segments, state.playerSegmentKey,
+                Number(video.currentTime) || 0, FPS,
+            );
+            const current = segmentClock?.timelineSeconds
+                ?? playerTimelineSecond();
             updateTransportPosition(current);
+            if (segmentClock?.boundaryReached && !video.paused) {
+                advanceVideoSegment(true);
+                return;
+            }
             synchronizeGeneratedAudio(false);
             synchronizeSourceTimelineAudio(false, current);
             syncSource();
@@ -4853,23 +4918,7 @@ function mount(node) {
             startEditorialClock();
         });
         onActiveVideo("ended", () => {
-            stopMediaClock("video");
-            captureHandoffFrame();
-            const outgoingAudio = generatedAudio;
-            outgoingAudio.pause(); sourceVideo.pause();
-            const model = timelineModel();
-            const currentSegment = model.segments.findIndex(
-                (segment) => segment.key === state.playerSegmentKey,
-            );
-            const next = model.segments[currentSegment + 1];
-            if (!next) {
-                sourceTimelineAudio.pause();
-                return;
-            }
-            if (next.kind === "scene") {
-                promotePrimedSegment(next.sceneIndex);
-            }
-            seekTimeline(next.startSeconds, true);
+            advanceVideoSegment(true);
         });
         const compareControls = element("div", "h3studio-compare-controls");
         const wipeLabel = element("span", "h3studio-wipe-label", "Wipe");
@@ -5391,12 +5440,23 @@ function mount(node) {
                 (chapter) => chapter.id === state.activeChapterId,
             )) state.activeChapterId = "";
             if (runChanged) {
-                state.checkpoints = new Map(); state.checkpointSignature = "";
+                const cached = restoreStudioCheckpointCache(
+                    node.properties[CHECKPOINT_CACHE_PROPERTY], currentRun,
+                );
+                const cachedRecords = cached?.checkpoints ?? [];
+                state.checkpoints = new Map(cachedRecords.map(
+                    (item) => [Number(item.scene), item],
+                ));
+                state.checkpointSignature = cached
+                    ? studioCheckpointSignature(currentRun, cachedRecords) : "";
                 state.checkpointError = ""; state.timelinePosition = null;
                 state.editorialReady = false; state.editorialRun = "";
-                state.editorial = {placements:[], trims:[], locked_scene_ids:[], subtitles:{
-                    mode:"off", asset_id:"", offset_seconds:0,
-                }, alternate_draft:null, replacements:[]};
+                state.editorial = cached?.editorial
+                    ? normalizedEditorial(cached.editorial)
+                    : {placements:[], trims:[], locked_scene_ids:[], subtitles:{
+                        mode:"off", asset_id:"", offset_seconds:0,
+                    }, alternate_draft:null, replacements:[]};
+                if (cached?.editorial) state.editorialRun = currentRun;
                 state.timelineWorkspaceEndFrame = 0;
                 state.timelineSceneEndFrame = 0;
                 state.timelineRenderedActive = null;
