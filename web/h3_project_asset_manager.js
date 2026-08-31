@@ -5,10 +5,10 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.80";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.81";
 import {
     publishProjectAssetCatalogChanged,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.80";
+} from "./h3_project_asset_sync_core.mjs?v=0.6.81";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -348,6 +348,8 @@ function mount(node) {
         }, "Choose a local media file, or drop files directly onto the Carousel. A selected Unassigned slot is bound; otherwise a new asset is created."),
         button("Import", () => browseSource(selectedUnassignedSlot()),
             "Create a project asset from the selected source: ComfyUI input, another Run, an H3 backup, or a server path. A selected Unassigned slot is bound instead."),
+        button("Duplicate project…", () => duplicateAssetProject(),
+            "Create a new Run containing this asset catalog, folders, lyrics, and project-owned media. Generated clips, checkpoints, and assembled renders are not copied. This Carousel stays on the current Run."),
         button("Refresh", () => refresh()), fileInput,
     );
     const status = el("div", "h3pa-status", "Loading project assets…");
@@ -368,7 +370,7 @@ function mount(node) {
     const state = {
         catalog: {assets: [], reference_slots: [], folders: []}, selected: "",
         filter: "all", folder: "", media: null, bindingSlot: null,
-        dragging: "", uploading: false,
+        dragging: "", uploading: false, duplicatingProject: false,
         expandedFolders: new Set(Array.isArray(
             node.properties?.h3_project_asset_expanded_folders,
         ) ? node.properties.h3_project_asset_expanded_folders.map(String) : []),
@@ -704,6 +706,48 @@ function mount(node) {
             persistCatalog(result.catalog); state.selected = result.asset.id; render();
             setStatus(`Duplicated ${promptTag(asset)} as ${promptTag(result.asset)} without copying media bytes.`);
         } catch (error) { setStatus(error.message, true); }
+    }
+    async function duplicateAssetProject() {
+        const sourceProject = project();
+        if (!sourceProject) {
+            setStatus("Enter a Run name before duplicating its asset project.", true);
+            return;
+        }
+        if (state.duplicatingProject) {
+            setStatus("This asset project is already being duplicated.");
+            return;
+        }
+        const requested = window.prompt(
+            `New Run name for a copy of ${sourceProject}\n\n` +
+            "Only Carousel assets, folders, lyrics, and their recovery mirror are copied. Generated clips, checkpoints, and rendered outputs are not copied.",
+            `${sourceProject}_copy`,
+        );
+        if (requested === null) return;
+        const newProject = String(requested).trim();
+        if (!newProject) {
+            setStatus("The duplicated asset project needs a new Run name.", true);
+            return;
+        }
+        state.duplicatingProject = true;
+        try {
+            setStatus(`Duplicating ${sourceProject} assets into ${newProject}…`);
+            const result = await jsonRequest(
+                "/minimax_h3_context_loop/project-assets/duplicate-project", {
+                    method: "POST", headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        project: sourceProject, new_project: newProject,
+                    }),
+                });
+            setStatus(
+                `Created ${result.target_project} with ${result.asset_count} asset${result.asset_count === 1 ? "" : "s"} ` +
+                `and ${result.media_file_count} copied media file${result.media_file_count === 1 ? "" : "s"}. ` +
+                "No generated clips, checkpoints, or renders were copied; the current Run remains selected.",
+            );
+        } catch (error) {
+            setStatus(error.message, true);
+        } finally {
+            state.duplicatingProject = false;
+        }
     }
     function openImageEditor(asset) {
         const modal = el("div", "h3pa-modal h3pa-crop-modal");

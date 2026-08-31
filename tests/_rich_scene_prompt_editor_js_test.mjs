@@ -188,5 +188,14 @@ assert.match(source, /removeEventListener\?\.\(\s*PROJECT_ASSET_CATALOG_CHANGED_
 assert.match(source, /const scrollTop = state\.editor\.scrollTop/);
 assert.match(source, /state\.editor\.scrollTop = scrollTop/);
 assert.match(source, /editor\.focus\(\{preventScroll:true\}\)/);
+assert.match(source, /const PROMPT_SYNC_DELAY_MS = 140/);
+assert.match(source, /const PROMPT_ANALYSIS_DELAY_MS = 90/);
+assert.match(source, /writePlan\("Saved to connected Plan", \{deferEffects:true\}\)/);
+assert.match(source, /function flushPlanEffects\(\)/);
+assert.match(source, /state\.planWidget\.value = value/);
+assert.match(source, /window\.setTimeout\(\s*flushPlanEffects, PROMPT_SYNC_DELAY_MS/);
+assert.match(source, /liveValue !== state\.lastValue && !rebaseActivePromptOntoLivePlan\(\)/);
+assert.match(source, /editor\.addEventListener\("blur", \(\) => \{\s*flushPlanEffects\(\)/);
+assert.match(source, /schedulePromptAnalysis\(\)/);
 
 console.log("H3 Rich Scene Prompt Editor: tokens, guides, previews, optimizer, and history pass");

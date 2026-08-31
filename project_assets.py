@@ -7,6 +7,7 @@ is retained below the matching H3 chain output directory for recovery.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import mimetypes
@@ -461,6 +462,118 @@ class ProjectAssetStore:
                 dict(item) for item in catalog.get("reference_slots", [])],
             "folders": [dict(item) for item in catalog.get("folders", [])],
         }
+
+    def duplicate_project(
+            self, project: Any, new_project: Any) -> dict[str, Any]:
+        """Clone one complete asset project without copying generated output.
+
+        Only catalog-referenced media below ``input/h3_projects`` and its
+        ``project_assets`` recovery mirror are copied.  The source run's
+        checkpoints, generated clips, assembled videos, and other output
+        files are never traversed.
+        """
+        source_directory, source_name = self._project_dir(project)
+        target_directory, target_name = self._project_dir(new_project)
+        if source_name == target_name:
+            raise ValueError(
+                "The duplicated asset project needs a different Run name.")
+        source_catalog_path = os.path.join(source_directory, "catalog.json")
+        if not os.path.isfile(source_catalog_path):
+            raise FileNotFoundError(
+                "Asset project %s does not exist." % source_name)
+
+        source_catalog = self.load(source_name)
+        media: dict[str, tuple[str, str, int]] = {}
+        for entry in source_catalog.get("assets", []):
+            source_path = self._asset_path(source_name, entry)
+            relative = str(entry.get("relative_path") or "").replace(
+                "/", os.sep)
+            normalized = os.path.normpath(relative)
+            if (not relative or normalized in ("", ".")
+                    or os.path.isabs(normalized)
+                    or normalized == os.pardir
+                    or normalized.startswith(os.pardir + os.sep)):
+                raise ValueError(
+                    "Project asset media path escapes its store: %s" %
+                    relative)
+            digest = _file_sha256(source_path)
+            expected = str(entry.get("sha256") or "")
+            if expected and digest != expected:
+                raise ValueError(
+                    "Project asset %s no longer matches its catalog SHA-256."
+                    % entry.get("tag", entry.get("id", "asset")))
+            existing = media.get(normalized)
+            if existing is not None and existing[1] != digest:
+                raise ValueError(
+                    "Project asset catalog maps one media path to different "
+                    "content.")
+            media[normalized] = (
+                source_path, digest, int(os.path.getsize(source_path)))
+
+        target_backup, _name = self._backup_dir(target_name)
+        target_run_directory = os.path.dirname(target_backup)
+        if os.path.exists(target_directory):
+            raise FileExistsError(
+                "An asset project named %s already exists. Choose a new Run "
+                "name." % target_name)
+        if os.path.exists(target_run_directory):
+            raise FileExistsError(
+                "An H3 output Run named %s already exists. Choose a new Run "
+                "name so its renders and checkpoints remain separate." %
+                target_name)
+
+        os.makedirs(self.projects_root, exist_ok=True)
+        os.makedirs(self.chains_root, exist_ok=True)
+        created_project = False
+        created_run = False
+        try:
+            os.mkdir(target_directory)
+            created_project = True
+            os.mkdir(target_run_directory)
+            created_run = True
+            os.makedirs(target_backup)
+            for group in ("images", "videos", "audio", "previews", ".uploads"):
+                os.makedirs(os.path.join(target_directory, group))
+            for group in ("images", "videos", "audio"):
+                os.makedirs(os.path.join(target_backup, group))
+
+            for relative, (source_path, digest, _size) in media.items():
+                for root in (target_directory, target_backup):
+                    destination = os.path.realpath(os.path.join(root, relative))
+                    if not _inside(root, destination):
+                        raise ValueError(
+                            "Project asset media path escapes its duplicate.")
+                    os.makedirs(os.path.dirname(destination), exist_ok=True)
+                    shutil.copy2(source_path, destination)
+                    if _file_sha256(destination) != digest:
+                        raise ValueError(
+                            "Duplicated project asset failed its SHA-256 check.")
+
+            now = _utc_now()
+            cloned_catalog = copy.deepcopy(source_catalog)
+            cloned_catalog["project"] = target_name
+            cloned_catalog["updated_at"] = now
+            for entry in cloned_catalog.get("assets", []):
+                relative = str(entry.get("relative_path") or "")
+                entry["input_path"] = os.path.join(
+                    "h3_projects", target_name, relative).replace(os.sep, "/")
+                entry["updated_at"] = now
+            saved = self._save_catalog(cloned_catalog)
+            return {
+                "catalog": saved,
+                "source_project": source_name,
+                "target_project": target_name,
+                "asset_count": len(saved.get("assets", [])),
+                "media_file_count": len(media),
+                "copied_bytes": sum(item[2] for item in media.values()),
+                "render_outputs_copied": False,
+            }
+        except Exception:
+            if created_run:
+                shutil.rmtree(target_run_directory, ignore_errors=True)
+            if created_project:
+                shutil.rmtree(target_directory, ignore_errors=True)
+            raise
 
     def _asset_path(self, project: Any, entry: dict[str, Any]) -> str:
         directory, _name = self._project_dir(project)

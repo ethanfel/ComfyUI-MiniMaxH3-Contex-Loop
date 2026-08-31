@@ -4,7 +4,7 @@ import {
     VIDEO_REF_TYPE,
     migrateLegacyVideoScheduleWidgets,
     migrateReferenceComplianceWidget,
-} from "./h3_reference_autoconnect_core.mjs?v=0.6.80";
+} from "./h3_reference_autoconnect_core.mjs?v=0.6.81";
 
 const EXTENSION = "minimax_h3_context_loop.reference_autoconnect";
 

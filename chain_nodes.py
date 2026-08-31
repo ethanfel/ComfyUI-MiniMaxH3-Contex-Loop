@@ -24116,6 +24116,22 @@ async def _project_asset_duplicate(request):
         return web.json_response({"error": str(exc)}, status=400)
 
 
+async def _project_asset_duplicate_project(request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError(
+                "Asset-project duplication request must be a JSON object.")
+        result = await asyncio.to_thread(
+            _project_asset_store().duplicate_project,
+            body.get("project", ""), body.get("new_project", ""))
+        return web.json_response(result)
+    except FileExistsError as exc:
+        return web.json_response({"error": str(exc)}, status=409)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
 async def _project_asset_derive(request):
     try:
         body = await request.json()
@@ -24300,6 +24316,9 @@ if (PromptServer is not None and web is not None and
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/project-assets/duplicate")(
             _project_asset_duplicate)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-assets/duplicate-project")(
+            _project_asset_duplicate_project)
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/project-assets/derive")(
             _project_asset_derive)

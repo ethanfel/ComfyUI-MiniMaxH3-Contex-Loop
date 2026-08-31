@@ -4,6 +4,20 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Project Asset Carousel can duplicate its complete asset project under a new
+  Run name. The copy keeps asset order, folders, roles, tags, lyrics, options,
+  reference slots, and independent project-owned media files plus their asset
+  recovery mirror; generated clips, checkpoints, assembled renders, previews,
+  and upload scratch files are deliberately excluded. Existing Run names are
+  never overwritten, and the source Carousel remains selected.
+
+- Made both scene prompt editors responsive while typing long prompts. Each
+  keystroke still updates the connected Plan value immediately, but expensive
+  Plan-card rebuilding, canvas redraw, companion broadcasting, and strict
+  schema analysis are now coalesced after a short idle interval and flushed on
+  blur, navigation, or removal. Consecutive keystrokes also avoid reparsing an
+  unchanged full Plan JSON.
+
 - Fixed Tagged Audio `source_timeline` identity validation for the shipped
   full-track workflow. Loop Start's route fingerprint and Tagged Audio's
   waveform-content fingerprint are now recognized as two identities of the

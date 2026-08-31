@@ -159,5 +159,14 @@ assert.match(source, /removeEventListener\?\.\(\s*PROJECT_ASSET_CATALOG_CHANGED_
 assert.match(source, /const scrollTop = state\.richEditor\.scrollTop/);
 assert.match(source, /state\.richEditor\.scrollTop = scrollTop/);
 assert.match(source, /target\.focus\(\{preventScroll:true\}\)/);
+assert.match(source, /const PROMPT_SYNC_DELAY_MS = 140/);
+assert.match(source, /const PROMPT_ANALYSIS_DELAY_MS = 90/);
+assert.match(source, /writePlan\(status, \{deferEffects:true\}\)/);
+assert.match(source, /function flushPlanEffects\(\)/);
+assert.match(source, /state\.planWidget\.value = value/);
+assert.match(source, /window\.setTimeout\(\s*flushPlanEffects, PROMPT_SYNC_DELAY_MS/);
+assert.match(source, /liveValue !== state\.lastValue && !rebaseActivePromptOntoLivePlan\(\)/);
+assert.match(source, /textarea\.addEventListener\("blur", \(\) => \{\s*flushPlanEffects\(\)/);
+assert.match(source, /schedulePromptAnalysis\(\)/);
 
 console.log("H3 Scene Prompt companion: Plan synchronization and controls pass");

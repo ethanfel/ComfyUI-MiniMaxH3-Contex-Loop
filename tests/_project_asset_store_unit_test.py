@@ -108,6 +108,86 @@ def main():
             "episode_2", "episode_1", second["asset"]["id"])
         assert copied_audio["asset"]["lyrics"] == "First line\nSecond line"
         assert copied_audio["asset"]["role"] == "source_track"
+
+        cast = store.create_folder("episode_1", "Cast")["folder"]
+        store.update(
+            "episode_1", first["asset"]["id"], {"folder_id": cast["id"]})
+        duplicated_card = store.duplicate(
+            "episode_1", first["asset"]["id"])["asset"]
+        source_with_slot = store.sync_reference_slots("episode_1", [{
+            "kind": "image", "role": "picture", "tag": "future_prop",
+            "content_hash": "future-prop-content", "options": {},
+        }])
+        source_render = output_root / "h3_chains" / "episode_1" / (
+            "scene_0001/generated.mp4")
+        source_render.parent.mkdir(parents=True)
+        source_render.write_bytes(b"generated render must not be copied")
+        upload_scratch = input_root / "h3_projects" / "episode_1" / (
+            ".uploads/stale-upload.tmp")
+        upload_scratch.write_bytes(b"upload scratch")
+
+        project_copy = store.duplicate_project(
+            "episode_1", "episode_1_asset_copy")
+        copied_catalog = project_copy["catalog"]
+        assert project_copy["source_project"] == "episode_1"
+        assert project_copy["target_project"] == "episode_1_asset_copy"
+        assert project_copy["asset_count"] == 3
+        assert project_copy["media_file_count"] == 2
+        assert project_copy["render_outputs_copied"] is False
+        assert copied_catalog["project"] == "episode_1_asset_copy"
+        assert copied_catalog["revision"] == source_with_slot["revision"]
+        assert [item["id"] for item in copied_catalog["assets"]] == [
+            item["id"] for item in source_with_slot["assets"]]
+        assert copied_catalog["folders"] == source_with_slot["folders"]
+        assert copied_catalog["reference_slots"] == (
+            source_with_slot["reference_slots"])
+        assert copied_catalog["assets"][0]["folder_id"] == cast["id"]
+        assert copied_catalog["assets"][1]["lyrics"] == (
+            "First line\nSecond line")
+        assert all(item["input_path"].startswith(
+            "h3_projects/episode_1_asset_copy/")
+            for item in copied_catalog["assets"])
+        copied_project_media = pathlib.Path(store.asset(
+            "episode_1_asset_copy", first["asset"]["id"])[1])
+        copied_backup_media = output_root / "h3_chains" / (
+            "episode_1_asset_copy/project_assets") / (
+            first["asset"]["relative_path"])
+        assert copied_project_media.is_file()
+        assert copied_backup_media.is_file()
+        assert copied_project_media.stat().st_ino != first_project_copy.stat().st_ino
+        copied_run_items = {
+            item.name for item in (output_root / "h3_chains" /
+                                   "episode_1_asset_copy").iterdir()}
+        assert copied_run_items == {"project_assets"}
+        assert list((input_root / "h3_projects" / "episode_1_asset_copy" /
+                     "previews").iterdir()) == []
+        assert list((input_root / "h3_projects" / "episode_1_asset_copy" /
+                     ".uploads").iterdir()) == []
+        assert not (output_root / "h3_chains" / "episode_1_asset_copy" /
+                    "scene_0001/generated.mp4").exists()
+        try:
+            store.duplicate_project("episode_1", "episode_1_asset_copy")
+        except FileExistsError as exc:
+            assert "already exists" in str(exc)
+        else:
+            raise AssertionError("An existing asset project was overwritten")
+        try:
+            store.duplicate_project("episode_1", "episode_1")
+        except ValueError as exc:
+            assert "different Run name" in str(exc)
+        else:
+            raise AssertionError("An asset project duplicated over itself")
+        reserved_output = output_root / "h3_chains" / "reserved_run"
+        reserved_output.mkdir()
+        try:
+            store.duplicate_project("episode_1", "reserved_run")
+        except FileExistsError as exc:
+            assert "renders and checkpoints remain separate" in str(exc)
+        else:
+            raise AssertionError("An existing output Run received asset copies")
+        assert not (input_root / "h3_projects" / "reserved_run").exists()
+        store.delete("episode_1", duplicated_card["id"])
+
         assert all(item["project"] != "episode_1"
                    for item in store.projects(exclude_project="episode_1"))
         try:
@@ -150,6 +230,8 @@ def main():
         assert not first_backup_copy.exists()
         assert not thumbnail.exists()
         assert picture.is_file()
+        assert copied_project_media.is_file()
+        assert copied_backup_media.is_file()
 
         templated = store.sync_reference_slots("episode_migration", [{
             "kind": "image",
@@ -178,7 +260,7 @@ def main():
         assert bound["catalog"]["reference_slots"] == []
         assert len(bound["catalog"]["assets"]) == 1
 
-    print("H3 Project Asset Store: import, cross-project copy, backup, metadata sync, binding, listing, ordering, deletion, and edit pass")
+    print("H3 Project Asset Store: import, whole-project duplication, cross-project copy, backup, metadata sync, binding, listing, ordering, deletion, and edit pass")
 
 
 if __name__ == "__main__":
