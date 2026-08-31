@@ -206,10 +206,34 @@ def main():
         minimax_frame_count=124)["minimax_payload"].cond
     assert got["cond_video_latents"] == ["KF", "R1", "R2"], got
     assert got["cond_audio_latents"] == ["A2", "A3"], got
+
+    # ComfyUI may retain a wrapper on the live model class after reusing or
+    # removing its dynamic import alias. The wrapper still executes with its
+    # original globals, so priority must recover the captured stock method
+    # there instead of asking users to remove a correctly installed pack.
+    mb5 = make_model_base()
+    older_orphaned = load_payload_patch("h3_payload_vendor_orphaned")
+    assert older_orphaned.apply_patch()
+    orphaned_wrapper = mb5.MiniMaxH3.extra_conds
+    sys.modules.pop("h3_payload_vendor_orphaned")
+    newer_after_refresh = load_payload_patch(
+        "h3_payload_vendor_after_refresh")
+    assert newer_after_refresh.apply_patch()
+    assert mb5.MiniMaxH3.extra_conds is orphaned_wrapper
+    claimed, detail = newer_after_refresh.claim_patch_ownership(
+        require_keyframe_audio=True)
+    assert claimed, detail
+    assert mb5.MiniMaxH3.extra_conds is newer_after_refresh._patched_extra_conds
+    got = mb5.MiniMaxH3().extra_conds(
+        minimax_keyframes=native_kfs, minimax_refs=native_refs,
+        minimax_frame_count=124)["minimax_payload"].cond
+    assert got["cond_video_latents"] == ["NATIVE_KF", "NATIVE_REF"], got
+    assert got["cond_audio_latents"] == ["GUIDE_AUDIO", "TAGGED_AUDIO"], got
+
     refused, _detail = pp3.claim_patch_ownership()
     assert not refused, "priority replaced an unrelated payload wrapper"
-    print("7. explicit priority claims an older compatible payload owner and "
-          "still refuses an unrelated wrapper")
+    print("7. explicit priority claims addressable and orphaned compatible "
+          "payload owners and still refuses an unrelated wrapper")
 
     print("payload gate test passed")
 

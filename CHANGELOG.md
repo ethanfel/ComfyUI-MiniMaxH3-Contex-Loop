@@ -4,6 +4,13 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Issue #38's remaining Scene 2 failure on installations where
+  ComfyUI retains a compatible H3 payload wrapper after its temporary module
+  alias is removed. Patch Priority now recovers that wrapper's captured stock
+  method from the function's own execution globals, allowing the guarded
+  Guide-audio plus Ref2VA-audio merge to take ownership without requiring the
+  user to remove a valid node pack. Unknown payload wrappers remain refused.
+
 - Fixed a selected final-cut ALT incorrectly retargeting later queues back to
   its original scene. The server-side editorial record now owns whether an
   alternate generation draft is armed; the hidden Plan Studio widget may only

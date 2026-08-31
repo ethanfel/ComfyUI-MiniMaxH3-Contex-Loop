@@ -240,8 +240,19 @@ def claim_patch_ownership(*, require_keyframe_audio=False):
             "payload owner is %s; only another H3 Motion Context copy can "
             "be safely replaced" % (who or "stock/uninitialized"))
 
-    owner_module = sys.modules.get(str(getattr(current, "__module__", "")))
-    original = getattr(owner_module, "_orig_extra_conds", None)
+    # ComfyUI's custom-node loader can leave an active function reachable from
+    # the model class after its import alias has been reused by another copy or
+    # disappeared from sys.modules. A function keeps the exact globals
+    # dictionary it executes against, so that is the authoritative place to
+    # recover the stock method captured by another compatible copy. Keep the
+    # module lookup as a fallback for unusual callable wrappers.
+    owner_globals = getattr(current, "__globals__", None)
+    original = (owner_globals.get("_orig_extra_conds")
+                if isinstance(owner_globals, dict) else None)
+    if not callable(original):
+        owner_module = sys.modules.get(
+            str(getattr(current, "__module__", "")))
+        original = getattr(owner_module, "_orig_extra_conds", None)
     if not callable(original) or original is current:
         return False, (
             "the existing H3 Motion Context payload wrapper does not expose "
