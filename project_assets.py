@@ -1186,6 +1186,36 @@ class ProjectAssetStore:
             raise FileNotFoundError("ComfyUI input asset was not found: %s" % value)
         return path
 
+    def project_catalogs(self, query: Any = "") -> list[dict[str, Any]]:
+        """List existing live Carousel projects, including empty catalogs."""
+        needle = str(query or "").strip().lower()
+        result = []
+        if not os.path.isdir(self.projects_root):
+            return result
+        with os.scandir(self.projects_root) as projects:
+            for project in projects:
+                if (not project.is_dir(follow_symlinks=False)
+                        or needle and needle not in project.name.lower()
+                        or not os.path.isfile(os.path.join(
+                            project.path, "catalog.json"))):
+                    continue
+                try:
+                    catalog = self.load(project.name)
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                result.append({
+                    "project": project.name,
+                    "asset_count": len(catalog.get("assets", [])),
+                    "unassigned_count": len(
+                        catalog.get("reference_slots", [])),
+                    "folder_count": len(catalog.get("folders", [])),
+                    "updated_at": str(catalog.get("updated_at") or ""),
+                    "revision": str(catalog.get("revision") or ""),
+                })
+        result.sort(key=lambda item: item["project"].lower())
+        result.sort(key=lambda item: item["updated_at"], reverse=True)
+        return result[:MAX_INPUT_RESULTS]
+
     def projects(self, query: Any = "", *, exclude_project: Any = "") -> list[dict[str, Any]]:
         """List live Carousel catalogs without exposing arbitrary input files."""
         needle = str(query or "").strip().lower()

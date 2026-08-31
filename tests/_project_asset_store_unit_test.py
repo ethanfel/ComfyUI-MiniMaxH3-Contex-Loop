@@ -64,6 +64,17 @@ def main():
         assert all(not item["path"].lower().startswith("clipspace/")
                    for item in listed)
 
+        store.public_catalog("empty_project")
+        project_catalogs = store.project_catalogs()
+        project_summaries = {
+            item["project"]: item for item in project_catalogs}
+        assert project_summaries["episode_1"]["asset_count"] == 2
+        assert project_summaries["episode_1"]["unassigned_count"] == 0
+        assert project_summaries["episode_1"]["folder_count"] == 0
+        assert project_summaries["empty_project"]["asset_count"] == 0
+        assert [item["project"] for item in store.project_catalogs("empty")] == [
+            "empty_project"]
+
         changed = store.update(
             "episode_1", first["asset"]["id"],
             {"role": "semantic_anchor", "tag": "hero_semantic"})

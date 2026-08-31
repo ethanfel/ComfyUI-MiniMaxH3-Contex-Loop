@@ -23966,6 +23966,16 @@ async def _project_asset_catalog(request):
         return web.json_response({"error": str(exc)}, status=400)
 
 
+async def _project_asset_projects(request):
+    try:
+        items = await asyncio.to_thread(
+            _project_asset_store().project_catalogs,
+            request.query.get("q", ""))
+        return web.json_response({"items": items})
+    except (OSError, TypeError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
 async def _project_asset_sources(request):
     source = str(request.query.get("source", "input")).strip().lower()
     query = request.query.get("q", "")
@@ -24301,6 +24311,9 @@ if (PromptServer is not None and web is not None and
         "/minimax_h3_context_loop/prompt-optimize")(_optimize_scene_prompt)
     PromptServer.instance.routes.get(
         "/minimax_h3_context_loop/project-assets")(_project_asset_catalog)
+    PromptServer.instance.routes.get(
+        "/minimax_h3_context_loop/project-assets/projects")(
+            _project_asset_projects)
     PromptServer.instance.routes.get(
         "/minimax_h3_context_loop/project-assets/sources")(
             _project_asset_sources)

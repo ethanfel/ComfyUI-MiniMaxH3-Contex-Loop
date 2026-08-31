@@ -5,10 +5,10 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.81";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.82";
 import {
     publishProjectAssetCatalogChanged,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.81";
+} from "./h3_project_asset_sync_core.mjs?v=0.6.82";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -302,8 +302,14 @@ function mount(node) {
     const top = el("div", "h3pa-row");
     const runNameInput = el("input", "h3pa-project");
     runNameInput.placeholder = "Run name";
-    runNameInput.title = "Authoritative H3 chain Run name. When this node is connected to Plan, the Plan run_name is synchronized automatically; enter it here only.";
+    runNameInput.title = "Type a new Run name or choose an existing Asset Carousel project. Choosing one switches this Carousel and its connected Plan.";
     runNameInput.setAttribute("aria-label", "Run name");
+    const projectSuggestions = el("datalist");
+    const projectSuggestionId = `h3pa-projects-${String(
+        node.id ?? "node",
+    ).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+    projectSuggestions.id = projectSuggestionId;
+    runNameInput.setAttribute("list", projectSuggestionId);
     const savedRunName = String(runNameWidget?.value ?? "").trim();
     const connectedRunName = downstreamPlanRunName(node);
     runNameInput.value = (
@@ -360,7 +366,7 @@ function mount(node) {
     stage.append(preview, editor);
     const carousel = el("div", "h3pa-carousel");
     carousel.title = "Drop one or more image, video, or audio files here to create project assets immediately.";
-    root.append(top, status, tabs, stage, carousel);
+    root.append(top, status, tabs, stage, carousel, projectSuggestions);
     const dom = node.addDOMWidget("project_asset_carousel", "div", root, {
         serialize: false, hideOnZoom: false, getMinHeight: () => 560,
     });
@@ -371,6 +377,7 @@ function mount(node) {
         catalog: {assets: [], reference_slots: [], folders: []}, selected: "",
         filter: "all", folder: "", media: null, bindingSlot: null,
         dragging: "", uploading: false, duplicatingProject: false,
+        projects: [], projectNames: new Set(),
         expandedFolders: new Set(Array.isArray(
             node.properties?.h3_project_asset_expanded_folders,
         ) ? node.properties.h3_project_asset_expanded_folders.map(String) : []),
@@ -388,6 +395,31 @@ function mount(node) {
         state.media = null;
         preview.classList.remove("h3pa-audio-preview");
         preview.replaceChildren();
+    }
+    async function refreshProjectSuggestions() {
+        try {
+            const payload = await jsonRequest(
+                "/minimax_h3_context_loop/project-assets/projects");
+            const projects = Array.isArray(payload.items) ? payload.items : [];
+            state.projects = projects;
+            state.projectNames = new Set(projects.map(
+                (item) => String(item.project ?? ""),
+            ).filter(Boolean));
+            projectSuggestions.replaceChildren();
+            for (const item of projects) {
+                const option = el("option");
+                option.value = String(item.project ?? "");
+                option.label = (
+                    `${Number(item.asset_count ?? 0)} asset${Number(item.asset_count ?? 0) === 1 ? "" : "s"}` +
+                    ` · ${Number(item.unassigned_count ?? 0)} unassigned`
+                );
+                projectSuggestions.append(option);
+            }
+        } catch {
+            state.projects = [];
+            state.projectNames = new Set();
+            projectSuggestions.replaceChildren();
+        }
     }
     function persistCatalog(catalog) {
         state.catalog = catalog ?? {assets: [], reference_slots: [], folders: []};
@@ -743,6 +775,7 @@ function mount(node) {
                 `and ${result.media_file_count} copied media file${result.media_file_count === 1 ? "" : "s"}. ` +
                 "No generated clips, checkpoints, or renders were copied; the current Run remains selected.",
             );
+            await refreshProjectSuggestions();
         } catch (error) {
             setStatus(error.message, true);
         } finally {
@@ -1682,6 +1715,7 @@ function mount(node) {
         const requestedProject = project();
         const sequence = ++refreshSequence;
         if (!requestedProject) {
+            void refreshProjectSuggestions();
             setStatus("Enter a Run name, or connect this node to a named Plan.");
             return;
         }
@@ -1692,6 +1726,7 @@ function mount(node) {
             );
             if (sequence !== refreshSequence || project() !== requestedProject) return;
             persistCatalog(catalog); render();
+            void refreshProjectSuggestions();
             setStatus(`${catalog.assets.length} project assets · ${(catalog.reference_slots ?? []).length} unassigned · revision ${(catalog.revision || "empty").slice(0, 12)}`);
         } catch (error) { setStatus(error.message, true); }
     }
@@ -1914,6 +1949,22 @@ function mount(node) {
             runNameWidget.callback?.(project());
         }
         clearTimeout(projectTimer); projectTimer = setTimeout(refresh, 400);
+    });
+    runNameInput.addEventListener("change", () => {
+        const selectedProject = project();
+        if (!state.projectNames.has(selectedProject)) return;
+        clearTimeout(projectTimer);
+        refreshSequence += 1;
+        state.selected = "";
+        state.folder = "";
+        stopMedia();
+        if (runNameWidget) {
+            runNameWidget.value = selectedProject;
+            runNameWidget.callback?.(selectedProject);
+        }
+        syncDownstreamPlan(node, selectedProject);
+        node.graph?.setDirtyCanvas?.(true, true);
+        void refresh();
     });
     previewSelect.addEventListener("change", () => {
         state.previewMode = previewSelect.value === "full" ? "full" : "light";

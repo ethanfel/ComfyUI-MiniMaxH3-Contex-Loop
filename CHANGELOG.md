@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Run name now suggests existing live Asset Carousel projects. Choosing a
+  suggestion switches the Carousel and its connected Plan, while the same
+  field still accepts a new Run name and remains the only serialized source of
+  truth. Empty projects are included in the history; output-only H3 backups
+  remain available through Import instead of appearing as switch targets.
+
 - Project Asset Carousel can duplicate its complete asset project under a new
   Run name. The copy keeps asset order, folders, roles, tags, lyrics, options,
   reference slots, and independent project-owned media files plus their asset
