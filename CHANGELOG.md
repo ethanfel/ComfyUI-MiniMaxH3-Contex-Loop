@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Fixed scene-2 continuation with simultaneous Ref2VA/source audio. On a
+  partially native ComfyUI runtime that drops Guide audio when reference audio
+  is also present, Chain now activates its marker-gated payload merge and uses
+  the retained internal Motion Context engine. The compatibility merge keeps
+  keyframe audio followed by reference audio in H3 layout order.
+
 - Completed the Checkpoint Manager chapter UI backport on `main`. **All
   scenes** now renders one independent branch graph per chapter, chapter
   headers collapse and remember their state per run, and chapter rows no

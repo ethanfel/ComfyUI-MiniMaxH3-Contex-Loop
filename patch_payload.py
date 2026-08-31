@@ -1,8 +1,8 @@
 """Let keyframes and refs coexist.
 
-`MiniMaxH3.extra_conds` in comfy/model_base.py fills the payload from two
-independent `if` blocks. The keyframe block sets `cond_video_latents`, then
-the refs block **overwrites** it:
+Older `MiniMaxH3.extra_conds` implementations in comfy/model_base.py fill the
+payload from two independent `if` blocks. The keyframe block sets the Guide
+video/audio lists, then the refs block **overwrites** them:
 
     if keyframes is not None:
         payload["cond_video_latents"] = [kf["latent"] for kf in keyframes]
@@ -20,7 +20,9 @@ the forward pass expects when it writes rows into the never-denoised slots.
 Only this payload assignment is in the way.
 
 This wrapper re-runs the same logic and concatenates instead, keeping
-keyframe latents first to match the row order.
+keyframe latents first to match the row order. Both video and audio must be
+merged: native H3 Guides may carry continuation audio while Ref2VA carries a
+separate tagged/source audio reference in the same conditioning.
 
 It only does that for graphs that asked for it. The wrapper is installed
 process-wide, but it returns stock output unless a keyframe or a ref
@@ -57,6 +59,7 @@ _LOG = logging.getLogger("h3_motion_context")
 # them: rename in lockstep or not at all.
 MC_KEY = "motion_context_index"
 MC_AUDIO_KEY = "motion_context_audio_end_frame"
+CHAIN_VISUAL_KEY = "h3_chain_context_visual"
 
 # Marker set on our wrapper so a second copy of this file, vendored into
 # another pack, can recognise it and stand down instead of wrapping it.
@@ -75,7 +78,7 @@ def _patched_extra_conds(self, **kwargs):
     refs = kwargs.get("minimax_refs", None)
     if not keyframes or not refs:
         return out  # only one mechanism in play, stock behaviour is correct
-    if not (any(MC_KEY in kf for kf in keyframes)
+    if not (any(MC_KEY in kf or CHAIN_VISUAL_KEY in kf for kf in keyframes)
             or any(MC_AUDIO_KEY in r for r in refs)):
         # nothing here came from this pack. The layout patch is gated the
         # same way, so leaving the payload alone keeps the two consistent
@@ -91,9 +94,12 @@ def _patched_extra_conds(self, **kwargs):
 
     kf_video = [kf["latent"] for kf in keyframes if "latent" in kf]
     ref_video = [r["latent"] for r in refs if "latent" in r]
+    kf_audio = [kf["audio_latent"] for kf in keyframes
+                if kf.get("audio_latent") is not None]
+    ref_audio = [r["audio_latent"] for r in refs
+                 if r.get("audio_latent") is not None]
     payload["cond_video_latents"] = kf_video + ref_video
-    payload["cond_audio_latents"] = [r["audio_latent"] for r in refs
-                                     if r.get("audio_latent") is not None]
+    payload["cond_audio_latents"] = kf_audio + ref_audio
     # only write frame_count when we actually have one. This wrapper fires
     # for ANY graph combining keyframes and refs, not just ours; a graph
     # that reaches here without minimax_frame_count may have a valid value
@@ -192,7 +198,7 @@ def apply_patch():
     return True
 
 
-def claim_patch_ownership():
+def claim_patch_ownership(*, require_keyframe_audio=False):
     """Prefer this copy over an older compatible copy of the same patch.
 
     This is intentionally stricter than merely replacing whatever currently
@@ -214,8 +220,21 @@ def claim_patch_ownership():
 
     who = _already_patched(cls)
     if who == "h3_multishot":
+        if not require_keyframe_audio:
+            _applied = True
+            return True, "compatible H3-Multishot payload merge retained"
+        # Its known-compatible wrapper merges the video lists but historically
+        # leaves audio to the underlying ComfyUI implementation. If the live
+        # capability probe has already shown that keyframe audio is missing,
+        # layer our marker-gated AV merge over that known wrapper. Unrelated
+        # wrappers remain refused below.
+        _orig_extra_conds = current
+        cls.extra_conds = _patched_extra_conds
         _applied = True
-        return True, "compatible H3-Multishot payload merge retained"
+        _LOG.info(
+            "h3_motion_context: marker-gated keyframe-audio merge layered "
+            "over H3-Multishot's compatible video merge")
+        return True, "keyframe-audio merge layered over H3-Multishot"
     if who not in ("same", "other"):
         return False, (
             "payload owner is %s; only another H3 Motion Context copy can "
