@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.87";
+} from "./h3_chain_plan_core.mjs?v=0.6.88";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.87";
+} from "./h3_prompt_history_core.mjs?v=0.6.88";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.87";
+} from "./h3_reference_preview_core.mjs?v=0.6.88";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,16 +60,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.87";
+} from "./h3_policy_core.mjs?v=0.6.88";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.87";
+} from "./h3_socket_presentation_core.mjs?v=0.6.88";
 import {
     availableLoRARoutes,
     loraRouteLabel,
-} from "./h3_lora_scheduler_core.mjs?v=0.6.87";
+} from "./h3_lora_scheduler_core.mjs?v=0.6.88";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -100,8 +100,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.87";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.87";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.88";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.88";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -1159,7 +1159,7 @@ function mount(node) {
         if (snapshot) node.properties[CHECKPOINT_CACHE_PROPERTY] = snapshot;
     }
 
-    function scheduleEditorialSave() {
+    function scheduleEditorialSave(delay = 250) {
         if (alternateTakeWidget) {
             const serialized = JSON.stringify(
                 state.editorial.alternate_draft ?? null,
@@ -1196,7 +1196,7 @@ function mount(node) {
                 }
                 console.warn("H3 Plan Studio could not save chapter presentation data:", error);
             }
-        }, 250);
+        }, Math.max(0, Number(delay) || 0));
     }
 
     function writePlan(message = null) {
@@ -3501,7 +3501,13 @@ function mount(node) {
                     alternate_revision:select.value,
                     media_mode:"picture_only",
                 });
-                scheduleEditorialSave();
+                // Choosing presentation media is never a generation command.
+                // Disarm any draft for this scene and flush the hidden queue
+                // widget immediately so a saved ALT cannot retarget Loop Start.
+                if (state.editorial.alternate_draft?.scene_id === sceneId) {
+                    state.editorial.alternate_draft = null;
+                }
+                scheduleEditorialSave(0);
                 renderShell();
             });
             section.append(field("Used in final cut", select));
@@ -3566,10 +3572,13 @@ function mount(node) {
             enabled.addEventListener("change", () => {
                 editor.disabled = !enabled.checked;
                 altSeed.disabled = !enabled.checked;
-                if (enabled.checked) storeDraft();
+                if (enabled.checked) {
+                    storeDraft();
+                    scheduleEditorialSave(0);
+                }
                 else if (thisDraft || state.editorial.alternate_draft?.scene_id === sceneId) {
                     state.editorial.alternate_draft = null;
-                    scheduleEditorialSave();
+                    scheduleEditorialSave(0);
                 }
                 refreshDiff();
             });
@@ -5471,7 +5480,9 @@ function mount(node) {
                 state.sourceWaveformPromise = null;
             }
             state.active = Math.min(state.active, state.plan.shots.length - 1);
-            if (Object.hasOwn(state.plan, "chapters")) scheduleEditorialSave();
+            // Always synchronize the hidden one-shot queue widget on load.
+            // Editorial data is useful even when the Plan has no chapters.
+            scheduleEditorialSave();
             renderShell(); void refreshCheckpoints();
             if (runChanged && currentRun) {
                 void restoreSourcePresentation();

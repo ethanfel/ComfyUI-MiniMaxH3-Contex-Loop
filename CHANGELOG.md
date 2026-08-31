@@ -4,6 +4,14 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed a selected final-cut ALT incorrectly retargeting later queues back to
+  its original scene. The server-side editorial record now owns whether an
+  alternate generation draft is armed; the hidden Plan Studio widget may only
+  update an already-armed matching draft and cannot resurrect one cleared by
+  Review. Selecting Original/ALT explicitly disarms that scene's draft, and
+  Plan Studio synchronizes the one-shot queue widget on every workflow load,
+  including Plans without chapters.
+
 - Fixed delayed and inconsistent workflow hydration. Project Asset Carousel
   now paints its serialized catalog immediately while refreshing in the
   background, and Plan Studio keeps a lightweight serialized presentation

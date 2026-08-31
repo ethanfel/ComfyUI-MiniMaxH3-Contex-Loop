@@ -7717,6 +7717,37 @@ def _alternate_take_plan(
     return derived
 
 
+def _merge_queued_alternate_draft(
+        editorial: dict[str, Any], queued: Any
+) -> dict[str, Any]:
+    """Merge the hidden queue snapshot without resurrecting a consumed draft.
+
+    The run editorial sidecar owns whether alternate generation is armed. The
+    hidden widget exists only to carry the newest prompt/seed across the short
+    frontend-save race. Once Review/Plan Studio clears the sidecar draft, an
+    older serialized widget must not turn a final-cut replacement back into a
+    Scene-1 generation request.
+    """
+    merged = dict(editorial)
+    if queued is None:
+        merged["alternate_draft"] = None
+        return merged
+    saved = editorial.get("alternate_draft")
+    if not isinstance(saved, dict):
+        merged["alternate_draft"] = None
+        return merged
+    if not isinstance(queued, dict):
+        merged["alternate_draft"] = queued
+        return merged
+    identity = ("scene", "scene_id", "base_revision")
+    if any(str(queued.get(key) or "") != str(saved.get(key) or "")
+           for key in identity):
+        merged["alternate_draft"] = saved
+        return merged
+    merged["alternate_draft"] = queued
+    return merged
+
+
 def _select_editorial_alternate(
         plan: dict[str, Any], segment: dict[str, Any]) -> dict[str, Any]:
     """Publish an accepted alternate to final-cut state, never generation."""
@@ -15522,8 +15553,8 @@ class MiniMaxH3ChainPlanStudio:
             except json.JSONDecodeError as exc:
                 raise ValueError(
                     "Plan Studio alternate draft is not valid JSON.") from exc
-            editorial = dict(editorial)
-            editorial["alternate_draft"] = queued_alternate
+            editorial = _merge_queued_alternate_draft(
+                editorial, queued_alternate)
             editorial = _normalize_run_editorial(
                 editorial, plan.get("run_name"))
         plan = _alternate_take_plan(plan, editorial)

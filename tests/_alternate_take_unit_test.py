@@ -161,6 +161,28 @@ async def check():
         assert derived["alternate_take"]["base_revision"] == base_one
         assert chain._alternate_take_descriptor(derived)["scene"] == 1
 
+        latest_queued = dict(editorial["alternate_draft"])
+        latest_queued["prompt"] = "the latest blue folder"
+        merged = chain._merge_queued_alternate_draft(
+            editorial, latest_queued)
+        assert merged["alternate_draft"]["prompt"] == \
+            "the latest blue folder"
+        consumed = dict(editorial)
+        consumed["alternate_draft"] = None
+        consumed["replacements"] = [{
+            "scene": 1,
+            "scene_id": "scene_1",
+            "base_revision": base_one,
+            "alternate_revision": "a" * 32,
+            "media_mode": "picture_only",
+        }]
+        stale = chain._merge_queued_alternate_draft(
+            consumed, editorial["alternate_draft"])
+        assert stale["alternate_draft"] is None
+        assert stale["replacements"] == consumed["replacements"]
+        disarmed = chain._merge_queued_alternate_draft(editorial, None)
+        assert disarmed["alternate_draft"] is None
+
         alternate = write_take(
             run, 1, "scene_1", alternate_one, "the blue folder",
             base=base_one)
