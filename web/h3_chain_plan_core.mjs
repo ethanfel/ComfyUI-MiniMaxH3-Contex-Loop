@@ -1097,12 +1097,6 @@ export function calculatePlanTiming(plan, settings = {}) {
                         "Composed context lead source requires a phase-safe total/split combination.",
                     );
                 }
-                if (visualContextSource !== null
-                        && visualContextLeadSource === visualContextSource) {
-                    rowErrors.push(
-                        "The two composed visual context sources must be different scenes.",
-                    );
-                }
             } else if (Object.hasOwn(shot, "visual_context_lead_frames")) {
                 rowErrors.push(
                     "Composed context lead frames require a lead source.",

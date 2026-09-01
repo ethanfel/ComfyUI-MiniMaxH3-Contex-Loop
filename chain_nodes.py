@@ -6846,11 +6846,6 @@ def _normalize_plan(
         if lead_source_index is not None:
             lead_frames = _shot_visual_context_lead_frames(
                 target, next_context_length)
-            if lead_source_index == source_index:
-                raise ValueError(
-                    "Shot %d composed visual context lead scene %d must be "
-                    "different from its second visual source scene %d." %
-                    (target_index, lead_source_index, source_index))
             target["visual_context_lead_source"] = shots[
                 lead_source_index - 1]["id"]
             target["visual_context_lead_frames"] = lead_frames

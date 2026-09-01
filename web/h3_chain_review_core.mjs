@@ -11,7 +11,7 @@ import {
     sceneVisualContextLeadSource,
     sceneVisualContextSource,
     sharedPrompt,
-} from "./h3_chain_plan_core.mjs?v=0.6.95";
+} from "./h3_chain_plan_core.mjs?v=0.6.96";
 
 const FPS = 24;
 const MAX_H3_FRAMES = 3592;

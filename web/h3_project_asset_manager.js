@@ -5,11 +5,11 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.95";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.96";
 import {
     publishProjectAssetCatalogChanged,
     serializedProjectAssetCatalog,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.95";
+} from "./h3_project_asset_sync_core.mjs?v=0.6.96";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([

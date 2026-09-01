@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Composed visual context now supports two independently positioned native
+  latent windows from the same saved scene. A split such as 5+34 can reuse one
+  source movie for both blocks, including on Scene 2, while generated-audio
+  continuity remains attached to the immediate timeline predecessor.
+
 - Completed the post-Issue-42 payload audit. Delegated Motion Context now
   verifies the live video/audio Guide merge before calling every upstream
   provider version, including older providers that do not fail preflight.

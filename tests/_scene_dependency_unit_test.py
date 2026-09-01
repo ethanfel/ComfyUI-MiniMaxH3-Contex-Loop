@@ -572,6 +572,46 @@ assert composed_revision["visual_context_lead_source"] == "four"
 assert composed_revision["visual_context_lead_frames"] == 5
 assert composed_revision["visual_context_lead_start_frame"] == 9
 
+# The two native-aligned blocks may also select independent windows from the
+# same saved scene. A 5+34 composition remains one direct 39-frame latent
+# prefix; only generated audio continues to come from the timeline predecessor.
+same_scene_plan = chain._normalize_plan(
+    json.dumps({"shots": [
+        {"id": name, "prompt": name, "length": 90,
+         **({"visual_context_source": "three",
+             "visual_context_start_frame": 0,
+             "visual_context_lead_source": "three",
+             "visual_context_lead_frames": 5,
+             "visual_context_lead_start_frame": 12,
+             "video_blend_frames": 0} if name == "five" else {})}
+        for name in ("one", "two", "three", "four", "five")
+    ]}),
+    "same-scene-composed-context-test", 64, 64, 39, "video", "head",
+    "disabled", "generated_audio", 39, 1.0, 8, 11, 18,
+    "body:auto:v1", 0, "masked_av")
+assert same_scene_plan["shots"][4]["visual_context_source"] == "three"
+assert same_scene_plan["shots"][4]["visual_context_lead_source"] == "three"
+assert chain._resume_context_predecessors(same_scene_plan, 5) == {
+    "visual": 3, "audio": 4, "scenes": [3, 4], "visual_lead": 3,
+}
+
+scene_two_same_source_plan = chain._normalize_plan(
+    json.dumps({"shots": [
+        {"id": "one", "prompt": "one", "length": 90},
+        {"id": "two", "prompt": "two", "length": 90,
+         "visual_context_start_frame": 5,
+         "visual_context_lead_source": "one",
+         "visual_context_lead_frames": 5,
+         "visual_context_lead_start_frame": 0,
+         "video_blend_frames": 0},
+    ]}),
+    "scene-two-same-source-test", 64, 64, 39, "video", "head",
+    "disabled", "generated_audio", 39, 1.0, 8, 11, 18,
+    "body:auto:v1", 0, "masked_av")
+assert chain._resume_context_predecessors(scene_two_same_source_plan, 2) == {
+    "visual": 1, "audio": 1, "scenes": [1], "visual_lead": 1,
+}
+
 scene3_frames = torch.full((39, 2, 2, 3), 3.0)
 scene4_frames = torch.full((39, 2, 2, 3), 4.0)
 scene3_video = (30.0 + torch.arange(27, dtype=torch.float32)).reshape(
@@ -617,6 +657,32 @@ try:
     assert audio_latent is full_immediate_audio
     assert composed_state["visual_context_source_segment"]["index"] == 3
     assert composed_state["visual_context_lead_segment"]["index"] == 4
+
+    same_scene_state = chain._visual_context_state({
+        "plan": same_scene_plan, "index": 5,
+        "previous_frames": scene4_frames,
+        "previous_latent": {
+            "samples": [scene4_video, full_immediate_audio]},
+        "segments": [
+            {"index": scene,
+             "id": same_scene_plan["shots"][scene - 1]["id"],
+             "checkpoint": "scene_%d.safetensors" % scene,
+             "revision": "r%d" % scene,
+             "checkpoint_sha256": "h%d" % scene}
+            for scene in range(1, 5)
+        ],
+    })
+    same_scene_video, same_scene_audio = same_scene_state[
+        "previous_latent"]["samples"]
+    assert same_scene_state["previous_frames"].shape[0] == 0
+    assert same_scene_video.shape[2] == 12
+    assert torch.all(same_scene_video[:, :, 0] == 45.0)
+    assert torch.all(same_scene_video[:, :, 1] == 46.0)
+    assert torch.all(same_scene_video[:, :, 2] == 42.0)
+    assert torch.all(same_scene_video[:, :, -1] == 51.0)
+    assert same_scene_audio is full_immediate_audio
+    assert same_scene_state["visual_context_source_segment"]["index"] == 3
+    assert same_scene_state["visual_context_lead_segment"]["index"] == 3
 
     # Each side of an addition can independently select a native latent crop.
     # An unavailable RGB mirror is decoded from the assembled crop, never
@@ -750,8 +816,6 @@ for invalid_patch, expected in (
         # This start fits inside the movie, but it bisects an H3 temporal
         # latent block and therefore cannot be represented as a direct crop.
         ({"visual_context_start_frame": 11}, "native temporal latent lattice"),
-        ({"visual_context_lead_source": "three",
-          "visual_context_lead_frames": 5}, "different from"),
         ({"visual_context_lead_source": "four",
           "visual_context_lead_frames": 6}, "must be one of"),
         ({"visual_context_lead_source": "four",

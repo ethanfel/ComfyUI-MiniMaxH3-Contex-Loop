@@ -31,8 +31,8 @@ import {
     shotLengthMode,
     sharedPrompt,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.95";
-import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.6.95";
+} from "./h3_chain_plan_core.mjs?v=0.6.96";
+import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.6.96";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -41,16 +41,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.95";
+} from "./h3_policy_core.mjs?v=0.6.96";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.95";
+} from "./h3_socket_presentation_core.mjs?v=0.6.96";
 import {
     availableLoRARoutes,
     loraRouteLabel,
-} from "./h3_lora_scheduler_core.mjs?v=0.6.95";
+} from "./h3_lora_scheduler_core.mjs?v=0.6.96";
 
 // This scene editor is an original implementation. Its quick @ reference and
 // # dialogue interactions are inspired by nkxx188/ComfyUI-MiniMaxH3-Easy,
@@ -1184,23 +1184,12 @@ function mountEditor(node) {
                 shot.video_blend_frames = 0;
             }
             delete shot.visual_context_start_frame;
-            const recentSource = sceneVisualContextSource(
-                state.plan, index + 1,
-            );
-            const leadSource = sceneVisualContextLeadSource(
-                state.plan, index + 1,
-            );
-            if (leadSource !== null && leadSource === recentSource) {
-                delete shot.visual_context_lead_source;
-                delete shot.visual_context_lead_frames;
-                delete shot.visual_context_lead_start_frame;
-            }
             refreshBlendControl();
             syncPlan();
             render();
         });
         const visualLeadSource = element("select", "h3c-visual-lead-source");
-        const noLead = element("option", "", "Off · one visual source");
+        const noLead = element("option", "", "Off · one context block");
         noLead.value = "";
         visualLeadSource.append(noLead);
         const recentSourceIndex = index === 0 ? null
@@ -1208,19 +1197,21 @@ function mountEditor(node) {
         if (recentSourceIndex !== null) {
             for (let sourceOffset = 0;
                 sourceOffset < index; sourceOffset += 1) {
-                if (sourceOffset + 1 === recentSourceIndex) continue;
                 const sourceId = safeShotId(
                     state.plan.shots[sourceOffset]?.id,
                     `clip_${String(sourceOffset + 1).padStart(4, "0")}`,
                 );
+                const sameSource = sourceOffset + 1 === recentSourceIndex;
+                const sourceLabel = `Scene ${sourceOffset + 1} · ${sourceId}`
+                    + (sameSource ? " · same scene, separate window" : "");
                 const option = element(
-                    "option", "", `Scene ${sourceOffset + 1} · ${sourceId}`,
+                    "option", "", sourceLabel,
                 );
                 option.value = sourceId;
                 visualLeadSource.append(option);
             }
         }
-        visualLeadSource.disabled = index === 0 || index < 2;
+        visualLeadSource.disabled = index === 0;
         try {
             const resolvedLead = sceneVisualContextLeadSource(
                 state.plan, index + 1,
@@ -1233,7 +1224,7 @@ function mountEditor(node) {
         } catch (_error) {
             visualLeadSource.value = "";
         }
-        visualLeadSource.title = "Optional first scene in one composed visual context. Visual context source supplies the second block nearest generation. Either source may be chronologically newer, but they must differ; audio remains one continuous tail from the immediate timeline scene.";
+        visualLeadSource.title = "Optional first block in one composed visual context. It may use a different scene or a second independently positioned window from the same scene. Visual context source supplies the block nearest generation; audio remains one continuous tail from the immediate timeline scene.";
 
         const visualLeadFrames = element("select", "h3c-visual-lead-frames");
         const resolvedVisualContext = sceneContextLength(
@@ -1273,7 +1264,7 @@ function mountEditor(node) {
         } else {
             visualLeadFrames.value = defaultComposition?.value ?? "";
         }
-        visualLeadFrames.title = "Select the total H3 context and its ordered two-scene split. Both orientations are available: for example, 39 total includes 17+22 and 22+17. Reverse-phase layouts are normalized once through the connected video VAE when required.";
+        visualLeadFrames.title = "Select the total H3 context and its ordered two-block split. Both blocks may use the same scene with independent floating windows. For example, 39 total includes 5+34, 17+22, and their reverse orientations.";
         function applyVisualComposition() {
             const [totalRaw, leadRaw] = visualLeadFrames.value.split(":");
             const total = Number(totalRaw);
@@ -1471,7 +1462,7 @@ function mountEditor(node) {
             field("Steps (blank = default)", steps),
             field("Advanced visual context", context),
             field("Visual context source", visualSource),
-            field("Composed context first source", visualLeadSource),
+            field("Context block 1 source", visualLeadSource),
             field("Composed total / split", visualLeadFrames),
             field("Advanced audio context", audioContext),
             field("Advanced implementation", continuation),
