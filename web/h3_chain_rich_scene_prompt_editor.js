@@ -53,7 +53,11 @@ import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
 } from "./h3_project_asset_sync_core.mjs?v=0.7.0";
 
-const {publishCompanionScene, rebaseScenePrompt} = promptCompanionSync;
+const {
+    activeSceneIndexAfterRefresh,
+    publishCompanionScene,
+    rebaseScenePrompt,
+} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
     return promptCompanionSync.publishCompanionPrompt?.(...args) ?? 0;
 }
@@ -622,8 +626,20 @@ function mount(node) {
         undoByScene:new Map(), promptUndo:null,
         popover:null, popoverTimer:null, popoverPinned:false, pollTimer:null,
         planSyncTimer:null, planSyncPending:null, analysisTimer:null,
+        applyPromptHistoryShortcut:null, ownsPromptHistoryTarget:null,
     };
     node._h3RichPromptState = state;
+
+    // Own prompt undo during capture so ComfyUI's workflow-level Ctrl/Cmd+Z
+    // never sees the gesture first and restores an older active-scene
+    // property. The callback is replaced whenever the active scene renders.
+    root.addEventListener("keydown", (event) => {
+        const direction = promptUndoDirection(event);
+        if (!direction || !state.ownsPromptHistoryTarget?.(event.target)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        state.applyPromptHistoryShortcut?.(direction);
+    }, true);
 
     function dirty() {
         node.graph?.setDirtyCanvas?.(true, true);
@@ -2062,6 +2078,8 @@ function mount(node) {
             editor.scrollLeft = scrollLeft;
             return true;
         };
+        state.ownsPromptHistoryTarget = (target) => editor === target || editor.contains(target);
+        state.applyPromptHistoryShortcut = applyPromptUndo;
         editor.addEventListener("keydown", (event) => {
             if (state.completion?.handleKeydown(event)) return;
             const undoDirection = promptUndoDirection(event);
@@ -2174,7 +2192,14 @@ function mount(node) {
         const runName = String(planNode.widgets?.find((item) => item.name === "run_name")?.value ?? "").trim();
         if (!force && planNode === state.planNode && value === state.lastValue && runName === state.lastRunName) return;
         try {
-            state.plan = parsePlanJson(value);
+            const previousPlan = state.plan;
+            const previousActive = state.active;
+            const nextPlan = parsePlanJson(value);
+            state.active = activeSceneIndexAfterRefresh(
+                previousPlan, nextPlan, previousActive,
+            );
+            node.properties[ACTIVE_PROPERTY] = state.active;
+            state.plan = nextPlan;
             state.planNode = planNode;
             state.planWidget = planWidget;
             state.lastValue = value;

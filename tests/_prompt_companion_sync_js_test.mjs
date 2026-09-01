@@ -3,6 +3,7 @@
 import assert from "node:assert/strict";
 import fs from "node:fs";
 import {
+    activeSceneIndexAfterRefresh,
     adjacentPlanCompanions,
     connectedPlanStudios,
     connectedPromptEditors,
@@ -11,6 +12,19 @@ import {
     publishPlanCompanionScene,
     rebaseScenePrompt,
 } from "../web/h3_prompt_companion_sync.mjs";
+
+assert.equal(activeSceneIndexAfterRefresh(
+    {shots:[{id:"one"}, {id:"two"}, {id:"three"}]},
+    {shots:[{id:"three"}, {id:"one"}, {id:"two"}]},
+    1,
+), 2);
+assert.equal(activeSceneIndexAfterRefresh(
+    {shots:[{id:"one"}, {id:"removed"}, {id:"three"}]},
+    {shots:[{id:"one"}, {id:"three"}]},
+    1,
+), 1);
+assert.equal(activeSceneIndexAfterRefresh(null, {shots:[{id:"one"}]}, 8), 0);
+assert.equal(activeSceneIndexAfterRefresh(null, {shots:[]}, 8), 0);
 
 const plan = {id:1, type:"MiniMaxH3ChainPlan"};
 const studio = {id:2, type:"MiniMaxH3ChainPlanStudio", inputs:[{link:10}], outputs:[{links:[11]}]};

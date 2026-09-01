@@ -45,7 +45,11 @@ import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
 } from "./h3_project_asset_sync_core.mjs?v=0.7.0";
 
-const {publishCompanionScene, rebaseScenePrompt} = promptCompanionSync;
+const {
+    activeSceneIndexAfterRefresh,
+    publishCompanionScene,
+    rebaseScenePrompt,
+} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
     return promptCompanionSync.publishCompanionPrompt?.(...args) ?? 0;
 }
@@ -785,8 +789,20 @@ function mount(node) {
         planSyncTimer: null,
         planSyncPending: null,
         analysisTimer: null,
+        applyPromptHistoryShortcut: null,
+        ownsPromptHistoryTarget: null,
     };
     node._h3ScenePromptEditorState = state;
+
+    // Intercept prompt undo before ComfyUI's workflow history can restore an
+    // older node snapshot (which commonly resets the editor to scene 1).
+    root.addEventListener("keydown", (event) => {
+        const direction = promptUndoDirection(event);
+        if (!direction || !state.ownsPromptHistoryTarget?.(event.target)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        state.applyPromptHistoryShortcut?.(direction, event.target);
+    }, true);
 
     const assistant = state.assistant;
     if (PROMPT_ASSISTANT_ENABLED) {
@@ -2640,6 +2656,12 @@ function mount(node) {
             state.schema?.refresh();
             return true;
         };
+        state.ownsPromptHistoryTarget = (target) => (
+            target === textarea || target === richEditor || richEditor.contains(target)
+        );
+        state.applyPromptHistoryShortcut = (direction, target) => applyPromptUndo(
+            direction, target === textarea ? textarea : richEditor,
+        );
         const handlePromptUndo = (event, target) => {
             const direction = promptUndoDirection(event);
             if (!direction) return false;
@@ -2841,7 +2863,14 @@ function mount(node) {
         if (!force && planNode === state.planNode && value === state.lastValue
             && runName === state.lastRunName) return;
         try {
-            state.plan = parsePlanJson(value);
+            const previousPlan = state.plan;
+            const previousActive = state.active;
+            const nextPlan = parsePlanJson(value);
+            state.active = activeSceneIndexAfterRefresh(
+                previousPlan, nextPlan, previousActive,
+            );
+            node.properties[ACTIVE_SCENE_PROPERTY] = state.active;
+            state.plan = nextPlan;
             state.planNode = planNode;
             state.planWidget = planWidget;
             state.lastValue = value;
