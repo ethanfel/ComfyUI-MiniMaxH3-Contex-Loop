@@ -25,6 +25,7 @@ assert.equal(
     "#hero[2.50s]",
 );
 assert.equal(taggedPictureReferenceMode("Use @hero.", "hero"), "native");
+assert.equal(taggedPictureReferenceMode("Use @Hero.", "hero"), "unused");
 assert.equal(
     taggedPictureReferenceMode("Use #hero[2.50s].", "hero"),
     "semantic",
@@ -39,6 +40,12 @@ assert.equal(
         "hero", "semantic", 1.25,
     ),
     "Use #hero[1.25s], but keep @heroine and mail x@hero.",
+);
+assert.equal(
+    convertTaggedPictureReference(
+        "Keep @Hero unchanged.", "hero", "semantic", 1.25,
+    ),
+    "Keep @Hero unchanged.",
 );
 assert.equal(
     convertTaggedPictureReference(

@@ -1,4 +1,4 @@
-import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.5.62";
+import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.5.64";
 
 export const RICH_PROMPT_GUIDES = Object.freeze([
     {id: "auto", label: "Auto · H3 mode"},
@@ -68,7 +68,7 @@ function recordTokens(record) {
 export function referenceRecordMap(records) {
     const map = new Map();
     for (const record of Array.isArray(records) ? records : []) {
-        for (const token of recordTokens(record)) map.set(token.toLowerCase(), record);
+        for (const token of recordTokens(record)) map.set(token, record);
     }
     return map;
 }
@@ -101,7 +101,7 @@ export function tokenizeRichPrompt(text, records = []) {
         const semanticMatch = /^#([a-z][a-z0-9_-]{0,63})\[([0-9]+(?:\.[0-9]+)?)s?\]$/i.exec(token);
         // A semantic-only asset has no native @tag token. Resolve #tag[time]
         // through the timestamp-independent semantic key registered above.
-        const recordKey = semanticMatch ? `#${semanticMatch[1]}`.toLowerCase() : lower;
+        const recordKey = semanticMatch ? `#${semanticMatch[1]}` : token;
         const record = recordMap.get(recordKey) ?? null;
         if (section) {
             parts.push({type:"section", kind:"section", text:token, section, unresolved:false});

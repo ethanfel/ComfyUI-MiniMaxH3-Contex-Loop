@@ -65,10 +65,10 @@ export function taggedPictureReferenceMode(prompt, tag) {
     if (!cleanTag) return "unused";
     const escaped = escapedPattern(cleanTag);
     const native = new RegExp(
-        `(^|[^A-Za-z0-9_])@${escaped}(?![A-Za-z0-9_-])`, "i",
+        `(^|[^A-Za-z0-9_])@${escaped}(?![A-Za-z0-9_-])`,
     ).test(String(prompt ?? ""));
     const semantic = new RegExp(
-        `(^|[^A-Za-z0-9_])#${escaped}\\[[0-9]+(?:\\.[0-9]+)?s?\\]`, "i",
+        `(^|[^A-Za-z0-9_])#${escaped}\\[[0-9]+(?:\\.[0-9]+)?s?\\]`,
     ).test(String(prompt ?? ""));
     if (native && semantic) return "mixed";
     if (semantic) return "semantic";
@@ -88,7 +88,7 @@ export function convertTaggedPictureReference(
         );
         return source.replace(
             new RegExp(
-                `(^|[^A-Za-z0-9_])@${escaped}(?![A-Za-z0-9_-])`, "gi",
+                `(^|[^A-Za-z0-9_])@${escaped}(?![A-Za-z0-9_-])`, "g",
             ),
             (_match, prefix) => `${prefix}${replacement}`,
         );
@@ -97,7 +97,7 @@ export function convertTaggedPictureReference(
     return source.replace(
         new RegExp(
             `(^|[^A-Za-z0-9_])#${escaped}\\[[0-9]+(?:\\.[0-9]+)?s?\\]`,
-            "gi",
+            "g",
         ),
         (_match, prefix) => `${prefix}${replacement}`,
     );
