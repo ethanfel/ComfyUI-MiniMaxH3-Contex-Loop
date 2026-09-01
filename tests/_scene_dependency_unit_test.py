@@ -26,7 +26,7 @@ package.__path__ = [str(ROOT)]
 sys.modules[PACKAGE] = package
 nodes = types.ModuleType(PACKAGE + ".nodes")
 nodes.MiniMaxH3MotionContext = object
-nodes._claim_inline_patch_ownership = lambda: "test"
+nodes._claim_inline_patch_ownership = lambda _conditioning=None: "test"
 nodes._prepare_native_guide_conditioning = lambda value: value
 nodes._resize = lambda *args: None
 nodes._streams_from_latent = lambda *args: None

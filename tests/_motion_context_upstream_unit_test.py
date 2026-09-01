@@ -22,6 +22,15 @@ shared_nodes._video_from_latent = lambda _latent: types.SimpleNamespace(
 shared_nodes._audio_tail_from_latent = lambda _latent, _frames: (
     "tail", 37, -1.0 / 3.0)
 shared_nodes._validate_visual_cond_noise_aug = float
+shared_nodes.payload_merge_calls = []
+
+
+def ensure_payload_merge(**requirements):
+    shared_nodes.payload_merge_calls.append(requirements)
+    return "test native payload verified"
+
+
+shared_nodes._ensure_native_payload_merge = ensure_payload_merge
 sys.modules[shared_nodes.__name__] = shared_nodes
 
 spec = importlib.util.spec_from_file_location(
@@ -157,6 +166,25 @@ def main():
         assert keyframes[0]["h3_chain_context_visual"] is True
         assert abs(keyframes[1]["resolved_frame_index"] + 0.4) < 1e-9
         assert keyframes[1]["audio_latent"] == "upstream-audio"
+
+        # Provider versions predating their own compatibility guard must not
+        # bypass Chain's live payload verification. Ref-mode audio adds a
+        # keyframe payload that must merge with Ref2VA video; visual-only
+        # Ref2VA needs video merge; timeline carry needs both payload merges.
+        apply(context_latent="previous-av-latent", audio_mode="ref")
+        assert shared_nodes.payload_merge_calls[-1] == {
+            "require_video": True, "require_audio": False}
+        ref_conditioning = [["embedding", {
+            "minimax_refs": [{"kind": "image", "latent": "reference"}],
+        }]]
+        apply(conditioning=ref_conditioning)
+        assert shared_nodes.payload_merge_calls[-1] == {
+            "require_video": True, "require_audio": False}
+        apply(
+            conditioning=ref_conditioning,
+            context_latent="previous-av-latent")
+        assert shared_nodes.payload_merge_calls[-1] == {
+            "require_video": True, "require_audio": True}
 
         upstream_calls = len(UpstreamMotionContext.calls)
 

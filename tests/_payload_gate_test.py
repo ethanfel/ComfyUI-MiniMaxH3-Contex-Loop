@@ -122,6 +122,19 @@ def main():
     assert status["native_keyframe_ref_merge"] is True, status
     assert status["native_keyframe_ref_audio_merge"] is True, status
 
+    # A future/boundary Guide intentionally does not carry the normal visual
+    # scheduling marker. Its payload-only marker must still activate the merge
+    # when Ref2VA references coexist on a partially compatible core.
+    future_kfs = [{
+        "resolved_frame_index": 124,
+        "h3_chain_future_end_anchor": True,
+        "latent": "FUTURE_KF",
+    }]
+    got = run(future_kfs, native_refs)
+    assert got["cond_video_latents"] == ["FUTURE_KF", "NATIVE_REF"], got
+    assert got["cond_audio_latents"] == ["TAGGED_AUDIO"], got
+    print("2c. future/boundary Guide + Ref2VA: payload merge activated")
+
     # 3. chaining under Ref2VA: the graph's own references are unmarked,
     # ours is marked, and every video latent must survive in list order
     mixed_refs = [{"kind": "image", "latent": "R1"},

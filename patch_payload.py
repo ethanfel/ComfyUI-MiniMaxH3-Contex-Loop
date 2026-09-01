@@ -49,6 +49,8 @@ the video list, so the two stay in step however the graph is wired.
 import logging
 import sys
 
+import torch
+
 import comfy.model_base as model_base
 
 _LOG = logging.getLogger("h3_motion_context")
@@ -61,6 +63,7 @@ MC_KEY = "motion_context_index"
 MC_AUDIO_KEY = "motion_context_audio_end_frame"
 CHAIN_VISUAL_KEY = "h3_chain_context_visual"
 CHAIN_AUDIO_KEY = "h3_chain_context_audio"
+CHAIN_FUTURE_KEY = "h3_chain_future_end_anchor"
 
 # Marker set on our wrapper so a second copy of this file, vendored into
 # another pack, can recognise it and stand down instead of wrapping it.
@@ -80,7 +83,8 @@ def _patched_extra_conds(self, **kwargs):
     if not keyframes or not refs:
         return out  # only one mechanism in play, stock behaviour is correct
     if not (any(MC_KEY in kf or CHAIN_VISUAL_KEY in kf
-                or CHAIN_AUDIO_KEY in kf for kf in keyframes)
+                or CHAIN_AUDIO_KEY in kf or CHAIN_FUTURE_KEY in kf
+                for kf in keyframes)
             or any(MC_AUDIO_KEY in r for r in refs)):
         # nothing here came from this pack. The layout patch is gated the
         # same way, so leaving the payload alone keeps the two consistent
@@ -140,10 +144,12 @@ def native_payload_merge_status():
         # cross-attention, masks, or latent-shape inputs.
         probe.concat_keys = ()
         probe.latent_shapes = None
-        keyframe_video = object()
-        reference_video = object()
-        keyframe_audio = object()
-        reference_audio = object()
+        # Real tensors keep the probe compatible with otherwise harmless
+        # wrappers that validate latent shape/dtype before forwarding to core.
+        keyframe_video = torch.zeros((1, 24, 1, 2, 2))
+        reference_video = torch.ones((1, 24, 1, 2, 2))
+        keyframe_audio = torch.zeros((1, 32, 2, 2))
+        reference_audio = torch.ones((1, 32, 2, 2))
         keyframes = [{
             "resolved_frame_index": 0,
             "latent": keyframe_video,

@@ -200,6 +200,8 @@ def make_mm(ref_advance_factor=1.0, audio_rows_per_step=2):
 def make_torch():
     t = types.ModuleType("torch")
     t.equal = lambda a, b: a.shape == b.shape and bool(np.array_equal(a, b))
+    t.zeros = lambda shape: np.zeros(shape, dtype=np.float32)
+    t.ones = lambda shape: np.ones(shape, dtype=np.float32)
     return t
 
 

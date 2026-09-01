@@ -2480,7 +2480,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Chain Policy — 0.5 CHAIN POLICY",
+      "title": "MiniMax H3 Manual Chain Policy (Legacy) — 0.5 CHAIN POLICY",
       "properties": {
         "Node name for S&R": "MiniMaxH3ChainPolicy"
       },

@@ -997,7 +997,7 @@ def main():
     assert chain._effective_editor_plan(audio_only_plan)["shots"][1][
         "audio_context_length"] == 33
     original_activate = nodes._activate_inline_patches
-    nodes._activate_inline_patches = lambda: "native"
+    nodes._activate_inline_patches = lambda **_kwargs: "native"
     try:
         audio_only_result = chain.MiniMaxH3ChainContext().apply(
             {"plan": audio_only_plan, "index": 2,

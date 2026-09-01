@@ -4,6 +4,14 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Completed the post-Issue-42 payload audit. Delegated Motion Context now
+  verifies the live video/audio Guide merge before calling every upstream
+  provider version, including older providers that do not fail preflight.
+  Future and joint boundary anchors activate the payload-only compatibility
+  gate without opting into normal context scheduling. The behavioral probe
+  now uses real tiny tensors, and release cache, workflow, and regression
+  fixtures are synchronized.
+
 - Fixed Issue #42 on partially updated ComfyUI builds and internal Motion
   Context fallback paths. Chain now behaviorally verifies both video and
   audio keyframe/reference payload merging before sampling and installs its

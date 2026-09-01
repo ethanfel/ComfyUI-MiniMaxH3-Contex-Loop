@@ -58,7 +58,7 @@ def append_explicit_future_end_anchor_stub(
 
 shared_nodes._append_explicit_future_end_anchor = (
     append_explicit_future_end_anchor_stub)
-shared_nodes._claim_inline_patch_ownership = lambda: "test patch owner"
+shared_nodes._claim_inline_patch_ownership = lambda _conditioning=None: "test patch owner"
 shared_nodes._prepare_native_guide_conditioning = lambda value: value
 shared_nodes._resize = lambda *args: None
 shared_nodes._streams_from_latent = lambda *args: None
