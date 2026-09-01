@@ -16,6 +16,7 @@ from __future__ import annotations
 import asyncio
 import gc
 import hashlib
+import ipaddress
 import itertools
 import json
 import logging
@@ -6989,6 +6990,40 @@ def _input_root() -> str:
     return os.path.abspath(folder_paths.get_input_directory())
 
 
+def _media_roots() -> tuple[str, ...]:
+    """Configured ComfyUI roots that browser media routes may read."""
+    roots = (
+        folder_paths.get_input_directory(),
+        folder_paths.get_output_directory(),
+        folder_paths.get_temp_directory(),
+    )
+    return tuple(dict.fromkeys(os.path.realpath(os.path.abspath(root))
+                              for root in roots))
+
+
+def _confined_media_path(value: Any, label: str) -> str:
+    """Resolve media only below a fixed ComfyUI-managed base directory."""
+    raw = str(value or "").strip()
+    if not raw:
+        raise ValueError("%s cannot be blank." % label)
+    path = os.path.realpath(os.path.abspath(os.path.expanduser(raw)))
+    inside = False
+    for root in _media_roots():
+        try:
+            if os.path.commonpath((root, path)) == root:
+                inside = True
+                break
+        except ValueError:
+            continue
+    if not inside:
+        raise ValueError(
+            "%s must resolve inside a configured ComfyUI input, output, or "
+            "temporary directory." % label)
+    if not os.path.isfile(path):
+        raise ValueError("%s does not exist or is not a file." % label)
+    return path
+
+
 def _run_manager_source_track_path(binding: Any) -> str:
     if not isinstance(binding, dict):
         raise ValueError("Run Manager source-track binding is invalid.")
@@ -7045,9 +7080,13 @@ def _run_manager_source_track_timeline(
 
 
 def _run_dir(plan: dict[str, Any]) -> str:
-    root = _output_root()
-    path = os.path.abspath(os.path.join(root, "h3_chains", plan["run_name"]))
-    if os.path.commonpath([root, path]) != root:
+    root = os.path.realpath(_output_root())
+    path = os.path.realpath(os.path.join(root, "h3_chains", plan["run_name"]))
+    try:
+        inside = os.path.commonpath((root, path)) == root
+    except ValueError:
+        inside = False
+    if not inside:
         raise ValueError("H3 chain run path escapes the ComfyUI output directory.")
     return path
 
@@ -7091,6 +7130,22 @@ def _launch_directory(path: str) -> tuple[bool, str | None]:
         return False, "; ".join(errors)
     except OSError as exc:
         return False, str(exc)
+
+
+def _request_is_loopback(request: Any) -> bool:
+    """Use the transport peer only; forwarded headers are intentionally ignored."""
+    remote = getattr(request, "remote", None)
+    if not remote:
+        transport = getattr(request, "transport", None)
+        peername = transport.get_extra_info("peername") if transport else None
+        remote = peername[0] if isinstance(peername, tuple) and peername else None
+    if not isinstance(remote, str):
+        return False
+    candidate = remote.strip().strip("[]").split("%", 1)[0]
+    try:
+        return ipaddress.ip_address(candidate).is_loopback
+    except ValueError:
+        return False
 
 
 def _open_run_output_directory(run_name: Any) -> dict[str, Any]:
@@ -7267,12 +7322,16 @@ def _relative_output_path(path: str) -> str:
 
 
 def _absolute_output_path(path: str) -> str:
+    root = os.path.realpath(_output_root())
     if os.path.isabs(path):
-        resolved = os.path.abspath(path)
+        resolved = os.path.realpath(path)
     else:
-        resolved = os.path.abspath(os.path.join(_output_root(), path))
-    root = _output_root()
-    if os.path.commonpath([root, resolved]) != root:
+        resolved = os.path.realpath(os.path.join(root, path))
+    try:
+        inside = os.path.commonpath((root, resolved)) == root
+    except ValueError:
+        inside = False
+    if not inside:
         raise ValueError("H3 chain artifact path escapes the output directory.")
     return resolved
 
@@ -15619,9 +15678,32 @@ def _plan_studio_presentation_path(run_name: Any) -> str:
     normalized = _safe_name(run_name, "")
     if not normalized:
         raise ValueError("A non-empty H3 chain run_name is required.")
-    return os.path.join(
-        _output_root(), "h3_chains", normalized,
-        "plan_studio_presentation.json")
+    return _absolute_output_path(os.path.join(
+        "h3_chains", normalized, "plan_studio_presentation.json"))
+
+
+def _validated_plan_studio_preview_record(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("Plan Studio source-preview record is invalid.")
+    record = dict(value)
+    record["video_path"] = _confined_media_path(
+        record.get("video_path"), "Plan Studio source-preview video")
+    if str(record.get("audio_path") or "").strip():
+        record["audio_path"] = _confined_media_path(
+            record.get("audio_path"), "Plan Studio source-preview audio")
+    else:
+        record["audio_path"] = ""
+        record["has_audio"] = False
+    return record
+
+
+def _validated_plan_studio_source_audio_record(value: Any) -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError("Plan Studio source-audio record is invalid.")
+    record = dict(value)
+    record["audio_path"] = _confined_media_path(
+        record.get("audio_path"), "Plan Studio Source Timeline audio")
+    return record
 
 
 def _save_plan_studio_presentation(
@@ -15634,14 +15716,21 @@ def _save_plan_studio_presentation(
     public = dict(payload)
     public["run_name"] = run_name
     public["token"] = ""
+    safe_records = {
+        str(key): _validated_plan_studio_preview_record(value)
+        for key, value in records.items()
+    }
+    safe_source_audio = (
+        _validated_plan_studio_source_audio_record(source_audio)
+        if source_audio is not None else None)
     document = {
         "version": 1,
         "run_name": run_name,
         "updated_at": datetime.now(timezone.utc).isoformat(
             timespec="seconds").replace("+00:00", "Z"),
         "public": public,
-        "records": records,
-        "source_audio": source_audio,
+        "records": safe_records,
+        "source_audio": safe_source_audio,
     }
     _atomic_json(_plan_studio_presentation_path(run_name), document)
 
@@ -15667,10 +15756,22 @@ def _restore_plan_studio_presentation(run_name: Any) -> dict[str, Any]:
         raise ValueError("Saved Plan Studio presentation is incomplete.")
     if source_audio is not None and not isinstance(source_audio, dict):
         raise ValueError("Saved Plan Studio source audio record is invalid.")
-    clean_records = {
-        str(key): dict(value) for key, value in records.items()
-        if isinstance(value, dict)
-    }
+    clean_records = {}
+    for key, value in records.items():
+        try:
+            clean_records[str(key)] = _validated_plan_studio_preview_record(
+                value)
+        except (OSError, TypeError, ValueError):
+            _LOG.warning(
+                "Ignored an unsafe saved Plan Studio source-preview record: %s",
+                key)
+    if source_audio is not None:
+        try:
+            source_audio = _validated_plan_studio_source_audio_record(
+                source_audio)
+        except (OSError, TypeError, ValueError):
+            _LOG.warning("Ignored an unsafe saved Plan Studio source-audio record")
+            source_audio = None
     token = ""
     if clean_records or source_audio is not None:
         token = secrets.token_urlsafe(24)
@@ -15699,7 +15800,7 @@ def _plan_studio_preview_media(
         audio_path = ""
         audio_seek = 0.0
         if audio_kind in ("embedded", "external_path"):
-            audio_path = _resolved_media_path(
+            audio_path = _confined_media_path(
                 audio.get("path"), "Plan Studio source-preview audio")
             audio_seek = (
                 float(audio.get("timeline_offset_seconds", 0.0)) +
@@ -15708,17 +15809,19 @@ def _plan_studio_preview_media(
     elif _is_lazy_motion_descriptor(value):
         video = value
         audio_kind = "embedded" if value.get("audio") is not None else "none"
-        audio_path = str(value.get("path") or "") if audio_kind == "embedded" else ""
+        audio_path = (_confined_media_path(
+            value.get("path"), "Plan Studio source-preview audio")
+            if audio_kind == "embedded" else "")
         audio_seek = (
             float(value.get("skip_seconds", 0.0)) +
             start / float(FPS))
         media_fingerprint = str(value.get("file_sha256") or "")
         if not media_fingerprint:
-            media_fingerprint = _file_sha256(_resolved_media_path(
+            media_fingerprint = _file_sha256(_confined_media_path(
                 value.get("path"), "Plan Studio source-preview video"))
     else:
         return None
-    video_path = _resolved_media_path(
+    video_path = _confined_media_path(
         video.get("path"), "Plan Studio source-preview video")
     video_seek = (
         float(video.get("skip_seconds", 0.0)) +
@@ -15758,7 +15861,7 @@ def _plan_studio_source_audio_media(
     if str(audio.get("kind") or "none") not in (
             "embedded", "external_path"):
         return None
-    path = _resolved_media_path(
+    path = _confined_media_path(
         audio.get("path"), "Plan Studio Source Timeline audio")
     frame_count = int(plan.get("total_delivered_frames") or sum(
         int(shot.get("delivered_frames", 0))
@@ -16438,7 +16541,7 @@ class MiniMaxH3ProjectAssetManager:
                                "reference options into Unassigned cards but "
                                "does not copy, encode, or serialize the media. "
                                "Bind each card explicitly from ComfyUI input, "
-                               "upload, backup, or server path."}),
+                               "upload, another project, or backup."}),
                 "upscale_model": ("UPSCALE_MODEL", {
                     "lazy": True,
                     "tooltip": "Optional core upscale model for creating an "
@@ -24780,6 +24883,12 @@ async def _update_run_editorial(request):
 
 
 async def _open_run_folder(request):
+    if not _request_is_loopback(request):
+        return web.json_response({
+            "error": (
+                "Opening a host folder is available only to a browser "
+                "connected from this ComfyUI machine."),
+        }, status=403)
     try:
         body = await request.json()
     except Exception:
@@ -25031,13 +25140,18 @@ def _plan_studio_checkpoint_thumbnail_path(
         "width": PLAN_STUDIO_THUMBNAIL_WIDTH,
     })
     cache_dir = os.path.join(
-        _output_root(), "h3_chains", ".plan_studio_thumbnails")
+        "h3_chains", ".plan_studio_thumbnails")
+    cache_dir = _absolute_output_path(cache_dir)
     os.makedirs(cache_dir, exist_ok=True)
     return os.path.join(cache_dir, "%s.jpg" % cache_key)
 
 
 def _build_plan_studio_checkpoint_thumbnail(
         record: dict[str, Any]) -> str:
+    record = dict(record)
+    record["video_path"] = _absolute_output_path(record.get("video_path", ""))
+    if not os.path.isfile(record["video_path"]):
+        raise FileNotFoundError("Plan Studio checkpoint video is unavailable.")
     output_path = _plan_studio_checkpoint_thumbnail_path(record)
     if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
         return output_path
@@ -25147,7 +25261,8 @@ def _plan_studio_source_preview_path(record: dict[str, Any]) -> str:
         "max_height": PLAN_STUDIO_PREVIEW_MAX_HEIGHT,
     })
     cache_dir = os.path.join(
-        _output_root(), "h3_chains", ".plan_studio_source_previews")
+        "h3_chains", ".plan_studio_source_previews")
+    cache_dir = _absolute_output_path(cache_dir)
     os.makedirs(cache_dir, exist_ok=True)
     return os.path.join(cache_dir, "%s.mp4" % cache_key)
 
@@ -25162,7 +25277,8 @@ def _plan_studio_source_waveform_path(record: dict[str, Any]) -> str:
         "points_per_second": PLAN_STUDIO_WAVEFORM_POINTS_PER_SECOND,
     })
     cache_dir = os.path.join(
-        _output_root(), "h3_chains", ".plan_studio_source_previews")
+        "h3_chains", ".plan_studio_source_previews")
+    cache_dir = _absolute_output_path(cache_dir)
     os.makedirs(cache_dir, exist_ok=True)
     return os.path.join(cache_dir, "%s.waveform.json" % cache_key)
 
@@ -25192,6 +25308,7 @@ def _run_ffmpeg_capture(
 
 def _build_plan_studio_source_waveform(
         record: dict[str, Any]) -> str:
+    record = _validated_plan_studio_source_audio_record(record)
     output_path = _plan_studio_source_waveform_path(record)
     if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
         return output_path
@@ -25263,6 +25380,7 @@ def _build_plan_studio_source_preview(record: dict[str, Any]) -> str:
 
 def _build_plan_studio_source_preview_unlocked(
         record: dict[str, Any]) -> str:
+    record = _validated_plan_studio_preview_record(record)
     output_path = _plan_studio_source_preview_path(record)
     if os.path.isfile(output_path) and os.path.getsize(output_path) > 0:
         return output_path
@@ -25418,6 +25536,10 @@ def _plan_studio_source_audio_record(
     record = session.get("source_audio")
     if not isinstance(record, dict):
         return None, "No path-backed Source Timeline audio is available."
+    try:
+        record = _validated_plan_studio_source_audio_record(record)
+    except (OSError, TypeError, ValueError):
+        return None, "Source audio preview is outside ComfyUI media storage."
     session["created"] = time.monotonic()
     return record, None
 
@@ -25429,9 +25551,6 @@ async def _plan_studio_source_audio(request):
         return web.json_response(
             {"error": error}, status=400 if "invalid" in str(error) else 410)
     path = str(record["audio_path"])
-    if not os.path.isfile(path):
-        return web.json_response(
-            {"error": "Source Timeline audio path is unavailable."}, status=404)
     return web.FileResponse(path, headers={
         "Cache-Control": "private, max-age=21600, immutable",
     })
@@ -25502,8 +25621,9 @@ async def _plan_studio_source_preview(request):
         return web.json_response(
             {"error": "No active motion-reference window exists for this scene."},
             status=404)
-    session["created"] = time.monotonic()
     try:
+        record = _validated_plan_studio_preview_record(record)
+        session["created"] = time.monotonic()
         path = await _ensure_plan_studio_source_preview(record)
     except asyncio.CancelledError:
         _LOG.info(
@@ -25648,7 +25768,7 @@ async def _project_asset_import(request):
         if not isinstance(body, dict):
             raise ValueError("Asset import request must be a JSON object.")
         store = _project_asset_store()
-        source = str(body.get("source") or "path").strip().lower()
+        source = str(body.get("source") or "input").strip().lower()
         if source == "input":
             path = store.input_path(body.get("path"))
         elif source == "project":
@@ -25660,11 +25780,11 @@ async def _project_asset_import(request):
         elif source == "chains":
             _entry, path = store.backup_asset_path(
                 body.get("run_name"), body.get("asset_id"))
-        elif source == "path":
-            path = str(body.get("path") or "")
         else:
             raise ValueError(
-                "Asset import source must be input, project, chains, or path.")
+                "Asset import source must be input, project, or chains. Move "
+                "server files into the configured ComfyUI input directory "
+                "before importing them.")
         slot_id = str(body.get("slot_id") or "")
         importer = (store.bind_reference_slot
                     if slot_id else store.import_file)

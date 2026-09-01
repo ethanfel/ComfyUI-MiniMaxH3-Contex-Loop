@@ -128,6 +128,14 @@ reference nodes, recovery tools, masking nodes, and advanced groups.
   `ComfyUI/output/h3_chains/<run_name>/`.
 - Uploaded project assets live under `ComfyUI/input/h3_projects/<run_name>/` and
   are mirrored into the run for recovery.
+- Browser-driven asset imports are confined to media listed from ComfyUI
+  input, another project, or an H3 recovery backup. Move other server files
+  into the configured ComfyUI input directory before importing them.
+- Direct prompt optimization allows OpenAI, Gemini, and OpenRouter by default.
+  A server operator can add exact provider origins, including a local API,
+  before startup with a comma-separated
+  `H3_PROMPT_OPTIMIZER_ALLOWED_ORIGINS` value such as
+  `http://127.0.0.1:1234,https://api.example.com`.
 - The normal final MP4 is written under the run's `final/` folder. **Assemble**
   can also copy it to the regular ComfyUI output folder.
 - The exact saved checkpoint supplies the next scene's continuity. Preview or

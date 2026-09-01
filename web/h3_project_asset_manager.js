@@ -5,11 +5,11 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.96";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.97";
 import {
     publishProjectAssetCatalogChanged,
     serializedProjectAssetCatalog,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.96";
+} from "./h3_project_asset_sync_core.mjs?v=0.6.97";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -325,7 +325,6 @@ function mount(node) {
     const sourceSelect = el("select");
     for (const [value, label] of [
         ["input", "ComfyUI input"], ["project", "Other Run"],
-        ["path", "Server path"],
         ["chains", "H3 backups"],
     ]) {
         const option = el("option", "", label); option.value = value;
@@ -354,7 +353,7 @@ function mount(node) {
             fileInput.click();
         }, "Choose a local media file, or drop files directly onto the Carousel. A selected Unassigned slot is bound; otherwise a new asset is created."),
         button("Import", () => browseSource(selectedUnassignedSlot()),
-            "Create a project asset from the selected source: ComfyUI input, another Run, an H3 backup, or a server path. A selected Unassigned slot is bound instead."),
+            "Create a project asset from the selected source: ComfyUI input, another Run, or an H3 backup. A selected Unassigned slot is bound instead."),
         button("Duplicate project…", () => duplicateAssetProject(),
             "Create a new Run containing this asset catalog, folders, lyrics, and project-owned media. Generated clips, checkpoints, and assembled renders are not copied. This Carousel stays on the current Run."),
         button("Refresh", () => refresh()), fileInput,
@@ -1861,13 +1860,6 @@ function mount(node) {
     }
     async function browseSource(slot = null, forcedSource = "") {
         let source = forcedSource || sourceSelect.value;
-        if (source === "path") {
-            const path = window.prompt("Absolute server media path");
-            if (!path) return;
-            try { await importAsset({source: "path", path, slot_id: slot?.id ?? ""}); }
-            catch (error) { setStatus(error.message, true); }
-            return;
-        }
         const modal = el("div", "h3pa-modal");
         const row = el("div", "h3pa-row");
         const search = el("input", "h3pa-project"); search.placeholder = "Filter assets";

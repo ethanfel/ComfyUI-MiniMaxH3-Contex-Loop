@@ -37,7 +37,7 @@ Use any of these routes from the Carousel:
 - **Upload** a new file.
 - **Import** a file already in `ComfyUI/input/`.
 - Choose **Other Run** to copy an asset from another live Carousel project.
-- Import from a server path or an H3 run backup.
+- Import from an H3 run recovery backup.
 
 An imported asset receives its own project-owned media copy. Copying from
 another run preserves its role, tag, reference options, and audio lyrics; the
@@ -54,7 +54,9 @@ source project is not changed.
 
 When you connect an existing `tagged_references` line, the Carousel creates
 Unassigned cards for its tags and media roles. Bind each card to an input file,
-upload, backup, or server path before expecting it to take part in generation.
+upload, another project, or a backup before expecting it to take part in
+generation. Move other server media into the configured ComfyUI input folder
+first; browser requests cannot import arbitrary filesystem paths.
 
 Only references used by the current scene are decoded during sampling.
 

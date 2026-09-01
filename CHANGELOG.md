@@ -4,6 +4,14 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Hardened the Manager-facing HTTP surface. Direct prompt optimization now
+  uses a server-owned exact-origin allow-list and validates every redirect;
+  custom or local providers require `H3_PROMPT_OPTIMIZER_ALLOWED_ORIGINS`.
+  Carousel imports can read only enumerated ComfyUI input, project, or chain
+  media; Plan Studio browser media is confined to configured ComfyUI roots
+  with real-path/symlink checks; and host folder opening is limited to
+  loopback clients.
+
 - Composed visual context now supports two independently positioned native
   latent windows from the same saved scene. A split such as 5+34 can reuse one
   source movie for both blocks, including on Scene 2, while generated-audio

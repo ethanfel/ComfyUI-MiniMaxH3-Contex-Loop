@@ -8,7 +8,8 @@ const source = await readFile(
 assert.match(source, /MiniMaxH3ProjectAssetManager/);
 assert.match(source, /ComfyUI input/);
 assert.match(source, /Create a project asset from the selected source/);
-assert.match(source, /Server path/);
+assert.doesNotMatch(source, /Server path/);
+assert.doesNotMatch(source, /Absolute server media path/);
 assert.match(source, /H3 backups/);
 assert.match(source, /\["project", "Other Run"\]/);
 assert.match(source, /Other Run reads the live Asset Carousel/);

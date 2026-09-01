@@ -32,6 +32,12 @@ REQUEST_TIMEOUT_SECONDS = 300
 MAX_MEDIA = 9
 MAX_MEDIA_BYTES = 32 * 1024 * 1024
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+ALLOWED_ORIGINS_ENV = "H3_PROMPT_OPTIMIZER_ALLOWED_ORIGINS"
+DEFAULT_ALLOWED_ORIGINS = frozenset({
+    "https://api.openai.com",
+    "https://generativelanguage.googleapis.com",
+    "https://openrouter.ai",
+})
 
 DIRECT_OPTIMIZER_SYSTEM = """You are a focused MiniMax H3 prompt-writing assistant embedded in a scene editor.
 
@@ -58,16 +64,87 @@ def _bounded_text(value: Any, label: str, maximum: int,
     return value
 
 
+def _normalized_origin(value: str, label: str) -> str:
+    """Return one exact HTTP(S) origin without credentials or path data."""
+    parsed = urllib.parse.urlsplit(str(value or "").strip())
+    scheme = parsed.scheme.lower()
+    if scheme not in {"http", "https"}:
+        raise ValueError("%s must begin with http:// or https://." % label)
+    if not parsed.netloc or parsed.hostname is None:
+        raise ValueError("%s needs a host." % label)
+    if parsed.username is not None or parsed.password is not None:
+        raise ValueError("%s must not contain credentials." % label)
+    try:
+        port = parsed.port
+        host = parsed.hostname.rstrip(".").encode("idna").decode("ascii").lower()
+    except (UnicodeError, ValueError) as exc:
+        raise ValueError("%s contains an invalid host or port." % label) from exc
+    if not host:
+        raise ValueError("%s needs a host." % label)
+    bracketed = "[%s]" % host if ":" in host else host
+    default_port = 443 if scheme == "https" else 80
+    authority = bracketed if port in (None, default_port) \
+        else "%s:%d" % (bracketed, port)
+    return "%s://%s" % (scheme, authority)
+
+
+def _allowed_origins() -> frozenset[str]:
+    """Build the server-owned exact-origin allow-list.
+
+    Operators may add compatible public or local providers through an
+    environment variable. Request bodies can never extend this list.
+    """
+    allowed = set(DEFAULT_ALLOWED_ORIGINS)
+    configured = str(os.environ.get(ALLOWED_ORIGINS_ENV) or "").strip()
+    for raw in configured.split(","):
+        entry = raw.strip()
+        if not entry:
+            continue
+        parsed = urllib.parse.urlsplit(entry)
+        if parsed.path not in ("", "/") or parsed.query or parsed.fragment:
+            raise ValueError(
+                "%s entries must be origins such as "
+                "https://api.example.com or http://127.0.0.1:1234." %
+                ALLOWED_ORIGINS_ENV)
+        allowed.add(_normalized_origin(entry, ALLOWED_ORIGINS_ENV))
+    return frozenset(allowed)
+
+
+def _validate_api_destination(value: str) -> urllib.parse.SplitResult:
+    parsed = urllib.parse.urlsplit(str(value or "").strip())
+    origin = _normalized_origin(value, "Direct API URL")
+    if origin not in _allowed_origins():
+        raise ValueError(
+            "Direct API origin %s is not allowed by this server. Use OpenAI, "
+            "Gemini, or OpenRouter, or add the exact origin to %s before "
+            "starting ComfyUI." % (origin, ALLOWED_ORIGINS_ENV))
+    return parsed
+
+
 def _base_url(value: str) -> str:
-    url = str(value or "").strip()
-    if not re.match(r"^https?://", url, flags=re.I):
-        raise ValueError("Direct API URL must begin with http:// or https://.")
-    parsed = urllib.parse.urlsplit(url)
-    if not parsed.netloc:
-        raise ValueError("Direct API URL needs a host.")
+    parsed = _validate_api_destination(value)
     return urllib.parse.urlunsplit(
-        (parsed.scheme, parsed.netloc, parsed.path.rstrip("/"),
+        (parsed.scheme.lower(), parsed.netloc, parsed.path.rstrip("/"),
          parsed.query, ""))
+
+
+class _AllowedRedirectHandler(urllib.request.HTTPRedirectHandler):
+    """Re-apply the exact-origin allow-list to every redirect hop."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        _validate_api_destination(newurl)
+        original_origin = _normalized_origin(req.full_url, "Direct API URL")
+        redirect_origin = _normalized_origin(newurl, "Direct API redirect URL")
+        if redirect_origin != original_origin:
+            raise ValueError(
+                "Direct API redirects must remain on the original origin; "
+                "refusing %s -> %s." % (original_origin, redirect_origin))
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+def _open_direct_api_request(request: urllib.request.Request, timeout: int):
+    opener = urllib.request.build_opener(_AllowedRedirectHandler())
+    return opener.open(request, timeout=timeout)
 
 
 def _strip_known_endpoint(path: str) -> str:
@@ -306,8 +383,8 @@ def call_direct_optimizer(api_url: str, api_key: str, model: str,
         url, data=json.dumps(payload, ensure_ascii=False).encode("utf-8"),
         headers=headers, method="POST")
     try:
-        with urllib.request.urlopen(
-                request, timeout=REQUEST_TIMEOUT_SECONDS) as response:
+        with _open_direct_api_request(
+                request, REQUEST_TIMEOUT_SECONDS) as response:
             raw_response = response.read(MAX_RESPONSE_BYTES + 1)
     except urllib.error.HTTPError as exc:
         detail = exc.read().decode("utf-8", errors="replace")
