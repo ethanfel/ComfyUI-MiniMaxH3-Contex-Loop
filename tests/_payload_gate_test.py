@@ -189,6 +189,16 @@ def main():
     pp3 = importlib.import_module("patch_payload")
     assert pp3._already_patched(mb3.MiniMaxH3) == "foreign"
     assert not pp3.apply_patch(), "unrelated marker collision was accepted"
+    competing = types.ModuleType("competing_h3_payload")
+    competing.__file__ = (
+        "J:\\ai\\ComfyUI\\custom_nodes\\Competing-H3-Pack\\patch_payload.py")
+    competing._patched_extra_conds = foreign
+    sys.modules[competing.__name__] = competing
+    diagnostic = pp3.payload_owner_diagnostics(foreign)
+    assert "some_other_h3_pack.payload" in diagnostic, diagnostic
+    assert "custom_node=Competing-H3-Pack" in diagnostic, diagnostic
+    assert "competing_h3_payload" in diagnostic, diagnostic
+    assert "relationship=live_owner" in diagnostic, diagnostic
     print("6. lookalike marker from an unrelated pack: still refused")
 
     mb4 = make_model_base()
@@ -229,8 +239,11 @@ def main():
     assert got["cond_video_latents"] == ["NATIVE_KF", "NATIVE_REF"], got
     assert got["cond_audio_latents"] == ["GUIDE_AUDIO", "TAGGED_AUDIO"], got
 
-    refused, _detail = pp3.claim_patch_ownership()
+    refused, detail = pp3.claim_patch_ownership()
     assert not refused, "priority replaced an unrelated payload wrapper"
+    assert "some_other_h3_pack.payload" in detail, detail
+    assert "custom_node=Competing-H3-Pack" in detail, detail
+    sys.modules.pop(competing.__name__, None)
     print("7. explicit priority claims addressable and orphaned compatible "
           "payload owners and still refuses an unrelated wrapper")
 
