@@ -32,7 +32,18 @@ const SCENE_PROPERTY = "h3_checkpoint_manager_scene";
 const REVISION_PROPERTY = "h3_checkpoint_manager_revision";
 const CHAPTER_PROPERTY = "h3_checkpoint_manager_chapter";
 const COLLAPSED_CHAPTERS_PROPERTY = "h3_checkpoint_manager_collapsed_chapters";
+const PREVIEW_HEIGHT_PROPERTY = "h3_checkpoint_manager_preview_height";
+const DEFAULT_PREVIEW_HEIGHT = 280;
+const MIN_PREVIEW_HEIGHT = 120;
+const MAX_PREVIEW_HEIGHT = 720;
 const SHARED_COLORS = ["#6ea8ff", "#58c99d", "#bd8cff", "#e8a84f", "#f07f8c", "#55bfd0"];
+
+function previewHeight(value) {
+    const number = Number(value);
+    return Number.isFinite(number)
+        ? Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, Math.round(number)))
+        : DEFAULT_PREVIEW_HEIGHT;
+}
 
 function nodeType(node) {
     return node?.comfyClass ?? node?.type ?? "";
@@ -223,7 +234,17 @@ function injectStyles() {
         border-radius:999px; background:color-mix(in srgb,var(--h3cm-shared-color) 23%,transparent);
         color:color-mix(in srgb,var(--h3cm-shared-color) 72%,var(--h3cm-text)); font-size:9px; font-weight:750; }
       .h3cm-detail { display:flex; flex-direction:column; gap:8px; }
-      .h3cm-preview { width:100%; max-height:280px; min-height:150px; object-fit:contain; border-radius:6px; background:#08090c; }
+      .h3cm-preview-frame { width:100%; height:280px; min-height:120px; max-height:720px;
+        flex:0 0 auto; display:flex; flex-direction:column; overflow:hidden; border-radius:6px;
+        background:#08090c; }
+      .h3cm-preview { width:100%; min-height:0; flex:1 1 auto; object-fit:contain; background:#08090c; }
+      .h3cm-preview-resizer { position:relative; flex:0 0 12px; min-height:12px;
+        cursor:ns-resize; touch-action:none; background:color-mix(in srgb,var(--h3cm-panel) 88%,#000); }
+      .h3cm-preview-resizer::after { content:""; position:absolute; top:5px; left:calc(50% - 28px);
+        width:56px; height:2px; border-radius:2px; background:var(--h3cm-border); }
+      .h3cm-preview-resizer:hover::after,.h3cm-preview-resizer:focus-visible::after {
+        background:var(--h3cm-accent); }
+      .h3cm-preview-resizer:focus-visible { outline:1px solid var(--h3cm-accent); outline-offset:-1px; }
       .h3cm-audio { width:100%; height:36px; }
       .h3cm-inspector { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 9px; }
       .h3cm-inspector dt { color:var(--h3cm-muted); }
@@ -272,6 +293,7 @@ function mount(node) {
             Array.isArray(node.properties[COLLAPSED_CHAPTERS_PROPERTY])
                 ? node.properties[COLLAPSED_CHAPTERS_PROPERTY].map(String) : [],
         ),
+        previewHeight:previewHeight(node.properties[PREVIEW_HEIGHT_PROPERTY]),
         selected:null, deletion:null, busy:false, requestToken:0,
         initialRefresh:true, attribution:null, attributionButton:null,
     };
@@ -301,9 +323,17 @@ function mount(node) {
     const branches = element("div", "h3cm-branches");
     branchesPanel.append(branchesTitle, branches);
     const detail = element("section", "h3cm-panel h3cm-detail");
+    const previewFrame = element("div", "h3cm-preview-frame");
     const preview = element("video", "h3cm-preview");
     preview.controls = true;
     preview.preload = "metadata";
+    const previewResizer = element("div", "h3cm-preview-resizer");
+    previewResizer.tabIndex = 0;
+    previewResizer.setAttribute("role", "separator");
+    previewResizer.setAttribute("aria-orientation", "horizontal");
+    previewResizer.setAttribute("aria-label", "Resize clip preview height");
+    previewResizer.title = "Drag to resize the clip preview. Double-click to reset.";
+    previewFrame.append(preview, previewResizer);
     const audio = element("audio", "h3cm-audio");
     audio.controls = true;
     audio.preload = "metadata";
@@ -312,7 +342,7 @@ function mount(node) {
     const attributionPanel = element("div", "h3cm-attribution");
     attributionPanel.hidden = true;
     const prompt = element("div", "h3cm-prompt");
-    detail.append(preview, audio, attributionPanel, inspector, prompt);
+    detail.append(previewFrame, audio, attributionPanel, inspector, prompt);
     main.append(branchesPanel, detail);
     const deletion = element("section", "h3cm-delete");
     const deletionTitle = element("div", "h3cm-delete-title", "Select a checkpoint revision.");
@@ -328,6 +358,64 @@ function mount(node) {
     deletionActions.append(load, activate, status, remove);
     deletion.append(deletionTitle, deletionBody, deletionActions);
     root.append(head, runRow, chapterTabs, scenes, main, deletion);
+
+    function setPreviewHeight(value, persist = false) {
+        state.previewHeight = previewHeight(value);
+        previewFrame.style.height = `${state.previewHeight}px`;
+        previewResizer.setAttribute("aria-valuemin", String(MIN_PREVIEW_HEIGHT));
+        previewResizer.setAttribute("aria-valuemax", String(MAX_PREVIEW_HEIGHT));
+        previewResizer.setAttribute("aria-valuenow", String(state.previewHeight));
+        if (!persist) return;
+        node.properties[PREVIEW_HEIGHT_PROPERTY] = state.previewHeight;
+        node.graph?.setDirtyCanvas?.(true, true);
+        app.graph?.setDirtyCanvas?.(true, true);
+    }
+
+    setPreviewHeight(state.previewHeight);
+    previewResizer.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const pointerId = event.pointerId;
+        const startY = event.clientY;
+        const startHeight = state.previewHeight;
+        previewResizer.setPointerCapture?.(pointerId);
+        const move = (moveEvent) => {
+            if (moveEvent.pointerId !== pointerId) return;
+            moveEvent.preventDefault();
+            setPreviewHeight(startHeight + moveEvent.clientY - startY);
+        };
+        const finish = (finishEvent) => {
+            if (finishEvent.pointerId !== pointerId) return;
+            previewResizer.removeEventListener("pointermove", move);
+            previewResizer.removeEventListener("pointerup", finish);
+            previewResizer.removeEventListener("pointercancel", finish);
+            if (previewResizer.hasPointerCapture?.(pointerId)) {
+                previewResizer.releasePointerCapture(pointerId);
+            }
+            setPreviewHeight(state.previewHeight, true);
+        };
+        previewResizer.addEventListener("pointermove", move);
+        previewResizer.addEventListener("pointerup", finish);
+        previewResizer.addEventListener("pointercancel", finish);
+    });
+    previewResizer.addEventListener("keydown", (event) => {
+        let next = state.previewHeight;
+        const step = event.shiftKey ? 48 : 16;
+        if (event.key === "ArrowUp") next -= step;
+        else if (event.key === "ArrowDown") next += step;
+        else if (event.key === "Home") next = MIN_PREVIEW_HEIGHT;
+        else if (event.key === "End") next = MAX_PREVIEW_HEIGHT;
+        else return;
+        event.preventDefault();
+        event.stopPropagation();
+        setPreviewHeight(next, true);
+    });
+    previewResizer.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setPreviewHeight(DEFAULT_PREVIEW_HEIGHT, true);
+    });
 
     function activePlanRun() {
         const plan = upstreamPlanNode(node);
