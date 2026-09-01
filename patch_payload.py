@@ -75,6 +75,111 @@ _orig_extra_conds = None
 _applied = False
 
 
+def _callable_source(fn):
+    """Best-effort source path for a dynamically imported wrapper."""
+    code = getattr(fn, "__code__", None)
+    source = str(getattr(code, "co_filename", "") or "")
+    owner_globals = getattr(fn, "__globals__", None)
+    if not source and isinstance(owner_globals, dict):
+        source = str(owner_globals.get("__file__") or "")
+    if not source:
+        owner_module = sys.modules.get(str(getattr(fn, "__module__", "")))
+        source = str(getattr(owner_module, "__file__", "") or "")
+    return source
+
+
+def _custom_node_folder(source):
+    """Extract ``custom_nodes/<pack>`` from POSIX or Windows paths."""
+    normalized = str(source or "").replace("\\", "/")
+    marker = "/custom_nodes/"
+    if marker not in normalized:
+        return "unknown"
+    tail = normalized.split(marker, 1)[1]
+    return tail.split("/", 1)[0] or "unknown"
+
+
+def _loaded_payload_patch_modules(current=None):
+    """List loaded modules that look capable of owning this wrapper family."""
+    found = []
+    for name, module in list(sys.modules.items()):
+        if module is None:
+            continue
+        try:
+            candidate = getattr(module, "_patched_extra_conds", None)
+            source = str(getattr(module, "__file__", "") or "")
+            basename = source.replace("\\", "/").rsplit("/", 1)[-1]
+            relevant = bool(
+                candidate is current
+                or getattr(candidate, PATCH_MARKER, False)
+                or basename == "patch_payload.py"
+            )
+        except Exception:
+            continue
+        if not relevant:
+            continue
+        relationship = "live_owner" if candidate is current else "same_family"
+        found.append("%s [relationship=%s; custom_node=%s; source=%s]" % (
+            name,
+            relationship,
+            _custom_node_folder(source),
+            source or "unknown",
+        ))
+    return sorted(set(found))
+
+
+def payload_owner_diagnostics(fn=None):
+    """Describe the live payload owner without relying on import aliases.
+
+    ComfyUI loads custom-node packages under dynamic module names, and an old
+    wrapper can survive after its alias is replaced. Function globals and code
+    paths are therefore more authoritative than the current ``sys.modules``
+    entry. This text is intentionally suitable for pasting into an issue.
+    """
+    if fn is None:
+        cls = getattr(model_base, "MiniMaxH3", None)
+        fn = getattr(cls, "extra_conds", None) if cls is not None else None
+    if fn is None:
+        return "live payload owner is unavailable"
+
+    module_name = str(getattr(fn, "__module__", "") or "unknown")
+    function_name = str(
+        getattr(fn, "__qualname__", "")
+        or getattr(fn, "__name__", "")
+        or type(fn).__name__)
+    source = _callable_source(fn)
+    markers = []
+    if getattr(fn, PATCH_MARKER, False):
+        markers.append(PATCH_MARKER)
+    if getattr(fn, MULTISHOT_PATCH_MARKER, False):
+        markers.append(MULTISHOT_PATCH_MARKER)
+    if hasattr(fn, "__wrapped__"):
+        markers.append("__wrapped__")
+
+    owner_globals = getattr(fn, "__globals__", None)
+    captures = []
+    if isinstance(owner_globals, dict):
+        for name, value in owner_globals.items():
+            lowered = str(name).lower()
+            if (callable(value) and "cond" in lowered
+                    and ("orig" in lowered or "stock" in lowered)):
+                captures.append(str(name))
+
+    loaded = _loaded_payload_patch_modules(fn)
+    return (
+        "live_owner=%s.%s; custom_node=%s; source=%s; markers=%s; "
+        "captured_conditioning_methods=%s; loaded_payload_patch_modules=%s"
+        % (
+            module_name,
+            function_name,
+            _custom_node_folder(source),
+            source or "unknown",
+            ",".join(markers) or "none",
+            ",".join(sorted(captures)) or "none",
+            " | ".join(loaded) or "none",
+        )
+    )
+
+
 def _patched_extra_conds(self, **kwargs):
     out = _orig_extra_conds(self, **kwargs)
 
@@ -240,9 +345,11 @@ def apply_patch():
             "h3_motion_context: another pack has already patched "
             "MiniMaxH3.extra_conds (it now comes from %r). Both packs are "
             "solving the same keyframe/ref collision and they cannot both "
-            "own it, so this one is refusing. Disable one of them and "
-            "restart.",
-            getattr(getattr(cls, "extra_conds", None), "__module__", "?"))
+            "own it, so this one is refusing. Disable the identified "
+            "competing pack or duplicate folder and fully restart ComfyUI. "
+            "%s",
+            getattr(getattr(cls, "extra_conds", None), "__module__", "?"),
+            payload_owner_diagnostics(getattr(cls, "extra_conds", None)))
         return False
     if who:
         # report success: the patch IS active, just not ours, and the
@@ -310,7 +417,9 @@ def claim_patch_ownership(*, require_keyframe_audio=False):
     if who not in ("same", "other"):
         return False, (
             "payload owner is %s; only another H3 Motion Context copy can "
-            "be safely replaced" % (who or "stock/uninitialized"))
+            "be safely replaced. %s" % (
+                who or "stock/uninitialized",
+                payload_owner_diagnostics(current)))
 
     # ComfyUI's custom-node loader can leave an active function reachable from
     # the model class after its import alias has been reused by another copy or
@@ -328,14 +437,17 @@ def claim_patch_ownership(*, require_keyframe_audio=False):
     if not callable(original) or original is current:
         return False, (
             "the existing H3 Motion Context payload wrapper does not expose "
-            "its captured stock method; restart with only one copy enabled")
+            "its captured stock method. Disable the competing pack or "
+            "duplicate folder identified below, then fully restart ComfyUI. "
+            "%s" % payload_owner_diagnostics(current))
     home = str(getattr(cls, "__module__", "") or "")
     where = str(getattr(original, "__module__", "") or "")
     if (hasattr(original, "__wrapped__") or (home and where != home)
             or getattr(original, PATCH_MARKER, False)):
         return False, (
             "the existing payload wrapper captured another unknown wrapper; "
-            "refusing to discard it")
+            "refusing to discard it. %s" %
+            payload_owner_diagnostics(current))
 
     _orig_extra_conds = original
     cls.extra_conds = _patched_extra_conds
