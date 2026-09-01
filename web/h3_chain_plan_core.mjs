@@ -469,6 +469,7 @@ export function renamePlanShot(plan, index, requestedId) {
         for (const candidate of shots) {
             for (const field of [
                 "visual_context_source", "visual_context_lead_source",
+                "audio_context_source", "audio_context_lead_source",
             ]) {
                 if (String(candidate?.[field] ?? "").trim() === previousId) {
                     candidate[field] = nextId;
@@ -933,6 +934,114 @@ export function sceneAudioContextLength(
     return resolved;
 }
 
+export function sceneAudioContextUnlocked(shot) {
+    const value = shot?.audio_context_unlocked ?? false;
+    if (typeof value !== "boolean") {
+        throw new Error("audio_context_unlocked must be true or false.");
+    }
+    return value;
+}
+
+export function sceneAudioContextSource(plan, index) {
+    return resolvePriorSceneSource(
+        plan, index,
+        plan?.shots?.[Number(index) - 1]?.audio_context_source,
+        "Audio context source", true,
+    );
+}
+
+export function sceneAudioContextLeadSource(plan, index) {
+    return resolvePriorSceneSource(
+        plan, index,
+        plan?.shots?.[Number(index) - 1]?.audio_context_lead_source,
+        "Composed audio lead source", false,
+    );
+}
+
+export function audioContextLeadFrameOptions(contextLength) {
+    const total = Number(contextLength);
+    if (!Number.isInteger(total) || total < 2) return Object.freeze([]);
+    const expected = Math.round(total / FPS * 40);
+    return Object.freeze(Array.from({length:total - 1}, (_item, offset) => (
+        offset + 1
+    )).filter((lead) => (
+        Math.round(lead / FPS * 40)
+        + Math.round((total - lead) / FPS * 40) === expected
+    )));
+}
+
+export function sceneAudioContextLeadFrames(shot, contextLength) {
+    const raw = shot?.audio_context_lead_frames;
+    if (raw === undefined || raw === null
+            || (typeof raw === "string" && !raw.trim())) return 0;
+    const resolved = Number(raw);
+    const allowed = audioContextLeadFrameOptions(contextLength);
+    if (typeof raw === "boolean" || !Number.isInteger(resolved)
+            || !allowed.includes(resolved)) {
+        throw new Error(
+            `Composed audio lead frames must be an exact 40 Hz split between 1 and ${Math.max(0, Number(contextLength) - 1)}.`,
+        );
+    }
+    return resolved;
+}
+
+export function audioContextWindowStarts(
+    rawFrames, deliveredFrames, spanFrames,
+) {
+    const raw = Number(rawFrames);
+    const delivered = Number(deliveredFrames);
+    const span = Number(spanFrames);
+    if (!Number.isInteger(raw) || !Number.isInteger(delivered)
+            || !Number.isInteger(span) || raw < delivered || delivered < 1
+            || span < 1 || span > delivered) return Object.freeze([]);
+    const trim = raw - delivered;
+    const expected = Math.round(span / FPS * 40);
+    const starts = [];
+    for (let start = 0; start <= delivered - span; start += 1) {
+        const rawStart = trim + start;
+        if (Math.round((rawStart + span) / FPS * 40)
+                - Math.round(rawStart / FPS * 40) === expected) {
+            starts.push(start);
+        }
+    }
+    return Object.freeze(starts);
+}
+
+export function sceneAudioContextStartFrame(
+    shot, rawFrames, deliveredFrames, spanFrames, lead = false,
+) {
+    const field = lead
+        ? "audio_context_lead_start_frame" : "audio_context_start_frame";
+    const starts = audioContextWindowStarts(
+        rawFrames, deliveredFrames, spanFrames,
+    );
+    if (!starts.length) {
+        throw new Error(
+            `${field} has no exact ${spanFrames}-frame/40 Hz window in this source.`,
+        );
+    }
+    const authored = shot?.[field];
+    if (authored === undefined || authored === null
+            || (typeof authored === "string" && !authored.trim())) {
+        return starts.at(-1);
+    }
+    const resolved = Number(authored);
+    const latest = Number(deliveredFrames) - Number(spanFrames);
+    if (typeof authored === "boolean" || !Number.isInteger(resolved)
+            || resolved < 0 || resolved > latest) {
+        throw new Error(
+            `${field} must be between 0 and ${latest} so its ${spanFrames}-frame window fits.`,
+        );
+    }
+    if (!starts.includes(resolved)) {
+        const nearest = nearestNativeContextWindowStart(starts, resolved);
+        throw new Error(
+            `${field}=${resolved} does not preserve the exact 40 Hz duration. Use ${nearest} (nearest).`,
+        );
+    }
+    return resolved;
+}
+
 export function sceneVideoBlendFrames(
     shot, planDefault = 0, videoContextLength = 22,
 ) {
@@ -1210,6 +1319,72 @@ export function calculatePlanTiming(plan, settings = {}) {
             rowErrors.push(error.message);
         }
 
+        let audioContextUnlocked = false;
+        let audioContextSource = index > 1 ? index - 1 : null;
+        let audioContextLeadSource = null;
+        let audioContextLeadFrames = 0;
+        const effectiveAudioSelectionSpan = [
+            "masked_av", "tapered_av", "feathered_av",
+            "audio_feathered_av", "drift_control_av",
+            "color_stable_drift_av",
+        ].includes(continuationMode) && sceneAudioContext > 0
+            ? sceneContext : sceneAudioContext;
+        try {
+            audioContextUnlocked = sceneAudioContextUnlocked(shot);
+            if (audioContextUnlocked) {
+                if (index === 1) {
+                    rowErrors.push(
+                        "Scene 1 cannot unlock saved-scene audio context.",
+                    );
+                }
+                if (sourceAudioTarget === "locked") {
+                    rowErrors.push(
+                        "Unlocked audio context cannot be combined with Lip-sync to source audio.",
+                    );
+                } else if (generatedContinuity !== "on") {
+                    rowErrors.push(
+                        "Unlocked audio context requires Generated continuity for this scene.",
+                    );
+                }
+                if (effectiveAudioSelectionSpan <= 0) {
+                    rowErrors.push(
+                        "Unlocked audio context requires a positive audio context length.",
+                    );
+                }
+                audioContextSource = sceneAudioContextSource(plan, index);
+                audioContextLeadSource = sceneAudioContextLeadSource(
+                    plan, index,
+                );
+                if (audioContextLeadSource !== null) {
+                    audioContextLeadFrames = sceneAudioContextLeadFrames(
+                        shot, effectiveAudioSelectionSpan,
+                    );
+                } else if (Object.hasOwn(
+                    shot, "audio_context_lead_frames",
+                )) {
+                    rowErrors.push(
+                        "Composed audio lead frames require an audio lead source.",
+                    );
+                } else if (Object.hasOwn(
+                    shot, "audio_context_lead_start_frame",
+                )) {
+                    rowErrors.push(
+                        "Composed audio lead start requires an audio lead source.",
+                    );
+                }
+            } else if ([
+                "audio_context_source", "audio_context_start_frame",
+                "audio_context_lead_source", "audio_context_lead_frames",
+                "audio_context_lead_start_frame",
+            ].some((field) => Object.hasOwn(shot, field))) {
+                rowErrors.push(
+                    "Independent audio fields require Audio context to be unlocked.",
+                );
+            }
+        } catch (error) {
+            rowErrors.push(error.message);
+        }
+
         const contextSpatialProxy = String(
             shot.context_spatial_proxy ?? "off",
         ).trim().toLowerCase() || "off";
@@ -1289,6 +1464,22 @@ export function calculatePlanTiming(plan, settings = {}) {
             visualContextLeadFrames,
             visualContextStartFrame:null,
             visualContextLeadStartFrame:null,
+            audioContextUnlocked,
+            audioContextSource,
+            audioContextSourceId: audioContextSource === null ? null
+                : safeShotId(
+                    plan.shots[audioContextSource - 1]?.id,
+                    `clip_${String(audioContextSource).padStart(4, "0")}`,
+                ),
+            audioContextLeadSource,
+            audioContextLeadSourceId: audioContextLeadSource === null ? null
+                : safeShotId(
+                    plan.shots[audioContextLeadSource - 1]?.id,
+                    `clip_${String(audioContextLeadSource).padStart(4, "0")}`,
+                ),
+            audioContextLeadFrames,
+            audioContextStartFrame:null,
+            audioContextLeadStartFrame:null,
             videoBlendFrames: sceneBlendFrames,
             audioContextLength: [
                 "masked_av", "tapered_av", "feathered_av",
@@ -1351,6 +1542,46 @@ export function calculatePlanTiming(plan, settings = {}) {
                 );
             } catch (error) {
                 target.errors.push(error.message);
+            }
+        }
+        if (target.audioContextUnlocked) {
+            const audioSource = target.audioContextSource === null ? null
+                : rows[target.audioContextSource - 1];
+            const recentAudioFrames = target.audioContextLength
+                - target.audioContextLeadFrames;
+            if (audioSource && audioSource.deliveredFrames < recentAudioFrames) {
+                target.errors.push(
+                    `Selected audio source scene ${audioSource.index} delivers fewer than ${recentAudioFrames} required frames.`,
+                );
+            }
+            if (audioSource) {
+                try {
+                    target.audioContextStartFrame = sceneAudioContextStartFrame(
+                        plan.shots[offset], audioSource.rawFrames,
+                        audioSource.deliveredFrames, recentAudioFrames, false,
+                    );
+                } catch (error) {
+                    target.errors.push(error.message);
+                }
+            }
+            const audioLead = target.audioContextLeadSource === null ? null
+                : rows[target.audioContextLeadSource - 1];
+            if (audioLead
+                    && audioLead.deliveredFrames < target.audioContextLeadFrames) {
+                target.errors.push(
+                    `Selected composed-audio lead scene ${audioLead.index} delivers fewer than ${target.audioContextLeadFrames} required frames.`,
+                );
+            }
+            if (audioLead) {
+                try {
+                    target.audioContextLeadStartFrame = sceneAudioContextStartFrame(
+                        plan.shots[offset], audioLead.rawFrames,
+                        audioLead.deliveredFrames,
+                        target.audioContextLeadFrames, true,
+                    );
+                } catch (error) {
+                    target.errors.push(error.message);
+                }
             }
         }
     }

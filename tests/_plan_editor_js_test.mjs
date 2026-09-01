@@ -11,6 +11,8 @@ import {
     SCENE_LORA_ROUTES,
     SCENE_PROMPT_SEED_MODES,
     automaticSceneColor,
+    audioContextLeadFrameOptions,
+    audioContextWindowStarts,
     calculatePlanTiming,
     derivedSceneSeed,
     duplicateShot,
@@ -26,6 +28,11 @@ import {
     renamePlanShot,
     removePlanShot,
     sceneAudioContextLength,
+    sceneAudioContextLeadFrames,
+    sceneAudioContextLeadSource,
+    sceneAudioContextSource,
+    sceneAudioContextStartFrame,
+    sceneAudioContextUnlocked,
     sceneContextLength,
     sceneContinuationMode,
     sceneLoRARoute,
@@ -49,7 +56,10 @@ const renamePlan = {
         {id:"scene_1", prompt:["one"]},
         {id:"scene_2", prompt:["two"]},
         {id:"scene_3", prompt:["three"], visual_context_source:"scene_1",
-            visual_context_lead_source:"scene_2"},
+            visual_context_lead_source:"scene_2",
+            audio_context_unlocked:true,
+            audio_context_source:"scene_1",
+            audio_context_lead_source:"scene_2"},
     ],
     chapters:[{id:"chapter_1", title:"One", start_scene_id:"scene_2"}],
 };
@@ -59,6 +69,7 @@ assert.deepEqual(renamePlanShot(renamePlan, 1, "middle scene"), {
 assert.equal(renamePlan.shots.length, 3);
 assert.equal(renamePlan.chapters[0].start_scene_id, "middle_scene");
 assert.equal(renamePlan.shots[2].visual_context_lead_source, "middle_scene");
+assert.equal(renamePlan.shots[2].audio_context_lead_source, "middle_scene");
 const beforeDuplicateRename = JSON.stringify(renamePlan);
 assert.throws(
     () => renamePlanShot(renamePlan, 2, "scene_1"),
@@ -248,6 +259,34 @@ assert.throws(
     () => sceneAudioContextLength({audio_context_length: 241}, 22, 0),
     /between 0 and 240/,
 );
+assert.equal(sceneAudioContextUnlocked({}), false);
+assert.equal(sceneAudioContextUnlocked({audio_context_unlocked:true}), true);
+assert.throws(
+    () => sceneAudioContextUnlocked({audio_context_unlocked:"true"}),
+    /true or false/,
+);
+const independentAudioPlan = {shots:[
+    {id:"one"}, {id:"two"}, {id:"three"},
+    {id:"four"},
+    {id:"five", audio_context_unlocked:true,
+        audio_context_source:"three", audio_context_start_frame:0,
+        audio_context_lead_source:"four", audio_context_lead_frames:5,
+        audio_context_lead_start_frame:12},
+]};
+assert.equal(sceneAudioContextSource(independentAudioPlan, 5), 3);
+assert.equal(sceneAudioContextLeadSource(independentAudioPlan, 5), 4);
+assert.equal(sceneAudioContextLeadFrames(independentAudioPlan.shots[4], 39), 5);
+assert.ok(audioContextLeadFrameOptions(39).includes(5));
+assert.equal(audioContextLeadFrameOptions(39).at(-1), 38);
+assert.deepEqual(audioContextWindowStarts(90, 51, 5).slice(0, 5), [
+    0, 1, 3, 4, 6,
+]);
+assert.equal(sceneAudioContextStartFrame(
+    independentAudioPlan.shots[4], 90, 51, 34,
+), 0);
+assert.equal(sceneAudioContextStartFrame(
+    independentAudioPlan.shots[4], 90, 51, 5, true,
+), 12);
 assert.equal(sceneVideoBlendFrames({}, 5, 22), 5);
 assert.equal(sceneVideoBlendFrames({}, 39, 22), 22);
 assert.equal(sceneVideoBlendFrames({video_blend_frames: 0}, 5, 22), 0);
@@ -836,6 +875,53 @@ assert.equal(composedTiming.shots[4].visualContextLeadSourceId, "four");
 assert.equal(composedTiming.shots[4].visualContextLeadFrames, 5);
 assert.equal(composedTiming.shots[4].visualContextStartFrame, 17);
 assert.equal(composedTiming.shots[4].visualContextLeadStartFrame, 46);
+const independentAudioTimingPlan = structuredClone(composedPlan);
+Object.assign(independentAudioTimingPlan.shots[4], {
+    audio_context_unlocked:true,
+    audio_context_source:"three",
+    audio_context_start_frame:0,
+    audio_context_lead_source:"four",
+    audio_context_lead_frames:5,
+    audio_context_lead_start_frame:12,
+});
+const independentAudioTiming = calculatePlanTiming(
+    independentAudioTimingPlan, {
+        contextLength:39, audioContextLength:39,
+        continuationMode:"masked_av", generatedContinuity:"on",
+        videoBlendFrames:0, anchorMode:"head", encodeMode:"video",
+        defaultDurationSeconds:5, defaultSteps:10,
+    },
+);
+assert.deepEqual(independentAudioTiming.errors, []);
+assert.equal(independentAudioTiming.shots[4].audioContextUnlocked, true);
+assert.equal(independentAudioTiming.shots[4].audioContextSource, 3);
+assert.equal(independentAudioTiming.shots[4].audioContextLeadSource, 4);
+assert.equal(independentAudioTiming.shots[4].audioContextLeadFrames, 5);
+assert.equal(independentAudioTiming.shots[4].audioContextStartFrame, 0);
+assert.equal(independentAudioTiming.shots[4].audioContextLeadStartFrame, 12);
+const disabledIndependentAudioTiming = calculatePlanTiming(
+    independentAudioTimingPlan, {
+        contextLength:39, audioContextLength:39,
+        continuationMode:"masked_av", generatedContinuity:"off",
+        videoBlendFrames:0, anchorMode:"head", encodeMode:"video",
+        defaultDurationSeconds:5, defaultSteps:10,
+    },
+);
+assert.ok(disabledIndependentAudioTiming.errors.some((message) => (
+    message.includes("requires Generated continuity")
+)));
+const lockedIndependentAudioTiming = calculatePlanTiming(
+    independentAudioTimingPlan, {
+        contextLength:39, audioContextLength:39,
+        continuationMode:"masked_av", generatedContinuity:"on",
+        sourceAudioTarget:"locked", videoBlendFrames:0,
+        anchorMode:"head", encodeMode:"video",
+        defaultDurationSeconds:5, defaultSteps:10,
+    },
+);
+assert.ok(lockedIndependentAudioTiming.errors.some((message) => (
+    message.includes("cannot be combined with Lip-sync")
+)));
 const windowedComposition = structuredClone(composedPlan);
 windowedComposition.shots[4].visual_context_start_frame = 0;
 windowedComposition.shots[4].visual_context_lead_start_frame = 29;

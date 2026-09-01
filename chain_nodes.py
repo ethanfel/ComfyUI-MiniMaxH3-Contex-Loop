@@ -4988,6 +4988,136 @@ def _shot_audio_context_length(shot: dict[str, Any],
     return resolved
 
 
+def _shot_audio_context_unlocked(shot: dict[str, Any]) -> bool:
+    """Return whether one scene authors audio independently from picture.
+
+    Absence is deliberately the released behavior: generated audio is taken
+    from the immediate timeline predecessor even when picture context is
+    non-linear or composed.
+    """
+    value = shot.get("audio_context_unlocked", False)
+    if not isinstance(value, bool):
+        raise ValueError("audio_context_unlocked must be true or false.")
+    return value
+
+
+def _shot_audio_context_source(
+        plan: dict[str, Any], index: int) -> int | None:
+    shots = plan.get("shots")
+    raw = (shots[int(index) - 1].get("audio_context_source")
+           if isinstance(shots, list) and 1 <= int(index) <= len(shots)
+           else None)
+    return _resolve_prior_scene_source(
+        plan, index, raw, "audio_context_source", True)
+
+
+def _shot_audio_context_lead_source(
+        plan: dict[str, Any], index: int) -> int | None:
+    shots = plan.get("shots")
+    raw = (shots[int(index) - 1].get("audio_context_lead_source")
+           if isinstance(shots, list) and 1 <= int(index) <= len(shots)
+           else None)
+    return _resolve_prior_scene_source(
+        plan, index, raw, "audio_context_lead_source", False)
+
+
+def _audio_context_lead_options(context_length: int) -> tuple[int, ...]:
+    """Return ordered audio splits that preserve the 40 Hz total exactly."""
+    total = int(context_length)
+    expected = int(round(total / float(FPS) * AUDIO_HZ))
+    return tuple(
+        lead for lead in range(1, total)
+        if (int(round(lead / float(FPS) * AUDIO_HZ))
+            + int(round((total - lead) / float(FPS) * AUDIO_HZ))
+            == expected))
+
+
+def _shot_audio_context_lead_frames(
+        shot: dict[str, Any], context_length: int) -> int:
+    value = shot.get("audio_context_lead_frames")
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return 0
+    if isinstance(value, bool) or (
+            isinstance(value, float) and not value.is_integer()):
+        raise ValueError(
+            "audio_context_lead_frames must be an exact 40 Hz audio split.")
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "audio_context_lead_frames must be an exact 40 Hz audio split."
+        ) from exc
+    allowed = _audio_context_lead_options(context_length)
+    if resolved not in allowed:
+        raise ValueError(
+            "audio_context_lead_frames must be between 1 and %d and preserve "
+            "the exact 40 Hz duration of this scene's %d-frame audio "
+            "context." % (max(0, int(context_length) - 1),
+                           int(context_length)))
+    return resolved
+
+
+def _audio_context_window_starts(
+        raw_frames: int, delivered_frames: int,
+        span_frames: int) -> tuple[int, ...]:
+    """Return delivered-frame starts whose audio crop has an exact duration."""
+    raw_frames = int(raw_frames)
+    delivered_frames = int(delivered_frames)
+    span_frames = int(span_frames)
+    if (raw_frames < delivered_frames or delivered_frames < 1
+            or span_frames < 1 or span_frames > delivered_frames):
+        return ()
+    trim_frames = raw_frames - delivered_frames
+    expected = int(round(span_frames / float(FPS) * AUDIO_HZ))
+    starts = []
+    for delivered_start in range(delivered_frames - span_frames + 1):
+        raw_start = trim_frames + delivered_start
+        start_step = int(round(raw_start / float(FPS) * AUDIO_HZ))
+        end_step = int(round(
+            (raw_start + span_frames) / float(FPS) * AUDIO_HZ))
+        if end_step - start_step == expected:
+            starts.append(delivered_start)
+    return tuple(starts)
+
+
+def _shot_audio_context_start_frame(
+        shot: dict[str, Any], field: str, raw_frames: int,
+        delivered_frames: int, span_frames: int) -> int:
+    """Resolve one exact 40 Hz audio-latent crop in delivered-frame time."""
+    starts = _audio_context_window_starts(
+        raw_frames, delivered_frames, span_frames)
+    if not starts:
+        raise ValueError(
+            "%s has no exact %d-frame/40 Hz audio window inside the source's "
+            "%d raw / %d delivered frames." %
+            (field, int(span_frames), int(raw_frames), int(delivered_frames)))
+    value = shot.get(field)
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return starts[-1]
+    if isinstance(value, bool) or (
+            isinstance(value, float) and not value.is_integer()):
+        raise ValueError("%s must be an integer delivered frame." % field)
+    try:
+        resolved = int(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "%s must be an integer delivered frame." % field) from exc
+    latest = int(delivered_frames) - int(span_frames)
+    if resolved < 0 or resolved > latest:
+        raise ValueError(
+            "%s must be between 0 and %d so its %d-frame window fits inside "
+            "the source's %d delivered frames." %
+            (field, latest, int(span_frames), int(delivered_frames)))
+    if resolved not in starts:
+        nearest = min(starts, key=lambda candidate: (
+            abs(candidate - resolved), candidate))
+        raise ValueError(
+            "%s=%d does not preserve the exact 40 Hz audio duration. Use %d "
+            "(nearest), or another valid start from %s." %
+            (field, resolved, nearest, starts))
+    return resolved
+
+
 def _shot_video_blend_frames(shot: dict[str, Any],
                              default_blend_frames: int,
                              video_context_length: int) -> int:
@@ -5492,7 +5622,35 @@ def _scene_dependency_record(
         if "visual_context_lead_start_frame" in shot:
             scopes["incoming_boundary"][
                 "visual_context_lead_start_frame"] = int(
-                    shot["visual_context_lead_start_frame"])
+                shot["visual_context_lead_start_frame"])
+    if index > 1 and audio_context > 0 and _shot_audio_context_unlocked(shot):
+        selected_audio_context = (
+            context if transition in MASKED_CONTINUATION_MODES
+            else audio_context)
+        audio_source = _shot_audio_context_source(plan, index)
+        audio_lead_source = _shot_audio_context_lead_source(plan, index)
+        scopes["incoming_boundary"].update({
+            "audio_context_unlocked": True,
+            "audio_context_source_scene": int(audio_source),
+            "audio_context_source_id": str(
+                plan["shots"][audio_source - 1]["id"]),
+        })
+        if "audio_context_start_frame" in shot:
+            scopes["incoming_boundary"]["audio_context_start_frame"] = int(
+                shot["audio_context_start_frame"])
+        if audio_lead_source is not None:
+            scopes["incoming_boundary"].update({
+                "audio_context_lead_source_scene": int(audio_lead_source),
+                "audio_context_lead_source_id": str(
+                    plan["shots"][audio_lead_source - 1]["id"]),
+                "audio_context_lead_frames": int(
+                    _shot_audio_context_lead_frames(
+                        shot, selected_audio_context)),
+            })
+            if "audio_context_lead_start_frame" in shot:
+                scopes["incoming_boundary"][
+                    "audio_context_lead_start_frame"] = int(
+                        shot["audio_context_lead_start_frame"])
     if _audio_policy_locks_source_audio(compatibility, shot):
         # Omit the disabled spelling so pre-switch scene-dependency records
         # remain byte-for-byte compatible with unchanged 0.5 runs.
@@ -6520,6 +6678,7 @@ def _normalize_plan(
     shots: list[dict[str, Any]] = []
     resolved_continuation_modes: list[str] = []
     resolved_context_lengths: list[int] = []
+    resolved_audio_context_lengths: list[int] = []
     stitched_frames = 0
     for offset, item in enumerate(raw_shots):
         index = offset + 1
@@ -6537,6 +6696,7 @@ def _normalize_plan(
         except ValueError as exc:
             raise ValueError("Shot %d: %s" % (index, exc)) from exc
         resolved_context_lengths.append(shot_context_length)
+        resolved_audio_context_lengths.append(shot_audio_context_length)
         if anchor_mode != "head" and shot_video_blend_frames:
             raise ValueError(
                 "H3 scene video blending requires anchor_mode=head because "
@@ -6776,6 +6936,37 @@ def _normalize_plan(
                 isinstance(explicit_audio_context, str)
                 and not explicit_audio_context.strip()):
             shot["audio_context_length"] = shot_audio_context_length
+        audio_context_fields = (
+            "audio_context_source", "audio_context_start_frame",
+            "audio_context_lead_source", "audio_context_lead_frames",
+            "audio_context_lead_start_frame",
+        )
+        audio_context_unlocked = _shot_audio_context_unlocked(item)
+        if audio_context_unlocked:
+            if index == 1:
+                raise ValueError(
+                    "Shot 1 cannot unlock saved-scene audio context; it has "
+                    "no generated predecessor scene.")
+            scene_audio_policy = _resolved_scene_audio_policy(
+                {"audio_policy": resolved_audio_policy}, shot)
+            if scene_audio_policy.get("source_audio_target") == "locked":
+                raise ValueError(
+                    "Shot %d cannot unlock audio context while Lip-sync to "
+                    "source audio locks the complete scene audio target." %
+                    index)
+            if scene_audio_policy["generated_continuity"] != "on":
+                raise ValueError(
+                    "Shot %d cannot unlock audio context because generated "
+                    "continuity is disabled for that scene." % index)
+            shot["audio_context_unlocked"] = True
+            for key in audio_context_fields:
+                if key in item:
+                    shot[key] = item.get(key)
+        elif any(key in item for key in audio_context_fields):
+            raise ValueError(
+                "Shot %d defines independent audio context fields while "
+                "audio_context_unlocked is false. Unlock audio in Plan "
+                "Studio Context first." % index)
         explicit_video_blend = item.get("video_blend_frames")
         if explicit_video_blend is not None and not (
                 isinstance(explicit_video_blend, str)
@@ -6907,6 +7098,73 @@ def _normalize_plan(
                 "context, so its video_blend_frames must be 0. Timeline "
                 "assembly still cuts from scene %d." %
                 (target_index, target_index - 1))
+
+        if not _shot_audio_context_unlocked(target):
+            continue
+        audio_span = resolved_audio_context_lengths[target_index - 1]
+        if (resolved_continuation_modes[target_index - 1]
+                in MASKED_CONTINUATION_MODES and audio_span > 0):
+            # Preserved-prefix AV modes pin picture and sound over one shared
+            # target interval even when their source movies are independent.
+            audio_span = next_context_length
+        if audio_span <= 0:
+            raise ValueError(
+                "Shot %d unlocks audio context but carries 0 audio frames. "
+                "Set a positive audio context or lock it again." %
+                target_index)
+        audio_source_index = _shot_audio_context_source(
+            provisional_plan, target_index)
+        audio_lead_source_index = _shot_audio_context_lead_source(
+            provisional_plan, target_index)
+        audio_lead_frames = 0
+        if audio_lead_source_index is not None:
+            audio_lead_frames = _shot_audio_context_lead_frames(
+                target, audio_span)
+            target["audio_context_lead_source"] = shots[
+                audio_lead_source_index - 1]["id"]
+            target["audio_context_lead_frames"] = audio_lead_frames
+        elif "audio_context_lead_frames" in target:
+            raise ValueError(
+                "Shot %d defines audio_context_lead_frames without an "
+                "audio_context_lead_source." % target_index)
+        elif "audio_context_lead_start_frame" in target:
+            raise ValueError(
+                "Shot %d defines audio_context_lead_start_frame without an "
+                "audio_context_lead_source." % target_index)
+        target["audio_context_source"] = shots[
+            audio_source_index - 1]["id"]
+        recent_audio_frames = audio_span - audio_lead_frames
+        audio_source = shots[audio_source_index - 1]
+        recent_audio_start = _shot_audio_context_start_frame(
+            target, "audio_context_start_frame",
+            int(audio_source["raw_frames"]),
+            int(audio_source["delivered_frames"]), recent_audio_frames)
+        if "audio_context_start_frame" in target:
+            recent_default = _audio_context_window_starts(
+                int(audio_source["raw_frames"]),
+                int(audio_source["delivered_frames"]),
+                recent_audio_frames)[-1]
+            if recent_audio_start == recent_default:
+                target.pop("audio_context_start_frame", None)
+            else:
+                target["audio_context_start_frame"] = recent_audio_start
+        if audio_lead_source_index is not None:
+            audio_lead_source = shots[audio_lead_source_index - 1]
+            lead_audio_start = _shot_audio_context_start_frame(
+                target, "audio_context_lead_start_frame",
+                int(audio_lead_source["raw_frames"]),
+                int(audio_lead_source["delivered_frames"]),
+                audio_lead_frames)
+            if "audio_context_lead_start_frame" in target:
+                lead_default = _audio_context_window_starts(
+                    int(audio_lead_source["raw_frames"]),
+                    int(audio_lead_source["delivered_frames"]),
+                    audio_lead_frames)[-1]
+                if lead_audio_start == lead_default:
+                    target.pop("audio_context_lead_start_frame", None)
+                else:
+                    target["audio_context_lead_start_frame"] = (
+                        lead_audio_start)
 
     compatibility = {
         "fps": FPS,
@@ -8066,7 +8324,8 @@ def _editorial_dependency_mismatches(
         int(index) - 1 if resolved_visual > 0 else 0))
     uses_immediate_audio = (
         int(segment.get("resolved_audio_context_length", 0)) > 0
-        and str(segment.get("generated_continuity", "on")) == "on")
+        and str(segment.get("generated_continuity", "on")) == "on"
+        and not bool(segment.get("audio_context_unlocked", False)))
     if (predecessor is not None
             and (visual_source_index == int(index) - 1
                  or uses_immediate_audio)):
@@ -8083,7 +8342,12 @@ def _editorial_dependency_mismatches(
              "visual_context_source_editorial_out_frames", "visual source"),
             ("visual_context_lead_source_scene",
              "visual_context_lead_editorial_out_frames",
-             "composed lead source")):
+             "composed picture lead source"),
+            ("audio_context_source_scene",
+             "audio_context_source_editorial_out_frames", "audio source"),
+            ("audio_context_lead_source_scene",
+             "audio_context_lead_editorial_out_frames",
+             "composed audio lead source")):
         source_index = int(segment.get(source_field, 0))
         source = editorial_segments.get(source_index)
         if source is None:
@@ -8112,11 +8376,16 @@ def _editorial_dependency_sources(
     if (int(segment.get("resolved_audio_context_length", 0)) > 0
             and str(segment.get("generated_continuity", "on")) == "on"
             and int(index) > 1):
-        sources.add(int(index) - 1)
+        sources.add(int(segment.get(
+            "audio_context_source_scene", int(index) - 1)))
     lead_source_index = int(segment.get(
         "visual_context_lead_source_scene", 0))
     if lead_source_index > 0:
         sources.add(lead_source_index)
+    audio_lead_source_index = int(segment.get(
+        "audio_context_lead_source_scene", 0))
+    if audio_lead_source_index > 0:
+        sources.add(audio_lead_source_index)
     return sources
 
 
@@ -9119,30 +9388,233 @@ def _public_segment(value: dict[str, Any]) -> dict[str, Any]:
         "visual_context_lead_source_revision",
         "visual_context_lead_checkpoint_sha256",
         "visual_context_lead_frames", "visual_context_lead_start_frame",
+        "audio_context_unlocked",
+        "audio_context_source_scene", "audio_context_source_id",
+        "audio_context_start_frame", "audio_context_source_revision",
+        "audio_context_source_checkpoint_sha256",
+        "audio_context_lead_source_scene", "audio_context_lead_source_id",
+        "audio_context_lead_start_frame", "audio_context_lead_frames",
+        "audio_context_lead_source_revision",
+        "audio_context_lead_checkpoint_sha256",
         "sample_rate", "segment_sha256",
         "checkpoint_sha256", "prompt_file_sha256", "predecessor_revision",
         "predecessor_checkpoint_sha256", "predecessor_editorial_out_frames",
         "visual_context_source_editorial_out_frames",
         "visual_context_lead_editorial_out_frames",
+        "audio_context_source_editorial_out_frames",
+        "audio_context_lead_editorial_out_frames",
         "take_kind", "alternate_of_revision", "alternate_media_mode",
         "presentation_base_revision", "presentation_alternate_revision",
         "presentation_media_mode") if key in value}
 
 
+def _audio_context_state(state: dict[str, Any]) -> dict[str, Any]:
+    """Replace immediate audio with explicitly selected saved latent windows."""
+    plan = state["plan"]
+    index = int(state["index"])
+    if index <= 1:
+        return state
+    shot = plan["shots"][index - 1]
+    if not _shot_audio_context_unlocked(shot):
+        return state
+    cfg = plan["compatibility"]
+    context_length = _shot_context_length(
+        shot, int(cfg.get("context_length", 0)))
+    audio_context_length = _shot_audio_context_length(
+        shot, int(cfg.get("audio_context_length", 0)), context_length)
+    continuation_mode = str(shot.get(
+        "continuation_mode", cfg.get("continuation_mode", "guide")))
+    if (not _audio_policy_uses_generated_continuity(cfg, shot)
+            or _audio_policy_locks_source_audio(cfg, shot)
+            or audio_context_length <= 0):
+        return state
+    selected_span = (
+        context_length if continuation_mode in MASKED_CONTINUATION_MODES
+        else audio_context_length)
+    if selected_span <= 0:
+        return state
+    source_index = _shot_audio_context_source(plan, index)
+    lead_source_index = _shot_audio_context_lead_source(plan, index)
+    lead_frames = (_shot_audio_context_lead_frames(shot, selected_span)
+                   if lead_source_index is not None else 0)
+    recent_frames = selected_span - lead_frames
+    cache = state.get("_audio_context_state")
+    if (isinstance(cache, dict)
+            and int(cache.get("_audio_context_target", 0)) == index
+            and int(cache.get("_audio_context_source", 0)) == source_index
+            and int(cache.get("_audio_context_lead_source", 0)) == int(
+                lead_source_index or 0)
+            and int(cache.get("_audio_context_lead_frames", 0)) == lead_frames
+            and int(cache.get("_audio_context_start_frame", -1)) == int(
+                shot.get("audio_context_start_frame", -1))
+            and int(cache.get(
+                "_audio_context_lead_start_frame", -1)) == int(
+                    shot.get("audio_context_lead_start_frame", -1))):
+        return cache
+    if _st_load is None:
+        raise RuntimeError(
+            "safetensors is required for independent H3 audio context.")
+    segments = state.get("segments")
+    if not isinstance(segments, list):
+        raise ValueError("H3 audio context has no saved scene history.")
+
+    def load_audio_source(scene_index: int):
+        segment = next((segment for segment in segments
+                        if isinstance(segment, dict)
+                        and int(segment.get("index", 0)) == int(scene_index)),
+                       None)
+        if segment is None:
+            raise ValueError(
+                "H3 scene %d selects audio context from scene %d, but that "
+                "saved scene is not present in the active branch." %
+                (index, int(scene_index)))
+        checkpoint_value = segment.get("checkpoint")
+        if not isinstance(checkpoint_value, str) or not checkpoint_value:
+            raise ValueError(
+                "H3 audio context scene %d has no checkpoint path." %
+                int(scene_index))
+        tensors = _st_load(_absolute_output_path(checkpoint_value))
+        audio = tensors.get("audio")
+        if not torch.is_tensor(audio) or audio.ndim not in (3, 4):
+            raise ValueError(
+                "H3 audio context scene %d checkpoint has no AV audio "
+                "latent." % int(scene_index))
+        if audio.ndim == 3:
+            audio = audio.unsqueeze(0)
+        if "_editorial_out_frames" in segment:
+            video = tensors.get("video")
+            if not torch.is_tensor(video):
+                raise ValueError(
+                    "H3 audio context scene %d checkpoint has no paired "
+                    "video latent required for editorial trim." %
+                    int(scene_index))
+            trimmed = _editorial_trim_latent({
+                "samples": [video, audio]}, segment)
+            audio = _streams_from_latent(trimmed)[1]
+        return segment, audio
+
+    def audio_window(segment, audio, wanted, label):
+        raw_frames = _editorial_segment_raw_frames(
+            segment, plan["shots"][int(segment["index"]) - 1].get(
+                "raw_frames", 0))
+        delivered_frames = _editorial_segment_delivered_frames(
+            segment, plan["shots"][int(segment["index"]) - 1].get(
+                "delivered_frames", 0))
+        start_frame = _shot_audio_context_start_frame(
+            shot, label, raw_frames, delivered_frames, wanted)
+        raw_start = raw_frames - delivered_frames + start_frame
+        start_step = int(round(raw_start / float(FPS) * AUDIO_HZ))
+        end_step = int(round(
+            (raw_start + int(wanted)) / float(FPS) * AUDIO_HZ))
+        expected_total = int(round(raw_frames / float(FPS) * AUDIO_HZ))
+        expected_window = int(round(int(wanted) / float(FPS) * AUDIO_HZ))
+        if (int(audio.shape[-1]) != expected_total
+                or end_step - start_step != expected_window):
+            raise ValueError(
+                "H3 %s cannot map frames %d..%d onto audio latent shape %s "
+                "(%d raw / %d delivered)." %
+                (label, start_frame, start_frame + int(wanted) - 1,
+                 tuple(audio.shape), raw_frames, delivered_frames))
+        return (audio[:1, ..., start_step:end_step]
+                .detach().contiguous().clone(), start_frame)
+
+    source_segment, source_audio = load_audio_source(source_index)
+    recent_audio, source_start = audio_window(
+        source_segment, source_audio, recent_frames,
+        "audio_context_start_frame")
+    selected_audio = recent_audio
+    lead_segment = None
+    lead_start = -1
+    if lead_source_index is not None:
+        lead_segment, lead_audio = load_audio_source(lead_source_index)
+        lead_crop, lead_start = audio_window(
+            lead_segment, lead_audio, lead_frames,
+            "audio_context_lead_start_frame")
+        if tuple(lead_crop.shape[:3]) != tuple(recent_audio.shape[:3]):
+            raise ValueError(
+                "H3 composed audio context scenes %d and %d use different "
+                "latent channel geometry." %
+                (lead_source_index, source_index))
+        selected_audio = torch.cat((lead_crop, recent_audio), dim=-1)
+    expected_steps = int(round(selected_span / float(FPS) * AUDIO_HZ))
+    if int(selected_audio.shape[-1]) != expected_steps:
+        raise RuntimeError(
+            "H3 scene %d composed audio context produced %d latent steps; "
+            "expected %d for %d frames." %
+            (index, int(selected_audio.shape[-1]), expected_steps,
+             selected_span))
+    previous_latent = state.get("previous_latent")
+    streams = (_streams_from_latent(previous_latent)
+               if previous_latent is not None else [])
+    if not streams:
+        raise ValueError(
+            "H3 scene %d independent audio context has no paired video "
+            "latent container." % index)
+    selected = dict(state)
+    selected.update({
+        "previous_latent": {
+            "samples": [streams[0], selected_audio],
+            "_h3_audio_context_frames": int(selected_span),
+        },
+        "_audio_context_target": index,
+        "_audio_context_source": source_index,
+        "_audio_context_lead_source": int(lead_source_index or 0),
+        "_audio_context_lead_frames": int(lead_frames),
+        "_audio_context_start_frame": int(
+            shot.get("audio_context_start_frame", -1)),
+        "_audio_context_lead_start_frame": int(
+            shot.get("audio_context_lead_start_frame", -1)),
+        "_audio_context_resolved_start_frame": int(source_start),
+        "_audio_context_resolved_lead_start_frame": int(lead_start),
+        "audio_context_source_segment": source_segment,
+        **({"audio_context_lead_segment": lead_segment}
+           if lead_segment is not None else {}),
+    })
+    state["_audio_context_state"] = selected
+    if lead_segment is None:
+        _LOG.info(
+            "H3 Chain scene %d audio context uses scene %d (%s), frames "
+            "%d..%d, independently from picture context.",
+            index, source_index, source_segment.get("id", "scene"),
+            source_start, source_start + recent_frames - 1)
+    else:
+        _LOG.info(
+            "H3 Chain scene %d composed audio context: %d frames from scene "
+            "%d (%s) at %d, then %d frames from scene %d (%s) at %d.",
+            index, lead_frames, lead_source_index,
+            lead_segment.get("id", "scene"), lead_start, recent_frames,
+            source_index, source_segment.get("id", "scene"), source_start)
+    return selected
+
+
+def _selected_context_state(
+        state: dict[str, Any], vae: Any = None) -> dict[str, Any]:
+    """Apply optional audio selection, then optional picture selection."""
+    selected = _audio_context_state(state)
+    plan = selected["plan"]
+    index = int(selected["index"])
+    shot = plan["shots"][index - 1]
+    context_length = _shot_context_length(
+        shot, int(plan["compatibility"].get("context_length", 0)))
+    return (_visual_context_state(selected, vae=vae)
+            if index > 1 and context_length > 0 else selected)
+
+
 def _visual_context_state(
         state: dict[str, Any], vae: Any = None) -> dict[str, Any]:
-    """Return a boundary view with selected/composed video and immediate audio.
+    """Return a boundary view with selected/composed video and selected audio.
 
     Timeline ancestry remains in ``state``. For a non-linear visual edge this
     loads only the selected saved scene's compact video/checkpoint tail and
-    pairs it with the immediate predecessor's audio latent. The cached view is
-    reused by Chain Context and Segment Save during the same scene execution.
+    pairs it with the already resolved audio latent. By default that is the
+    immediate predecessor; an explicitly unlocked Audio tab may have replaced
+    it first. The cached view is reused by Chain Context and Segment Save.
 
     A composed edge prepends one selected scene crop to a second selected
     source crop. The second block remains nearest the generation boundary.
     Every authored crop is snapped to H3's native temporal lattice and slices
     saved latent steps directly; RGB is only a retained or decoded mirror.
-    Audio remains one continuous tail from the immediate timeline predecessor.
+    Locked audio remains one continuous immediate-predecessor tail.
     """
     plan = state["plan"]
     index = int(state["index"])
@@ -9300,8 +9772,8 @@ def _visual_context_state(
         if len(immediate_streams) < 2:
             raise ValueError(
                 "H3 scene %d cannot combine scene %d visual context because "
-                "the immediate scene %d audio latent is unavailable." %
-                (index, source_index, index - 1))
+                "its resolved generated-audio context latent is unavailable."
+                % (index, source_index))
         selected_audio = immediate_streams[1]
     else:
         selected_audio = tensors.get("audio")
@@ -9370,15 +9842,21 @@ def _visual_context_state(
                 "H3 Chain scene %d will decode the %d+%d native latent "
                 "composition once for its RGB mirror; no RGB re-encode is "
                 "performed.", index, lead_frames, recent_frames)
-        # Keep the complete immediate audio latent. The consumer selects its
-        # own scene-local audio context, which may intentionally be longer,
-        # shorter, or disabled independently from this composed video prefix.
+        # Keep the complete resolved audio latent. The consumer selects its
+        # scene-local length; unlocked audio may already be an exact single or
+        # composed crop independent from this picture prefix.
 
     selected = dict(state)
     selected.update({
         "previous_frames": selected_frames,
         "previous_latent": {
-            "samples": [selected_video, selected_audio]},
+            "samples": [selected_video, selected_audio],
+            **({"_h3_audio_context_frames": int(
+                state["previous_latent"]["_h3_audio_context_frames"])}
+               if isinstance(state.get("previous_latent"), dict)
+               and "_h3_audio_context_frames" in state["previous_latent"]
+               else {}),
+        },
         "segments": list(segments[:source_position + 1]),
         "_visual_context_target": index,
         "_visual_context_source": source_index,
@@ -9398,23 +9876,25 @@ def _visual_context_state(
            if lead_segment is not None else {}),
     })
     state["_visual_context_state"] = selected
+    audio_note = (
+        "independent audio context remains selected"
+        if _shot_audio_context_unlocked(shot)
+        else "generated audio remains the immediate predecessor tail")
     if lead_source_index is not None:
         _LOG.info(
             "H3 Chain scene %d composed visual context: %d frames from scene "
             "%d (%s) at %d, then %d frames from scene %d (%s) at %d; "
-            "generated-audio "
-            "continuity remains one tail from immediate scene %d.",
+            "%s.",
             index, lead_frames, lead_source_index,
             lead_segment.get("id", "scene"), lead_start,
             context_length - lead_frames, source_index,
-            source_segment.get("id", "scene"), source_start, index - 1)
+            source_segment.get("id", "scene"), source_start, audio_note)
     else:
         _LOG.info(
             "H3 Chain scene %d visual context uses scene %d (%s), frames "
-            "%d..%d; generated-audio continuity remains sourced from "
-            "immediate scene %d.", index, source_index,
+            "%d..%d; %s.", index, source_index,
             source_segment.get("id", "scene"), source_start,
-            source_start + recent_frames - 1, index - 1)
+            source_start + recent_frames - 1, audio_note)
     return selected
 
 
@@ -9502,7 +9982,7 @@ def _verify_segment_artifacts(segment: dict[str, Any], index: int) -> None:
 
 def _resume_context_predecessors(
         plan: dict[str, Any], start_clip: int) -> dict[str, Any]:
-    """Return the visual and immediate-audio scenes a selected start consumes."""
+    """Return every saved scene whose video or audio the start consumes."""
     start_clip = int(start_clip)
     if start_clip <= 1:
         return {"visual": None, "audio": None, "scenes": []}
@@ -9525,17 +10005,26 @@ def _resume_context_predecessors(
               if context_length > 0 else None)
     visual_lead = (_shot_visual_context_lead_source(plan, start_clip)
                    if context_length > 0 else None)
-    audio = start_clip - 1 if generated_audio_context else None
+    custom_audio = (
+        generated_audio_context and _shot_audio_context_unlocked(shot))
+    audio = (_shot_audio_context_source(plan, start_clip)
+             if custom_audio else
+             (start_clip - 1 if generated_audio_context else None))
+    audio_lead = (_shot_audio_context_lead_source(plan, start_clip)
+                  if custom_audio else None)
     result = {
         "visual": visual,
         "audio": audio,
-        "scenes": sorted({value for value in (visual, visual_lead, audio)
+        "scenes": sorted({value for value in (
+            visual, visual_lead, audio, audio_lead)
                           if value is not None}),
     }
     # Preserve the released dictionary shape for every ordinary/single-source
     # plan while making a composed dependency explicit when it exists.
     if visual_lead is not None:
         result["visual_lead"] = visual_lead
+    if audio_lead is not None:
+        result["audio_lead"] = audio_lead
     return result
 
 
@@ -9557,6 +10046,8 @@ def _resume_predecessor_streams(
         streams.append("visual")
     if context_sources.get("audio") == index:
         streams.append("audio")
+    if context_sources.get("audio_lead") == index:
+        streams.append("audio_lead")
     return tuple(streams)
 
 
@@ -9565,15 +10056,15 @@ def _resume_dependency_diffs(
         context_sources: dict[str, Any]) -> list[dict[str, Any]]:
     """Compare only dependency scopes consumed by the selected resume edge.
 
-    A scene with zero visual context may still carry generated audio from the
-    immediate predecessor.  In that case the predecessor's already-rendered
-    audio is consumed, but its incoming visual-boundary recipe is not.  Keep
-    prompt/model/source identity checks, while preventing an unrelated AV
+    A scene with zero visual context may still carry generated audio from one
+    or two saved scenes. In that case each source's already-rendered audio is
+    consumed, but its incoming visual-boundary recipe is not. Keep prompt,
+    model, and source identity checks while preventing an unrelated AV
     transition edit from blocking an otherwise valid audio-only resume.
     """
     diffs = _scene_dependency_diffs(saved, current)
     streams = _resume_predecessor_streams(context_sources, index)
-    if streams == ("audio",):
+    if streams and set(streams).issubset({"audio", "audio_lead"}):
         diffs = [item for item in diffs
                  if item.get("scope") != "incoming_boundary"]
     return diffs
@@ -17792,7 +18283,7 @@ class MiniMaxH3ChainContext:
         "effective video and/or generated-audio context.",
         "Repeated leading frames to remove after decoding. Connect to "
         "MiniMax H3 Contex Loop Trim.",
-        "True when selected prior video or immediate generated audio is carried, including "
+        "True when selected prior video or generated audio context is carried, including "
         "audio-only guide continuation; false for a fully independent scene.",
         "Sampler-ready target latent. With Lock source audio, its complete "
         "scene-local audio stream is source encoded and protected even in "
@@ -17935,8 +18426,8 @@ class MiniMaxH3ChainContext:
                 model,
             )
         visual_state = (
-            _visual_context_state(state, vae=vae)
-            if index > 1 and context_length > 0 else state)
+            _selected_context_state(state, vae=vae)
+            if index > 1 else state)
         previous_frames = _previous_context_frames(
             visual_state, vae, context_length)
         if continuation_mode in MASKED_CONTINUATION_MODES:
@@ -18322,8 +18813,8 @@ class MiniMaxH3ChainSegmentSave:
             "continuation_mode",
             compatibility.get("continuation_mode", "guide")))
         visual_state = (
-            _visual_context_state(state)
-            if index > 1 and effective_context_length > 0 else state)
+            _selected_context_state(state)
+            if index > 1 else state)
         visual_source_index = (
             _shot_visual_context_source(plan, index)
             if index > 1 and effective_context_length > 0 else None)
@@ -18342,6 +18833,21 @@ class MiniMaxH3ChainSegmentSave:
         visual_lead_segment = (
             visual_state.get("visual_context_lead_segment")
             if visual_lead_source_index is not None else None)
+        audio_context_unlocked = (
+            index > 1 and effective_audio_context_length > 0
+            and _shot_audio_context_unlocked(shot))
+        audio_source_index = (
+            _shot_audio_context_source(plan, index)
+            if audio_context_unlocked else None)
+        audio_source_segment = (
+            visual_state.get("audio_context_source_segment")
+            if audio_source_index is not None else None)
+        audio_lead_source_index = (
+            _shot_audio_context_lead_source(plan, index)
+            if audio_context_unlocked else None)
+        audio_lead_segment = (
+            visual_state.get("audio_context_lead_segment")
+            if audio_lead_source_index is not None else None)
         clean_blend_prefix = None
         if (continuation_mode in DISPOSABLE_PREFIX_CONTINUATION_MODES
                 and blend_frames):
@@ -18672,6 +19178,51 @@ class MiniMaxH3ChainSegmentSave:
                 if "visual_context_lead_start_frame" in shot:
                     segment["visual_context_lead_start_frame"] = int(
                         shot["visual_context_lead_start_frame"])
+            if (audio_source_index is not None
+                    and isinstance(audio_source_segment, dict)):
+                segment.update({
+                    "audio_context_unlocked": True,
+                    "audio_context_source_scene": audio_source_index,
+                    "audio_context_source_id": str(
+                        audio_source_segment.get("id") or
+                        plan["shots"][audio_source_index - 1]["id"]),
+                    "audio_context_source_revision": str(
+                        audio_source_segment.get("revision") or ""),
+                    "audio_context_source_checkpoint_sha256": str(
+                        audio_source_segment.get("checkpoint_sha256") or ""),
+                    "audio_context_source_editorial_out_frames":
+                        _editorial_segment_delivered_frames(
+                            audio_source_segment),
+                })
+                if "audio_context_start_frame" in shot:
+                    segment["audio_context_start_frame"] = int(
+                        shot["audio_context_start_frame"])
+            if (audio_lead_source_index is not None
+                    and isinstance(audio_lead_segment, dict)):
+                selected_audio_span = (
+                    effective_context_length
+                    if continuation_mode in MASKED_CONTINUATION_MODES
+                    else effective_audio_context_length)
+                segment.update({
+                    "audio_context_lead_source_scene":
+                        audio_lead_source_index,
+                    "audio_context_lead_source_id": str(
+                        audio_lead_segment.get("id") or
+                        plan["shots"][audio_lead_source_index - 1]["id"]),
+                    "audio_context_lead_source_revision": str(
+                        audio_lead_segment.get("revision") or ""),
+                    "audio_context_lead_checkpoint_sha256": str(
+                        audio_lead_segment.get("checkpoint_sha256") or ""),
+                    "audio_context_lead_frames": int(
+                        _shot_audio_context_lead_frames(
+                            shot, selected_audio_span)),
+                    "audio_context_lead_editorial_out_frames":
+                        _editorial_segment_delivered_frames(
+                            audio_lead_segment),
+                })
+                if "audio_context_lead_start_frame" in shot:
+                    segment["audio_context_lead_start_frame"] = int(
+                        shot["audio_context_lead_start_frame"])
             if "source_audio_target" in shot:
                 # Keep an explicit scene-local "off" as well as "locked".
                 # Without it, activating this revision under a globally
@@ -24330,6 +24881,22 @@ def _checkpoint_plan_revision(segment: dict[str, Any]) -> dict[str, Any]:
     if "visual_context_lead_start_frame" in segment:
         revision["visual_context_lead_start_frame"] = int(
             segment["visual_context_lead_start_frame"])
+    if segment.get("audio_context_unlocked") is True:
+        revision["audio_context_unlocked"] = True
+    if "audio_context_source_id" in segment:
+        revision["audio_context_source"] = str(
+            segment["audio_context_source_id"])
+    if "audio_context_start_frame" in segment:
+        revision["audio_context_start_frame"] = int(
+            segment["audio_context_start_frame"])
+    if "audio_context_lead_source_id" in segment:
+        revision["audio_context_lead_source"] = str(
+            segment["audio_context_lead_source_id"])
+        revision["audio_context_lead_frames"] = int(
+            segment["audio_context_lead_frames"])
+    if "audio_context_lead_start_frame" in segment:
+        revision["audio_context_lead_start_frame"] = int(
+            segment["audio_context_lead_start_frame"])
     if "lora_route" in segment:
         revision["lora_route"] = str(segment["lora_route"])
     for key in (

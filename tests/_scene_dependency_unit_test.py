@@ -565,12 +565,24 @@ composed_revision = chain._checkpoint_plan_revision({
     "visual_context_lead_source_id": "four",
     "visual_context_lead_frames": 5,
     "visual_context_lead_start_frame": 9,
+    "audio_context_unlocked": True,
+    "audio_context_source_id": "two",
+    "audio_context_start_frame": 7,
+    "audio_context_lead_source_id": "three",
+    "audio_context_lead_frames": 17,
+    "audio_context_lead_start_frame": 11,
 })
 assert composed_revision["visual_context_source"] == "three"
 assert composed_revision["visual_context_start_frame"] == 8
 assert composed_revision["visual_context_lead_source"] == "four"
 assert composed_revision["visual_context_lead_frames"] == 5
 assert composed_revision["visual_context_lead_start_frame"] == 9
+assert composed_revision["audio_context_unlocked"] is True
+assert composed_revision["audio_context_source"] == "two"
+assert composed_revision["audio_context_start_frame"] == 7
+assert composed_revision["audio_context_lead_source"] == "three"
+assert composed_revision["audio_context_lead_frames"] == 17
+assert composed_revision["audio_context_lead_start_frame"] == 11
 
 # The two native-aligned blocks may also select independent windows from the
 # same saved scene. A 5+34 composition remains one direct 39-frame latent
@@ -594,6 +606,65 @@ assert same_scene_plan["shots"][4]["visual_context_lead_source"] == "three"
 assert chain._resume_context_predecessors(same_scene_plan, 5) == {
     "visual": 3, "audio": 4, "scenes": [3, 4], "visual_lead": 3,
 }
+
+# Audio stays on the immediate predecessor unless the Context planner is
+# explicitly unlocked. Once unlocked, one or two exact 40 Hz latent windows
+# may be selected independently from the picture composition.
+independent_audio_plan = chain._normalize_plan(
+    json.dumps({"shots": [
+        {"id": name, "prompt": name, "length": 90,
+         **({"visual_context_source": "three",
+             "visual_context_lead_source": "four",
+             "visual_context_lead_frames": 5,
+             "video_blend_frames": 0,
+             "audio_context_unlocked": True,
+             "audio_context_source": "three",
+             "audio_context_start_frame": 0,
+             "audio_context_lead_source": "four",
+             "audio_context_lead_frames": 5,
+             "audio_context_lead_start_frame": 12}
+            if name == "five" else {})}
+        for name in ("one", "two", "three", "four", "five")
+    ]}),
+    "independent-audio-context-test", 64, 64, 39, "video", "head",
+    "disabled", "generated_audio", 39, 1.0, 8, 11, 18,
+    "body:auto:v1", 0, "masked_av")
+assert independent_audio_plan["shots"][4]["audio_context_unlocked"] is True
+assert independent_audio_plan["shots"][4]["audio_context_source"] == "three"
+assert independent_audio_plan["shots"][4]["audio_context_lead_source"] == "four"
+assert independent_audio_plan["shots"][4]["audio_context_lead_frames"] == 5
+assert chain._resume_context_predecessors(independent_audio_plan, 5) == {
+    "visual": 3, "audio": 3, "scenes": [3, 4],
+    "visual_lead": 4, "audio_lead": 4,
+}
+independent_audio_boundary = chain._scene_dependency_record(
+    independent_audio_plan, 5, None)["scopes"]["incoming_boundary"]
+assert independent_audio_boundary["audio_context_unlocked"] is True
+assert independent_audio_boundary["audio_context_source_scene"] == 3
+assert independent_audio_boundary["audio_context_lead_source_scene"] == 4
+assert independent_audio_boundary["audio_context_lead_frames"] == 5
+
+for audio_mode, scene_patch, expected in (
+        ("source_track", {}, "generated continuity is disabled"),
+        ("generated_audio", {"source_audio_target": "locked"},
+         "Lip-sync to source audio")):
+    invalid_audio_shots = [
+        {"id": name, "prompt": name, "length": 90,
+         **({"audio_context_unlocked": True, **scene_patch}
+            if name == "five" else {})}
+        for name in ("one", "two", "three", "four", "five")
+    ]
+    try:
+        chain._normalize_plan(
+            json.dumps({"shots": invalid_audio_shots}),
+            "invalid-independent-audio", 64, 64, 39, "video", "head",
+            "disabled", audio_mode, 39, 1.0, 8, 11, 18,
+            "body:auto:v1", 0, "masked_av")
+    except ValueError as exc:
+        assert expected in str(exc)
+    else:
+        raise AssertionError(
+            "independent audio was accepted without generated continuity")
 
 scene_two_same_source_plan = chain._normalize_plan(
     json.dumps({"shots": [
@@ -764,6 +835,53 @@ try:
     assert torch.all(reverse_video[:, :, 5] == 50.0)
     assert torch.all(reverse_video[:, :, -1] == 56.0)
     assert reverse_state["previous_latent"]["samples"][1] is full_immediate_audio
+finally:
+    chain._st_load = original_loader
+    chain._streams_from_latent = original_streams
+
+scene3_audio = torch.arange(150, dtype=torch.float32).reshape(
+    1, 1, 1, 150).expand(1, 32, 2, 150).clone()
+scene4_audio = (1000.0 + torch.arange(150, dtype=torch.float32)).reshape(
+    1, 1, 1, 150).expand(1, 32, 2, 150).clone()
+
+def independent_audio_loader(path):
+    scene = 4 if "scene_4" in str(path) else 3
+    return {
+        "context_frames": scene4_frames if scene == 4 else scene3_frames,
+        "video": scene4_video if scene == 4 else scene3_video,
+        "audio": scene4_audio if scene == 4 else scene3_audio,
+    }
+
+chain._st_load = independent_audio_loader
+chain._streams_from_latent = lambda value: value["samples"]
+try:
+    independent_audio_state = chain._selected_context_state({
+        "plan": independent_audio_plan, "index": 5,
+        "previous_frames": scene4_frames,
+        "previous_latent": {
+            "samples": [scene4_video, full_immediate_audio]},
+        "segments": [
+            {"index": scene,
+             "id": independent_audio_plan["shots"][scene - 1]["id"],
+             "checkpoint": "scene_%d.safetensors" % scene,
+             "revision": "r%d" % scene,
+             "checkpoint_sha256": "h%d" % scene,
+             "raw_frames": 90,
+             "delivered_frames": 90 if scene == 1 else 51}
+            for scene in range(1, 5)
+        ],
+    })
+    selected_audio = independent_audio_state[
+        "previous_latent"]["samples"][1]
+    assert selected_audio.shape[-1] == 65
+    # Scene 4 frames 12..16 map to latent steps 85..92; scene 3 frames
+    # 0..33 map to 65..121. Their authored order is preserved.
+    assert torch.all(selected_audio[..., 0] == 1085.0)
+    assert torch.all(selected_audio[..., 7] == 1092.0)
+    assert torch.all(selected_audio[..., 8] == 65.0)
+    assert torch.all(selected_audio[..., -1] == 121.0)
+    assert independent_audio_state["audio_context_source_segment"]["index"] == 3
+    assert independent_audio_state["audio_context_lead_segment"]["index"] == 4
 finally:
     chain._st_load = original_loader
     chain._streams_from_latent = original_streams
@@ -972,6 +1090,14 @@ assert any(item["scope"] == "incoming_boundary"
 assert chain._resume_dependency_diffs(
     saved_audio_predecessor, current_audio_predecessor, 2,
     audio_only_sources) == []
+assert chain._resume_dependency_diffs(
+    saved_audio_predecessor, current_audio_predecessor, 2, {
+        "visual": None, "audio": 2, "audio_lead": 2, "scenes": [2],
+    }) == []
+assert chain._resume_dependency_diffs(
+    saved_audio_predecessor, current_audio_predecessor, 2, {
+        "visual": None, "audio": 1, "audio_lead": 2, "scenes": [1, 2],
+    }) == []
 visual_and_audio_sources = {
     "visual": 2, "audio": 2, "scenes": [2],
 }

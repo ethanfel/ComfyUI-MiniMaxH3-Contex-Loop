@@ -382,7 +382,11 @@ def _audio_tail_from_latent(latent, a_frames):
         raise ValueError("h3_motion_context: expected audio latent [B,C,2,T], "
                          "got shape %s" % (tuple(audio.shape),))
     total_t = int(audio.shape[-1])
-    frames = _pixel_frames(int(video.shape[2]))
+    authored_audio_frames = (latent.get("_h3_audio_context_frames")
+                             if isinstance(latent, dict) else None)
+    frames = (int(authored_audio_frames)
+              if authored_audio_frames is not None
+              else _pixel_frames(int(video.shape[2])))
     overhang = total_t - FRAME_RESCALE * frames
     if not (-0.5 < overhang < 0.5):
         _LOG.warning(

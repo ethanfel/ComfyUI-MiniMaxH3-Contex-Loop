@@ -8,6 +8,8 @@ import {
     MAX_SEED,
     MAX_SHOTS,
     automaticSceneColor,
+    audioContextLeadFrameOptions,
+    audioContextWindowStarts,
     calculatePlanTiming,
     duplicateShot,
     formatClock,
@@ -24,6 +26,11 @@ import {
     randomSceneSeed,
     removePlanShot,
     safeShotId,
+    sceneAudioContextLeadFrames,
+    sceneAudioContextLeadSource,
+    sceneAudioContextSource,
+    sceneAudioContextStartFrame,
+    sceneAudioContextUnlocked,
     sceneContextLength,
     sceneContinuationMode,
     sceneLoRARoute,
@@ -40,18 +47,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.98";
+} from "./h3_chain_plan_core.mjs?v=0.6.99";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.98";
+} from "./h3_prompt_history_core.mjs?v=0.6.99";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.98";
+} from "./h3_reference_preview_core.mjs?v=0.6.99";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,16 +67,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.98";
+} from "./h3_policy_core.mjs?v=0.6.99";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.98";
+} from "./h3_socket_presentation_core.mjs?v=0.6.99";
 import {
     availableLoRARoutes,
     loraRouteLabel,
-} from "./h3_lora_scheduler_core.mjs?v=0.6.98";
+} from "./h3_lora_scheduler_core.mjs?v=0.6.99";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -100,8 +107,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.98";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.98";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.99";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.99";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -364,6 +371,13 @@ function injectStyles() {
             padding:5px 7px; border-bottom:1px solid var(--hs-border); }
         .h3studio-player-controls input[type=range] { flex:1; padding:0; }
         .h3studio-context-selector { display:flex; flex-direction:column; gap:9px; }
+        .h3studio-context-tabs { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+        .h3studio-context-tabs button.h3studio-context-tab-active { border-color:#79a7ff;
+            color:#d9e7ff; background:rgba(65,112,190,.28); }
+        .h3studio-context-tabs .h3studio-context-lock { margin-left:auto; }
+        .h3studio-context-audio-settings { display:grid;
+            grid-template-columns:repeat(3,minmax(170px,1fr)); gap:7px; align-items:end; }
+        .h3studio-context-audio { width:100%; margin:4px 0 7px; }
         .h3studio-context-help { color:var(--hs-muted); }
         .h3studio-context-blocks { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:9px; }
         .h3studio-context-block { min-width:0; padding:8px; border:1px solid var(--hs-border);
@@ -627,6 +641,7 @@ function mount(node) {
         editorialClockFrame:null, mediaClockFrame:null, mediaClockKind:"",
         playerSegmentKey:"",
         contextPlayers:[],
+        contextTab:"picture",
         playerSlider:null, playerIndex:-1,
         playerPreloadVideo:null, playerPreloadAudio:null,
         primePlayerNext:null, playPlayerTransport:null,
@@ -3881,6 +3896,333 @@ function mount(node) {
         };
     }
 
+    function renderAudioContextPanel(panel, result, row, shot) {
+        if (!row.preservesGeneratedAudioPrefix || !Number(row.audioContextLength)) {
+            panel.append(element(
+                "div", "h3studio-context-empty",
+                "This scene does not carry generated audio. Enable Generated continuity and a positive audio context before selecting extracts.",
+            ));
+            return panel;
+        }
+        const sourceSelect = (field, {lead = false} = {}) => {
+            const select = element("select");
+            if (lead) {
+                const off = element("option", "", "Off · one audio extract");
+                off.value = "";
+                select.append(off);
+            } else {
+                const previous = element(
+                    "option", "",
+                    `Previous scene · ${state.active} ${safeShotId(
+                        state.plan.shots[state.active - 1]?.id,
+                        `clip_${String(state.active).padStart(4, "0")}`,
+                    )}`,
+                );
+                previous.value = "";
+                select.append(previous);
+            }
+            for (let offset = 0; offset < state.active; offset += 1) {
+                if (!lead && offset === state.active - 1) continue;
+                const sourceId = safeShotId(
+                    state.plan.shots[offset]?.id,
+                    `clip_${String(offset + 1).padStart(4, "0")}`,
+                );
+                const option = element(
+                    "option", "", `Scene ${offset + 1} · ${sourceId}`,
+                );
+                option.value = sourceId;
+                select.append(option);
+            }
+            const resolver = lead
+                ? sceneAudioContextLeadSource : sceneAudioContextSource;
+            try {
+                const resolved = resolver(state.plan, state.active + 1);
+                select.value = resolved === null || (
+                    !lead && resolved === state.active
+                ) ? "" : safeShotId(
+                    state.plan.shots[resolved - 1]?.id,
+                    `clip_${String(resolved).padStart(4, "0")}`,
+                );
+            } catch (_error) {
+                select.value = "";
+            }
+            select.addEventListener("change", () => {
+                if (select.value) shot[field] = select.value;
+                else delete shot[field];
+                delete shot[lead
+                    ? "audio_context_lead_start_frame"
+                    : "audio_context_start_frame"];
+                if (lead) {
+                    if (!select.value) {
+                        delete shot.audio_context_lead_frames;
+                    } else if (!Object.hasOwn(
+                        shot, "audio_context_lead_frames",
+                    )) {
+                        const options = audioContextLeadFrameOptions(
+                            row.audioContextLength,
+                        );
+                        shot.audio_context_lead_frames = options.includes(5)
+                            ? 5 : options[Math.floor(options.length / 2)];
+                    }
+                }
+                writePlan();
+                renderShell();
+            });
+            return select;
+        };
+        const audioSource = sourceSelect("audio_context_source");
+        audioSource.title = "The extract nearest the new generation boundary. It may come from any earlier scene.";
+        const audioLeadSource = sourceSelect(
+            "audio_context_lead_source", {lead:true},
+        );
+        audioLeadSource.title = "Optional first extract. It may come from another character's scene or a second position in the same scene.";
+        const split = element("select");
+        const splitOptions = audioContextLeadFrameOptions(
+            row.audioContextLength,
+        );
+        for (const lead of splitOptions) {
+            const option = element(
+                "option", "",
+                `${row.audioContextLength} total · ${lead} + ${row.audioContextLength - lead}`,
+            );
+            option.value = String(lead);
+            split.append(option);
+        }
+        split.disabled = !audioLeadSource.value;
+        split.value = String(row.audioContextLeadFrames || (
+            splitOptions.includes(5) ? 5 : splitOptions.at(0)
+        ));
+        split.title = "Ordered duration of the two exact 40 Hz audio-latent extracts. These are sequential context excerpts, not a live audio mix.";
+        split.addEventListener("change", () => {
+            shot.audio_context_lead_frames = Number(split.value);
+            delete shot.audio_context_start_frame;
+            delete shot.audio_context_lead_start_frame;
+            writePlan();
+            renderShell();
+        });
+        const settingsGrid = element(
+            "div", "h3studio-context-audio-settings",
+        );
+        settingsGrid.append(
+            field("Boundary-nearest audio source", audioSource),
+            field("Optional first audio source", audioLeadSource),
+            field("Dual extract split", split),
+        );
+        panel.append(
+            element(
+                "div", "h3studio-context-help",
+                "Audio is unlocked from picture for this scene. Choose one exact latent extract, or two ordered extracts—for example two character voice regions. The second block sits nearest generation. No waveform is decoded or re-encoded.",
+            ),
+            settingsGrid,
+        );
+
+        const blocks = [];
+        if (row.audioContextLeadSource !== null) {
+            blocks.push({
+                label:"Audio block 1 · first extract",
+                sourceIndex:row.audioContextLeadSource - 1,
+                span:Number(row.audioContextLeadFrames),
+                field:"audio_context_lead_start_frame",
+                lead:true,
+            });
+        }
+        blocks.push({
+            label:row.audioContextLeadSource === null
+                ? "Audio context extract" : "Audio block 2 · nearest generation",
+            sourceIndex:row.audioContextSource - 1,
+            span:Number(row.audioContextLength - row.audioContextLeadFrames),
+            field:"audio_context_start_frame",
+            lead:false,
+        });
+        const blocksHost = element("div", "h3studio-context-blocks");
+        for (const block of blocks) {
+            const sourceRow = result.shots[block.sourceIndex];
+            const card = element("div", "h3studio-context-block");
+            const head = element("div", "h3studio-context-block-head");
+            head.append(
+                element("strong", "", `${block.label} · ${block.span}f`),
+                element(
+                    "span", "", sourceRow
+                        ? `Scene ${sourceRow.index} · ${sourceRow.id}`
+                        : "Missing source scene",
+                ),
+            );
+            card.append(head);
+            if (!sourceRow || block.span < 1) {
+                card.append(element(
+                    "div", "h3studio-context-empty",
+                    "The selected source or audio split is invalid.",
+                ));
+                blocksHost.append(card);
+                continue;
+            }
+            const validStarts = audioContextWindowStarts(
+                sourceRow.rawFrames, sourceRow.deliveredFrames, block.span,
+            );
+            if (!validStarts.length) {
+                card.append(element(
+                    "div", "h3studio-context-empty",
+                    "This scene has no position with the exact requested 40 Hz latent duration.",
+                ));
+                blocksHost.append(card);
+                continue;
+            }
+            const defaultStart = validStarts.at(-1);
+            let selectedStart = defaultStart;
+            let rangeError = "";
+            try {
+                selectedStart = sceneAudioContextStartFrame(
+                    shot, sourceRow.rawFrames, sourceRow.deliveredFrames,
+                    block.span, block.lead,
+                );
+            } catch (error) {
+                rangeError = error?.message || String(error);
+                selectedStart = nearestNativeContextWindowStart(
+                    validStarts, Number(shot[block.field]),
+                );
+            }
+            const media = playerCheckpoint(block.sourceIndex);
+            let audio = null;
+            const audioPath = media?.audio ?? media?.video;
+            if (audioPath) {
+                audio = element("audio", "h3studio-context-audio");
+                audio.controls = true;
+                audio.preload = "metadata";
+                audio.src = videoUrl(audioPath);
+                state.contextPlayers.push(audio);
+                card.append(audio);
+            }
+            const track = element("div", "h3studio-context-movie-track");
+            track.tabIndex = 0;
+            track.setAttribute("role", "slider");
+            track.setAttribute("aria-label", `${block.label} position`);
+            const zone = element(
+                "div", "h3studio-context-window", `${block.span}f`,
+            );
+            const playhead = element("div", "h3studio-context-playhead");
+            track.append(zone, playhead);
+            const rangeLabel = element("span", "h3studio-context-range-label");
+            const movieLength = element(
+                "span", "h3studio-context-movie-length",
+                `source audio · ${sourceRow.deliveredFrames}f · ${(sourceRow.deliveredFrames / FPS).toFixed(3)}s`,
+            );
+            const update = () => {
+                const layout = studioContextWindowLayout(
+                    sourceRow.deliveredFrames, block.span, selectedStart,
+                );
+                selectedStart = nearestNativeContextWindowStart(
+                    validStarts, layout.start,
+                );
+                const exact = studioContextWindowLayout(
+                    sourceRow.deliveredFrames, block.span, selectedStart,
+                );
+                zone.style.left = `${exact.leftFraction * 100}%`;
+                zone.style.width = `${exact.widthFraction * 100}%`;
+                rangeLabel.textContent = `frames ${exact.start + 1}–${exact.end} · ${(exact.start / FPS).toFixed(3)}–${(exact.end / FPS).toFixed(3)}s`;
+                track.setAttribute("aria-valuenow", String(exact.start));
+            };
+            const seek = () => {
+                if (!audio || audio.readyState < 1) return;
+                try { audio.currentTime = selectedStart / FPS; }
+                catch (_error) {}
+            };
+            const commit = () => {
+                if (selectedStart === defaultStart) delete shot[block.field];
+                else shot[block.field] = selectedStart;
+                writePlan();
+                renderStatus();
+            };
+            const choose = (value, commitNow = false) => {
+                selectedStart = nearestNativeContextWindowStart(
+                    validStarts, value,
+                );
+                update();
+                seek();
+                if (commitNow) commit();
+            };
+            let drag = null;
+            track.addEventListener("pointerdown", (event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                const bounds = track.getBoundingClientRect();
+                choose(studioContextWindowStartAtRatio(
+                    sourceRow.deliveredFrames, block.span,
+                    (event.clientX - bounds.left) / Math.max(1, bounds.width),
+                ));
+                drag = {id:event.pointerId, x:event.clientX,
+                    start:selectedStart, width:Math.max(1, bounds.width)};
+                track.setPointerCapture(event.pointerId);
+            });
+            track.addEventListener("pointermove", (event) => {
+                if (!drag || drag.id !== event.pointerId) return;
+                choose(drag.start + (event.clientX - drag.x) / drag.width
+                    * sourceRow.deliveredFrames);
+            });
+            const finish = (event) => {
+                if (!drag || drag.id !== event.pointerId) return;
+                drag = null;
+                try { track.releasePointerCapture(event.pointerId); }
+                catch (_error) {}
+                commit();
+            };
+            track.addEventListener("pointerup", finish);
+            track.addEventListener("pointercancel", finish);
+            track.addEventListener("keydown", (event) => {
+                const slot = Math.max(0, validStarts.indexOf(selectedStart));
+                let next = null;
+                if (event.key === "ArrowLeft") next = validStarts[Math.max(0, slot - 1)];
+                else if (event.key === "ArrowRight") next = validStarts[Math.min(validStarts.length - 1, slot + 1)];
+                else if (event.key === "Home") next = validStarts[0];
+                else if (event.key === "End") next = defaultStart;
+                if (next === null) return;
+                event.preventDefault();
+                choose(next, true);
+            });
+            const readout = element("div", "h3studio-context-range-readout");
+            readout.append(movieLength, rangeLabel);
+            const range = element("div", "h3studio-context-range");
+            range.append(track, readout);
+            card.append(range);
+            update();
+            if (audio) {
+                audio.addEventListener("loadedmetadata", seek, {once:true});
+                audio.addEventListener("timeupdate", () => {
+                    playhead.style.left = `${Math.max(0, Math.min(
+                        1, audio.currentTime * FPS / sourceRow.deliveredFrames,
+                    )) * 100}%`;
+                    const end = Number(audio.dataset.contextEnd);
+                    if (Number.isFinite(end) && audio.currentTime >= end) {
+                        delete audio.dataset.contextEnd;
+                        audio.pause();
+                    }
+                });
+            }
+            const actions = element("div", "h3studio-context-actions");
+            const play = button("Play extract", "Play only this audio extract", async () => {
+                if (!audio) return;
+                audio.dataset.contextEnd = String((selectedStart + block.span) / FPS);
+                audio.currentTime = selectedStart / FPS;
+                try { await audio.play(); } catch (_error) {}
+            });
+            play.disabled = !audio;
+            const usePlayhead = button("Start at playhead", "Place extract at the audio player's current time", () => {
+                if (audio) choose(audio.currentTime * FPS, true);
+            });
+            usePlayhead.disabled = !audio;
+            actions.append(usePlayhead, play, button(
+                "Latest exact (default)",
+                "Use the last exact 40 Hz crop and remove the override",
+                () => choose(defaultStart, true),
+            ));
+            const error = element("div", "h3studio-error", rangeError);
+            error.hidden = !rangeError;
+            card.append(actions, error);
+            blocksHost.append(card);
+        }
+        panel.append(blocksHost);
+        return panel;
+    }
+
     function renderContextPanel() {
         const panel = element("div", "h3studio-context-selector");
         const result = timing();
@@ -3888,7 +4230,7 @@ function mount(node) {
         const shot = state.plan.shots[state.active];
         const title = element(
             "div", "h3studio-scene-head",
-            `Scene ${state.active + 1} selected visual context`,
+            `Scene ${state.active + 1} context planner`,
         );
         panel.append(title);
         if (!row || state.active === 0) {
@@ -3897,6 +4239,54 @@ function mount(node) {
                 "Scene 1 has no saved predecessor. Existing Video Context remains configured by its dedicated workflow input.",
             ));
             return panel;
+        }
+        let audioUnlocked = false;
+        try { audioUnlocked = sceneAudioContextUnlocked(shot); }
+        catch (_error) {}
+        if (!audioUnlocked) state.contextTab = "picture";
+        const tabs = element("div", "h3studio-context-tabs");
+        const pictureTab = button(
+            "Picture", "Select picture context sources and latent windows",
+            () => { state.contextTab = "picture"; renderShell(); },
+        );
+        const audioTab = button(
+            "Audio", audioUnlocked
+                ? "Select independent audio context sources and latent windows"
+                : "Unlock audio context to choose sources independently",
+            () => { state.contextTab = "audio"; renderShell(); },
+        );
+        audioTab.disabled = !audioUnlocked;
+        (state.contextTab === "audio" ? audioTab : pictureTab).classList.add(
+            "h3studio-context-tab-active",
+        );
+        const lock = button(
+            audioUnlocked ? "Lock audio context" : "Unlock audio context",
+            audioUnlocked
+                ? "Restore the default behavior: picture may be single or dual while generated audio remains the immediate predecessor tail"
+                : "Expose an Audio tab that can choose one or two saved-scene audio extracts independently from picture",
+            () => {
+                if (audioUnlocked) {
+                    delete shot.audio_context_unlocked;
+                    delete shot.audio_context_source;
+                    delete shot.audio_context_start_frame;
+                    delete shot.audio_context_lead_source;
+                    delete shot.audio_context_lead_frames;
+                    delete shot.audio_context_lead_start_frame;
+                    state.contextTab = "picture";
+                } else {
+                    shot.audio_context_unlocked = true;
+                    state.contextTab = "audio";
+                }
+                writePlan();
+                renderShell();
+            },
+        );
+        lock.classList.add("h3studio-context-lock");
+        lock.disabled = !audioUnlocked && !row.preservesGeneratedAudioPrefix;
+        tabs.append(pictureTab, audioTab, lock);
+        panel.append(tabs);
+        if (state.contextTab === "audio" && audioUnlocked) {
+            return renderAudioContextPanel(panel, result, row, shot);
         }
         if (!Number(row.contextLength)) {
             panel.append(element(
@@ -3907,7 +4297,7 @@ function mount(node) {
         }
         panel.append(element(
             "div", "h3studio-context-help",
-            "Drag the fixed-width zone between native H3 latent positions. The selector advances on the 17-frame / 5-latent-step lattice and crops saved latent steps directly; it never re-encodes an arbitrary RGB window. Latest aligned is the default. Generated-audio continuity still follows the immediate previous scene.",
+            "Drag the fixed-width zone between native H3 latent positions. The selector advances on the 17-frame / 5-latent-step lattice and crops saved latent steps directly; it never re-encodes an arbitrary RGB window. Latest aligned is the default. While audio is locked, generated-audio continuity still follows the immediate previous scene.",
         ));
         const blocksHost = element("div", "h3studio-context-blocks");
         const blocks = [];

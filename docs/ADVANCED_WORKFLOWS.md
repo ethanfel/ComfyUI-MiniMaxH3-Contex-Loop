@@ -177,6 +177,39 @@ second block uses `visual_context_start_frame`; the first block uses
 `visual_context_lead_start_frame`. Either or both may be omitted to use that
 block's latest phase-aligned native crop.
 
+## Independent audio context
+
+Plan Studio's **Context** planner keeps Audio locked by default. This preserves
+the established behavior: picture may use one or two selected windows, while
+generated audio remains one continuous tail from the immediately previous
+timeline scene. Existing plans therefore do not change.
+
+Choose **Unlock audio context** to reveal the Audio tab for that scene. It can
+select one earlier saved scene and an exact audio-latent range, or prepend a
+second independently positioned range. The two blocks are sequential context
+excerpts—not a decoded waveform mix—so they can, for example, expose voice
+regions from two characters before the new scene is generated:
+
+```json
+{
+  "id": "scene_5",
+  "audio_context_unlocked": true,
+  "audio_context_source": "scene_3",
+  "audio_context_start_frame": 0,
+  "audio_context_lead_source": "scene_4",
+  "audio_context_lead_frames": 5,
+  "audio_context_lead_start_frame": 12
+}
+```
+
+The lead block is first and `audio_context_source` is nearest generation. Both
+sources may point to the same scene to select two different moments. Positions
+are delivered-frame indexes and snap to crops whose duration is exact on H3's
+40 Hz audio-latent clock; the saved audio tensors are sliced directly without
+decode/re-encode. AV prefix implementations still use the picture context
+duration as their shared target span. Locking Audio again removes these custom
+fields and restores immediate-predecessor continuity.
+
 ## Last-frame destinations
 
 When stock H3 Image to Video supplies `last_frame`, Motion Context preserves
