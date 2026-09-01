@@ -83,6 +83,46 @@ def _enable_internal_payload_merge() -> tuple[bool, str]:
         return False, str(exc)
 
 
+def _conditioning_has_refs(conditioning: Any) -> bool:
+    for item in conditioning or ():
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        metadata = item[1]
+        if (isinstance(metadata, dict)
+                and bool(metadata.get("minimax_refs"))):
+            return True
+    return False
+
+
+def _ensure_delegated_payload_merge(
+        conditioning: Any, *, effective_context: int,
+        audio_context_length: int, audio_mode: str,
+        context_latent: Any, context_audio: Any) -> str | None:
+    """Verify payload capabilities before calling any upstream version."""
+    has_refs = _conditioning_has_refs(conditioning)
+    has_context_audio = context_latent is not None or context_audio is not None
+    requested_audio_frames = (
+        int(audio_context_length) or int(effective_context))
+    appends_audio_ref = bool(
+        has_context_audio and requested_audio_frames > 0
+        and str(audio_mode) != "timeline")
+    require_video = bool(
+        int(effective_context) > 0 and (has_refs or appends_audio_ref))
+    require_audio = bool(
+        has_refs and has_context_audio and requested_audio_frames > 0
+        and str(audio_mode) == "timeline")
+    if not require_video and not require_audio:
+        return None
+
+    # Older upstream providers predate their own capability guard and can
+    # otherwise return conditioning that fails only inside the sampler. Use
+    # Chain's live behavioral probe regardless of provider version.
+    from .nodes import _ensure_native_payload_merge
+
+    return _ensure_native_payload_merge(
+        require_video=require_video, require_audio=require_audio)
+
+
 def _registered_upstream(fallback_node_type: Any):
     """Return (class, accepted input names), or (None, empty set).
 
@@ -326,6 +366,15 @@ def apply_motion_context(
             context_audio=context_audio,
             video_context_latent=video_context_latent,
         )
+
+    _ensure_delegated_payload_merge(
+        prepared,
+        effective_context=effective_context,
+        audio_context_length=int(audio_context_length),
+        audio_mode=str(audio_mode),
+        context_latent=context_latent,
+        context_audio=context_audio,
+    )
 
     kwargs = {
         "conditioning": prepared,

@@ -33,7 +33,7 @@ sys.modules[PACKAGE] = package
 
 shared_nodes = types.ModuleType(PACKAGE + ".nodes")
 shared_nodes.MiniMaxH3MotionContext = object
-shared_nodes._claim_inline_patch_ownership = lambda: "test patch owner"
+shared_nodes._claim_inline_patch_ownership = lambda _conditioning=None: "test patch owner"
 shared_nodes._prepare_native_guide_conditioning = lambda *args: None
 shared_nodes._resize = lambda *args: None
 shared_nodes._streams_from_latent = lambda *args: None

@@ -5,7 +5,7 @@ import {
     KJ_PREVIEW_TYPE,
     fallbackDisplayIds,
     recursiveRootId,
-} from "./h3_kj_preview_bridge_core.mjs?v=0.5.64";
+} from "./h3_kj_preview_bridge_core.mjs?v=0.5.66";
 
 const executionToDisplay = new Map();
 

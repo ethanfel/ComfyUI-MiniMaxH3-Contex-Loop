@@ -49,6 +49,8 @@ the video list, so the two stay in step however the graph is wired.
 import logging
 import sys
 
+import torch
+
 import comfy.model_base as model_base
 
 _LOG = logging.getLogger("h3_motion_context")
@@ -140,10 +142,12 @@ def native_payload_merge_status():
         # cross-attention, masks, or latent-shape inputs.
         probe.concat_keys = ()
         probe.latent_shapes = None
-        keyframe_video = object()
-        reference_video = object()
-        keyframe_audio = object()
-        reference_audio = object()
+        # Real tensors keep the probe compatible with otherwise harmless
+        # wrappers that validate latent shape/dtype before forwarding to core.
+        keyframe_video = torch.zeros((1, 24, 1, 2, 2))
+        reference_video = torch.ones((1, 24, 1, 2, 2))
+        keyframe_audio = torch.zeros((1, 32, 2, 2))
+        reference_audio = torch.ones((1, 32, 2, 2))
         keyframes = [{
             "resolved_frame_index": 0,
             "latent": keyframe_video,
