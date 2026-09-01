@@ -61,9 +61,11 @@ from .patch_layout import (
     native_guides_available,
 )
 from .patch_payload import (
+    CHAIN_AUDIO_KEY,
     apply_patch as apply_payload_patch,
     claim_patch_ownership as claim_payload_patch_ownership,
     is_applied as payload_patch_applied,
+    native_payload_merge_status,
 )
 
 try:
@@ -91,7 +93,63 @@ def _validate_visual_cond_noise_aug(value):
     return resolved
 
 
-def _activate_inline_patches():
+def _conditioning_has_refs(conditioning):
+    for item in conditioning or []:
+        if not isinstance(item, (list, tuple)) or len(item) < 2:
+            continue
+        metadata = item[1]
+        if (isinstance(metadata, dict)
+                and bool(metadata.get("minimax_refs"))):
+            return True
+    return False
+
+
+def _ensure_native_payload_merge(*, require_video=False, require_audio=False):
+    """Repair only a partially native ComfyUI keyframe/ref payload."""
+    status = native_payload_merge_status()
+    video_ok = (not require_video
+                or status.get("native_keyframe_ref_merge"))
+    audio_ok = (not require_audio
+                or status.get("native_keyframe_ref_audio_merge"))
+    if video_ok and audio_ok:
+        return "core-owned native keyframe/ref payload"
+
+    missing = []
+    if not video_ok:
+        missing.append("video")
+    if not audio_ok:
+        missing.append("audio")
+    if not apply_payload_patch() or not payload_patch_applied():
+        raise RuntimeError(
+            "h3_motion_context: native Guide layout is available, but the "
+            "live MiniMaxH3 payload drops %s Guide tensors when references "
+            "are present. The guarded compatibility merge could not be "
+            "enabled. Capability report: %r" % (" and ".join(missing), status))
+    claimed, detail = claim_payload_patch_ownership(
+        require_keyframe_audio=bool(require_audio))
+    if not claimed or not payload_patch_applied():
+        raise RuntimeError(
+            "h3_motion_context: native Guide layout is available, but the "
+            "live MiniMaxH3 payload drops %s Guide tensors when references "
+            "are present. H3 Chain could not claim its guarded payload "
+            "merge: %s" % (" and ".join(missing), detail))
+
+    verified = native_payload_merge_status()
+    if ((require_video and not verified.get("native_keyframe_ref_merge"))
+            or (require_audio and not verified.get(
+                "native_keyframe_ref_audio_merge"))):
+        raise RuntimeError(
+            "h3_motion_context: the guarded payload merge was enabled but "
+            "failed its post-install capability probe: %r" % verified)
+    _LOG.warning(
+        "h3_motion_context: partially native ComfyUI payload detected; "
+        "enabled the marker-gated %s Guide/reference merge (%s)",
+        " and ".join(missing), detail)
+    return "guarded native %s merge; %s" % (" and ".join(missing), detail)
+
+
+def _activate_inline_patches(*, require_video_merge=False,
+                             require_audio_merge=False):
     """Use core-native guides or opt into the legacy guarded fallback.
 
     Importing the node pack only registers nodes. Activation happens here,
@@ -101,6 +159,10 @@ def _activate_inline_patches():
     """
     global _legacy_core_warning_emitted
     if native_guides_available():
+        if require_video_merge or require_audio_merge:
+            _ensure_native_payload_merge(
+                require_video=bool(require_video_merge),
+                require_audio=bool(require_audio_merge))
         return "native"
     if not _legacy_core_warning_emitted:
         _LOG.warning(
@@ -125,9 +187,13 @@ def _activate_inline_patches():
     return "legacy"
 
 
-def _claim_inline_patch_ownership():
+def _claim_inline_patch_ownership(conditioning=None):
     """Explicitly make this pack the active compatible patch-family owner."""
     if native_guides_available():
+        if _conditioning_has_refs(conditioning):
+            detail = _ensure_native_payload_merge(
+                require_video=True, require_audio=True)
+            return "native guides; %s" % detail
         return "native guides; core-owned; no compatibility patch required"
 
     # Patch Priority also acts as an early compatibility check, so surface the
@@ -374,7 +440,8 @@ def _append_future_anchor_latent(
         visual_cond_noise_aug=VISUAL_COND_NOISE_AUG_DEFAULT,
         boundary_anchor=False):
     """Append one explicit video-latent Guide after an H3 target timeline."""
-    guide_api = _activate_inline_patches()
+    guide_api = _activate_inline_patches(
+        require_video_merge=_conditioning_has_refs(conditioning))
     native_guides = guide_api == "native"
     visual_cond_noise_aug = _validate_visual_cond_noise_aug(
         visual_cond_noise_aug)
@@ -639,7 +706,23 @@ class MiniMaxH3MotionContext:
               context_audio=None, video_context_latent=None,
               visual_cond_noise_aug=VISUAL_COND_NOISE_AUG_DEFAULT,
               future_end_anchor=False, target_start=0):
-        guide_api = _activate_inline_patches()
+        has_refs = _conditioning_has_refs(conditioning)
+        has_context_audio = (
+            context_latent is not None or context_audio is not None)
+        requested_audio_frames = (
+            int(audio_context_length) or int(context_length))
+        appends_audio_ref = bool(
+            has_context_audio and requested_audio_frames > 0
+            and audio_mode != "timeline")
+        needs_ref_payload_merge = bool(has_refs or appends_audio_ref)
+        guide_api = _activate_inline_patches(
+            require_video_merge=bool(
+                needs_ref_payload_merge and int(context_length) > 0),
+            require_audio_merge=bool(
+                has_refs and has_context_audio
+                and requested_audio_frames > 0
+                and audio_mode == "timeline"),
+        )
         native_guides = guide_api == "native"
         visual_cond_noise_aug = _validate_visual_cond_noise_aug(
             visual_cond_noise_aug)
@@ -847,6 +930,7 @@ class MiniMaxH3MotionContext:
                     keyframes.append({
                         "resolved_frame_index": audio_start,
                         "audio_latent": audio_latent,
+                        CHAIN_AUDIO_KEY: True,
                     })
                 else:
                     motion_context_audio_ref = {

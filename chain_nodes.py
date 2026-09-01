@@ -17521,7 +17521,7 @@ class MiniMaxH3PatchPriority:
         "Legacy ownership is process-global after execution.")
 
     def claim(self, conditioning):
-        status = _claim_inline_patch_ownership()
+        status = _claim_inline_patch_ownership(conditioning)
         return (conditioning, status)
 
 

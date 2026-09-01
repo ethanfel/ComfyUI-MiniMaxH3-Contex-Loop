@@ -60,6 +60,7 @@ _LOG = logging.getLogger("h3_motion_context")
 MC_KEY = "motion_context_index"
 MC_AUDIO_KEY = "motion_context_audio_end_frame"
 CHAIN_VISUAL_KEY = "h3_chain_context_visual"
+CHAIN_AUDIO_KEY = "h3_chain_context_audio"
 
 # Marker set on our wrapper so a second copy of this file, vendored into
 # another pack, can recognise it and stand down instead of wrapping it.
@@ -78,7 +79,8 @@ def _patched_extra_conds(self, **kwargs):
     refs = kwargs.get("minimax_refs", None)
     if not keyframes or not refs:
         return out  # only one mechanism in play, stock behaviour is correct
-    if not (any(MC_KEY in kf or CHAIN_VISUAL_KEY in kf for kf in keyframes)
+    if not (any(MC_KEY in kf or CHAIN_VISUAL_KEY in kf
+                or CHAIN_AUDIO_KEY in kf for kf in keyframes)
             or any(MC_AUDIO_KEY in r for r in refs)):
         # nothing here came from this pack. The layout patch is gated the
         # same way, so leaving the payload alone keeps the two consistent
@@ -112,6 +114,70 @@ def _patched_extra_conds(self, **kwargs):
 
 
 setattr(_patched_extra_conds, PATCH_MARKER, True)
+
+
+def native_payload_merge_status():
+    """Behaviorally probe the live keyframe + Ref2VA payload merge.
+
+    Native arbitrary Guide layout and payload merging landed in different
+    ComfyUI revisions.  A partially updated runtime can therefore reserve
+    both Guide and reference rows in ``PackedLayout`` while ``extra_conds``
+    supplies only the reference tensors.  Probe the callable that is actually
+    installed instead of relying on a ComfyUI version or source inspection.
+    """
+    status = {
+        "native_keyframe_ref_merge": False,
+        "native_keyframe_ref_audio_merge": False,
+    }
+    cls = getattr(model_base, "MiniMaxH3", None)
+    fn = getattr(cls, "extra_conds", None) if cls is not None else None
+    if fn is None:
+        status["error"] = "MiniMaxH3.extra_conds is unavailable"
+        return status
+    try:
+        probe = cls.__new__(cls)
+        # BaseModel.extra_conds only consults these fields when called without
+        # cross-attention, masks, or latent-shape inputs.
+        probe.concat_keys = ()
+        probe.latent_shapes = None
+        keyframe_video = object()
+        reference_video = object()
+        keyframe_audio = object()
+        reference_audio = object()
+        keyframes = [{
+            "resolved_frame_index": 0,
+            "latent": keyframe_video,
+            "audio_latent": keyframe_audio,
+            CHAIN_VISUAL_KEY: True,
+            CHAIN_AUDIO_KEY: True,
+        }]
+        refs = [
+            {"kind": "image", "latent": reference_video,
+             "latent_h": 2, "latent_w": 2},
+            {"kind": "audio", "ref_audio_t": 1,
+             "audio_latent": reference_audio},
+        ]
+        result = fn(
+            probe, minimax_keyframes=keyframes, minimax_refs=refs)
+        wrapped = (result.get("minimax_payload")
+                   if isinstance(result, dict) else None)
+        payload = getattr(wrapped, "cond", wrapped)
+        if not isinstance(payload, dict):
+            status["error"] = "MiniMaxH3 payload is not a dictionary"
+            return status
+        videos = payload.get("cond_video_latents", [])
+        audios = payload.get("cond_audio_latents", [])
+        status["native_keyframe_ref_merge"] = bool(
+            len(videos) == 2
+            and videos[0] is keyframe_video
+            and videos[1] is reference_video)
+        status["native_keyframe_ref_audio_merge"] = bool(
+            len(audios) == 2
+            and audios[0] is keyframe_audio
+            and audios[1] is reference_audio)
+    except Exception as exc:
+        status["error"] = repr(exc)
+    return status
 
 
 def _already_patched(cls):

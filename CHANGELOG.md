@@ -4,6 +4,14 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Issue #42 on partially updated ComfyUI builds and internal Motion
+  Context fallback paths. Chain now behaviorally verifies both video and
+  audio keyframe/reference payload merging before sampling and installs its
+  marker-gated compatibility merge only when native Guide layout exists but
+  the payload still drops Guide tensors. This covers the reported 37-step
+  stereo mismatch (`714` reserved rows versus `640` supplied rows), Patch
+  Priority, longer/audio-only carry, and other internal-engine routes.
+
 - Made prompt reference tags case-sensitive from display through conversion.
   The rich editor no longer presents a wrong-case alias as a valid asset, so
   `@Maison` and `@maison` remain distinct. Completion search is still

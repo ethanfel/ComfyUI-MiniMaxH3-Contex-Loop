@@ -86,9 +86,14 @@ def _install_stubs():
     sys.modules[layout.__name__] = layout
 
     payload = types.ModuleType(_PACKAGE + ".patch_payload")
+    payload.CHAIN_AUDIO_KEY = "h3_chain_context_audio"
     payload.apply_patch = lambda: True
-    payload.claim_patch_ownership = lambda: (True, "test")
+    payload.claim_patch_ownership = lambda **kwargs: (True, "test")
     payload.is_applied = lambda: True
+    payload.native_payload_merge_status = lambda: {
+        "native_keyframe_ref_merge": True,
+        "native_keyframe_ref_audio_merge": True,
+    }
     sys.modules[payload.__name__] = payload
 
 
