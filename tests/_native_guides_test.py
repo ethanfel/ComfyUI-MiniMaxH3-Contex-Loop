@@ -482,6 +482,45 @@ def main():
     mm.PackedLayout.__init__ = recognized_observer
     assert layout_patch.native_guides_available()
 
+    # Some ComfyUI revisions shipped native arbitrary Guide layout before
+    # extra_conds learned to retain Guide audio alongside Ref2VA audio. That
+    # produces the real 37-step stereo mismatch: layout reserves 74 more rows
+    # than the payload supplies. Internal fallback paths must repair this at
+    # Motion Context execution, before the sampler sees the conditioning.
+    def partial_native_extra_conds(self, **kwargs):
+        keyframes = kwargs.get("minimax_keyframes") or []
+        refs_value = kwargs.get("minimax_refs") or []
+        payload = {
+            "cond_video_latents": [
+                item["latent"] for item in keyframes
+                if item.get("latent") is not None
+            ] + [item["latent"] for item in refs_value if "latent" in item],
+            "cond_audio_latents": [
+                item["audio_latent"] for item in refs_value
+                if item.get("audio_latent") is not None],
+        }
+        return {"minimax_payload": types.SimpleNamespace(cond=payload)}
+
+    MiniMaxH3.extra_conds = partial_native_extra_conds
+    partial_status = payload_patch.native_payload_merge_status()
+    assert partial_status["native_keyframe_ref_merge"] is True
+    assert partial_status["native_keyframe_ref_audio_merge"] is False
+    repaired_output, repaired_trim = nodes.MiniMaxH3MotionContext().apply(
+        conditioning=[["conditioning", {"minimax_refs": refs}]],
+        vae=VAE(), latent=target, context_frames=context, context_length=22,
+        encode_mode="video", anchor_mode="head", crop="disabled",
+        audio_context_length=22, audio_mode="timeline",
+        context_latent=previous,
+    )
+    assert repaired_trim == 22
+    repaired_metadata = repaired_output[0][1]
+    repaired_payload = MiniMaxH3().extra_conds(
+        minimax_keyframes=repaired_metadata["minimax_keyframes"],
+        minimax_refs=repaired_metadata["minimax_refs"],
+    )["minimax_payload"].cond
+    assert len(repaired_payload["cond_audio_latents"]) == 2
+    assert payload_patch.is_applied()
+
     print("native guides: core-owned PackedLayout, sentinel-free scene 1, AV "
           "continuation, retained last_frame and chained Add Guide alignment "
           "after Ref2VA; lazy renamed/nested SolAttn observers accepted while "

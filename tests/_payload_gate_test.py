@@ -117,6 +117,9 @@ def main():
     assert got["cond_video_latents"] == ["NATIVE_KF", "NATIVE_REF"], got
     assert got["cond_audio_latents"] == ["GUIDE_AUDIO", "TAGGED_AUDIO"], got
     print("2b. native Chain Guide + Ref2VA audio: both audio rows preserved")
+    status = pp.native_payload_merge_status()
+    assert status["native_keyframe_ref_merge"] is True, status
+    assert status["native_keyframe_ref_audio_merge"] is True, status
 
     # 3. chaining under Ref2VA: the graph's own references are unmarked,
     # ours is marked, and every video latent must survive in list order
