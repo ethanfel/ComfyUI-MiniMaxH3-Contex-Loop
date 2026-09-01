@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Fixed a Loop Start runtime crash introduced by structured source-duration
+  diagnostics. Source Timeline binding now derives the active audio-source
+  requirements before calculating required frames, matching the preflight
+  path and eliminating the `source_requirements` NameError.
+
 - Completed the structured preflight diagnostic contract. All hard preflight
   categories now carry their precise trigger, including scene ID, setting,
   value, origin, and tag where applicable; duration/capacity failures report

@@ -6064,6 +6064,7 @@ def _plan_with_source_timeline(
         raise ValueError(
             "H3 chain Audio Policy %s requires audio on Source Timeline." %
             _audio_policy_summary({"audio_policy": policy}))
+    source_requirements = _audio_source_requirements(plan)
     required_frames = _preflight_source_required_frames(
         plan, source_requirements)
     silent_padding = bool(
