@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Made prompt reference tags case-sensitive from display through conversion.
+  The rich editor no longer presents a wrong-case alias as a valid asset, so
+  `@Maison` and `@maison` remain distinct. Completion search is still
+  case-insensitive and inserts the asset's canonical spelling.
+
 - Fixed a Loop Start runtime crash introduced by structured source-duration
   diagnostics. Source Timeline binding now derives the active audio-source
   requirements before calculating required frames, matching the preflight

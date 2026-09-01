@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.91";
+} from "./h3_chain_plan_core.mjs?v=0.6.93";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.91";
+} from "./h3_prompt_history_core.mjs?v=0.6.93";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.91";
+} from "./h3_reference_preview_core.mjs?v=0.6.93";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,16 +60,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.91";
+} from "./h3_policy_core.mjs?v=0.6.93";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.91";
+} from "./h3_socket_presentation_core.mjs?v=0.6.93";
 import {
     availableLoRARoutes,
     loraRouteLabel,
-} from "./h3_lora_scheduler_core.mjs?v=0.6.91";
+} from "./h3_lora_scheduler_core.mjs?v=0.6.93";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -100,8 +100,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.91";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.91";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.93";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.93";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {

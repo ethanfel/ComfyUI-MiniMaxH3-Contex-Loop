@@ -62,6 +62,20 @@ assert.deepEqual(
 );
 assert.equal(punctuated.map((item) => item.text).join(""),
     "Keep @hero. Then use @voice, without absorbing punctuation.");
+const caseSensitiveRecords = [
+    {kind:"picture", tag:"Maison", token:"@Maison", active:true},
+    {kind:"picture", tag:"maison", token:"@maison", active:true},
+];
+const caseSensitiveTokens = tokenizeRichPrompt(
+    "Use @Maison and @maison, but not @MAISON. Keep #Maison distinct from #maison.",
+    caseSensitiveRecords,
+).filter((item) => item.type === "reference");
+assert.equal(caseSensitiveTokens[0].record, caseSensitiveRecords[0]);
+assert.equal(caseSensitiveTokens[1].record, caseSensitiveRecords[1]);
+assert.equal(caseSensitiveTokens[2].record, null);
+assert.equal(caseSensitiveTokens[2].unresolved, true);
+assert.equal(caseSensitiveTokens[3].record, caseSensitiveRecords[0]);
+assert.equal(caseSensitiveTokens[4].record, caseSensitiveRecords[1]);
 const schemaTokens = tokenizeRichPrompt(
     "summary:\n[reference generation]\n<d>[English] (S1) Continue <scenetrans> now.<cutoff></d>",
     records,

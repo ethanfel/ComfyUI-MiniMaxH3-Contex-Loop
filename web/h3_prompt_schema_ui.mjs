@@ -5,7 +5,7 @@ import {
     H3_MODES,
     h3ModeLabel,
     insertH3Section,
-} from "./h3_prompt_schema_core.mjs?v=0.6.91";
+} from "./h3_prompt_schema_core.mjs?v=0.6.93";
 
 function injectStyles() {
     if (document.getElementById("h3-prompt-schema-ui-style")) return;

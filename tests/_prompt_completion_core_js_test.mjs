@@ -117,6 +117,13 @@ const alias = promptCompletionItems(aliasQuery, records, {referenceMode:"tagged"
 assert.deepEqual(applyPromptCompletion("Use @he now", aliasQuery, alias), {
     text:"Use @hero now", caret:9,
 });
+const canonicalCase = promptCompletionItems(
+    promptCompletionQuery("@mai", 4), [
+        {kind:"picture", tag:"Maison", token:"@Maison", active:true},
+    ], {referenceMode:"tagged"},
+)[0];
+assert.equal(canonicalCase.label, "@Maison");
+assert.equal(canonicalCase.insertText, "@Maison");
 
 const manual = promptCompletionQuery("Free text ", 10, {manual:true});
 assert.equal(manual.trigger, "manual");
