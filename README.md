@@ -95,14 +95,21 @@ are decoded during sampling. For an existing workflow, connect its final
 `tagged_references` line to the carousel once: tags, media kinds, semantic or
 native roles, and reference options appear as **Unassigned** cards without
 copying media from the carrier. Bind each card explicitly from ComfyUI input,
-an upload, a backup, or a server path. Unassigned cards never consume H3
+an upload, or a backup. Unassigned cards never consume H3
 reference slots and never enter the generation fingerprint.
 
 Drop one or several image, video, or audio files directly onto the Carousel to
 create project assets immediately. Files can also be chosen with **Upload**, or
 copied from the existing ComfyUI input folder with **Import** (the default
-source); Server path and H3 backup imports remain available from the same
-source selector.
+source); H3 backup imports remain available from the same source selector.
+Move other server media into the configured ComfyUI input directory first;
+browser requests cannot import arbitrary filesystem paths.
+
+Direct prompt optimization allows OpenAI, Gemini, and OpenRouter by default.
+A server operator can add exact provider origins, including a local API,
+before startup with a comma-separated
+`H3_PROMPT_OPTIMIZER_ALLOWED_ORIGINS` value such as
+`http://127.0.0.1:1234,https://api.example.com`.
 
 Images can be edited nondestructively from the Carousel. **Edit / upscale**
 opens a full-source pixel editor with draggable placement, exact dimensions,

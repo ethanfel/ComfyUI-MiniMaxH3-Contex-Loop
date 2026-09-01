@@ -3,6 +3,7 @@
 
 import importlib.util
 import json
+import os
 import pathlib
 import sys
 import tempfile
@@ -25,19 +26,46 @@ sys.modules[spec.name] = optimizer
 spec.loader.exec_module(optimizer)
 
 
+def rejected(function, *args):
+    try:
+        function(*args)
+    except ValueError as exc:
+        return str(exc)
+    raise AssertionError("Expected ValueError")
+
+
+assert "not allowed" in rejected(
+    optimizer.optimizer_url,
+    "http://127.0.0.1:1234/v1", "openai", "model")
+assert "not allowed" in rejected(
+    optimizer._validate_api_destination, "http://169.254.169.254/latest/meta-data")
+assert "not allowed" in rejected(
+    optimizer._AllowedRedirectHandler().redirect_request,
+    None, None, 302, "Found", {},
+    "http://169.254.169.254/latest/meta-data")
+assert "original origin" in rejected(
+    optimizer._AllowedRedirectHandler().redirect_request,
+    types.SimpleNamespace(full_url="https://api.openai.com/v1/responses"),
+    None, 307, "Temporary Redirect", {},
+    "https://openrouter.ai/api/v1/responses")
+assert "credentials" in rejected(
+    optimizer._validate_api_destination,
+    "https://user:secret@api.openai.com/v1")
 assert optimizer.optimizer_url(
-    "https://api.example/v1", "openai", "model") == \
-    "https://api.example/v1/chat/completions"
-assert optimizer.optimizer_url(
-    "https://api.example/v1/responses", "responses", "model") == \
-    "https://api.example/v1/responses"
-assert optimizer.optimizer_url(
-    "https://api.example/custom/chat/completions", "openai", "model") == \
-    "https://api.example/custom/chat/completions"
+    "https://api.openai.com/v1/responses", "responses", "model") == \
+    "https://api.openai.com/v1/responses"
 assert optimizer.optimizer_url(
     "https://generativelanguage.googleapis.com", "gemini",
     "models/gemini-test") == \
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-test:generateContent"
+os.environ[optimizer.ALLOWED_ORIGINS_ENV] = (
+    "https://api.example,http://127.0.0.1:1234")
+assert optimizer.optimizer_url(
+    "https://api.example/v1", "openai", "model") == \
+    "https://api.example/v1/chat/completions"
+assert optimizer.optimizer_url(
+    "https://api.example/custom/chat/completions", "openai", "model") == \
+    "https://api.example/custom/chat/completions"
 assert optimizer._clean_result("```text\nA complete prompt.\n```") == \
     "A complete prompt."
 assert optimizer._clean_result(json.dumps({
@@ -69,7 +97,7 @@ def fake_urlopen(request, timeout):
     })
 
 
-optimizer.urllib.request.urlopen = fake_urlopen
+optimizer._open_direct_api_request = fake_urlopen
 result = optimizer.call_direct_optimizer(
     "http://127.0.0.1:1234/v1", "", "local-model", "openai",
     "Rewrite this scene.")
@@ -80,6 +108,7 @@ assert timeout == optimizer.REQUEST_TIMEOUT_SECONDS
 payload = json.loads(request.data)
 assert payload["model"] == "local-model"
 assert payload["messages"][0]["role"] == "system"
+os.environ.pop(optimizer.ALLOWED_ORIGINS_ENV, None)
 
 with tempfile.TemporaryDirectory() as temporary:
     folder_paths.root = temporary

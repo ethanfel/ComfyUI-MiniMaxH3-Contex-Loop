@@ -5,10 +5,10 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.5.67";
+} from "./h3_project_asset_editor_core.mjs?v=0.5.68";
 import {
     publishProjectAssetCatalogChanged,
-} from "./h3_project_asset_sync_core.mjs?v=0.5.67";
+} from "./h3_project_asset_sync_core.mjs?v=0.5.68";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -317,7 +317,7 @@ function mount(node) {
     }
     const sourceSelect = el("select");
     for (const [value, label] of [
-        ["input", "ComfyUI input"], ["path", "Server path"],
+        ["input", "ComfyUI input"],
         ["chains", "H3 backups"],
     ]) {
         const option = el("option", "", label); option.value = value;
@@ -1755,13 +1755,6 @@ function mount(node) {
     }
     async function browseSource(slot = null, forcedSource = "") {
         let source = forcedSource || sourceSelect.value;
-        if (source === "path") {
-            const path = window.prompt("Absolute server media path");
-            if (!path) return;
-            try { await importAsset({source: "path", path, slot_id: slot?.id ?? ""}); }
-            catch (error) { setStatus(error.message, true); }
-            return;
-        }
         const modal = el("div", "h3pa-modal");
         const row = el("div", "h3pa-row");
         const search = el("input", "h3pa-project"); search.placeholder = "Filter assets";

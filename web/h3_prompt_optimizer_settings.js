@@ -2,7 +2,7 @@ import {app} from "/scripts/app.js";
 import {
     normalizePromptOptimizerApiFormat,
     normalizePromptOptimizerBackend,
-} from "./h3_prompt_optimizer_core.mjs?v=0.5.67";
+} from "./h3_prompt_optimizer_core.mjs?v=0.5.68";
 
 export const PROMPT_OPTIMIZER_SETTING_IDS = Object.freeze({
     backend: "MiniMaxH3ContexLoop.PromptOptimizer.Backend",
@@ -103,7 +103,7 @@ app.registerExtension({
         add({
             id: PROMPT_OPTIMIZER_SETTING_IDS.apiUrl,
             name: "Direct API URL",
-            tooltip: "A provider base URL or complete supported endpoint. The request is made by the ComfyUI server, including for remote or Docker installations.",
+            tooltip: "A provider base URL or complete supported endpoint. OpenAI, Gemini, and OpenRouter are allowed by default. Server operators can add exact origins through H3_PROMPT_OPTIMIZER_ALLOWED_ORIGINS.",
             type: "text",
             defaultValue: "",
             attrs: {placeholder: "https://api.example.com/v1"},
@@ -111,7 +111,7 @@ app.registerExtension({
         add({
             id: PROMPT_OPTIMIZER_SETTING_IDS.apiKey,
             name: "Direct API key",
-            tooltip: "Stored in ComfyUI user settings, never in workflow JSON. May be left empty for compatible local endpoints; Gemini Native requires it.",
+            tooltip: "Stored in ComfyUI user settings, never in workflow JSON. Local endpoints require an exact server-side origin allow-list entry; Gemini Native requires a key.",
             type: "text",
             defaultValue: "",
             attrs: {type: "password", autocomplete: "off"},

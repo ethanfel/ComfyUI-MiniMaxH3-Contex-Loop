@@ -18,9 +18,10 @@ ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE = "h3_source_timeline_consumers_unit"
 
 folder_paths = types.ModuleType("folder_paths")
-folder_paths.get_output_directory = lambda: str(ROOT)
-folder_paths.get_temp_directory = lambda: str(ROOT)
-folder_paths.get_input_directory = lambda: str(ROOT)
+folder_paths.root = str(ROOT)
+folder_paths.get_output_directory = lambda: folder_paths.root
+folder_paths.get_temp_directory = lambda: folder_paths.root
+folder_paths.get_input_directory = lambda: folder_paths.root
 folder_paths.get_annotated_filepath = lambda value: str(value)
 sys.modules["folder_paths"] = folder_paths
 
@@ -92,6 +93,7 @@ def make_plan(run_name, audio_mode="source_track"):
 
 with tempfile.TemporaryDirectory() as temporary:
     root = pathlib.Path(temporary)
+    folder_paths.root = str(root)
     chain._output_root = lambda: str(root)
     path = root / "source.mkv"
     write_fixture(path)

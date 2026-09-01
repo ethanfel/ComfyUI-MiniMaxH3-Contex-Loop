@@ -76,6 +76,58 @@ async def check():
         checkpoints.mkdir(parents=True)
         reviews.mkdir(parents=True)
 
+        try:
+            chain._confined_media_path(
+                "/etc/hosts", "unsafe Plan Studio media")
+        except ValueError as exc:
+            assert "configured ComfyUI" in str(exc)
+        else:
+            raise AssertionError("Plan Studio accepted media outside ComfyUI roots")
+        escaped = run / "escaped-media"
+        escaped.symlink_to("/etc/hosts")
+        try:
+            chain._absolute_output_path(str(escaped.relative_to(temporary)))
+        except ValueError as exc:
+            assert "escapes" in str(exc)
+        else:
+            raise AssertionError("Output path confinement followed an escaping symlink")
+
+        opened = []
+        original_open_run = chain._open_run_output_directory
+        chain._open_run_output_directory = lambda name: (
+            opened.append(name) or {"ok": True, "opened": True})
+        try:
+            class FolderRequest:
+                def __init__(self, remote):
+                    self.remote = remote
+
+                async def json(self):
+                    return {"run_name": "studio"}
+
+            denied = await chain._open_run_folder(FolderRequest("192.0.2.8"))
+            assert denied.status == 403
+            assert opened == []
+            allowed = await chain._open_run_folder(FolderRequest("127.0.0.1"))
+            assert allowed.status == 200
+            assert opened == ["studio"]
+            assert chain._request_is_loopback(
+                types.SimpleNamespace(remote="::1", transport=None))
+            assert not chain._request_is_loopback(types.SimpleNamespace(
+                remote=None, transport=None))
+        finally:
+            chain._open_run_output_directory = original_open_run
+
+        class ImportRequest:
+            async def json(self):
+                return {
+                    "project": "studio", "source": "path",
+                    "path": "/etc/hosts",
+                }
+
+        arbitrary_import = await chain._project_asset_import(ImportRequest())
+        assert arbitrary_import.status == 400
+        assert "ComfyUI input directory" in arbitrary_import.text
+
         video_hash = "abcdef1234567890"
         segment = segments / "clip_0001.revision.mp4"
         generated_audio = run / "generated_audio" / "clip_0001.revision.wav"
@@ -275,6 +327,20 @@ async def check():
         assert restored_presentation["scenes"] == source_payload["scenes"]
         assert chain._PLAN_STUDIO_SOURCE_PREVIEWS[
             restored_presentation["token"]]["records"]["1:0"] == record
+
+        unsafe_presentation = dict(saved_presentation)
+        unsafe_presentation["records"] = {
+            "1:0": {**record, "video_path": "/etc/hosts"},
+        }
+        unsafe_presentation["source_audio"] = {
+            "audio_path": "/etc/hosts",
+        }
+        presentation_path.write_text(
+            json.dumps(unsafe_presentation), encoding="utf-8")
+        chain._PLAN_STUDIO_SOURCE_PREVIEWS.clear()
+        rejected_presentation = chain._restore_plan_studio_presentation(
+            "studio")
+        assert rejected_presentation["token"] == ""
 
         source_audio_file = pathlib.Path(temporary) / "source_audio.m4a"
         source_audio_file.write_bytes(b"source audio")
