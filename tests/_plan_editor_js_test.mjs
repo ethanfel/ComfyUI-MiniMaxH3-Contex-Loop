@@ -792,11 +792,21 @@ assert.equal(windowedTiming.shots[4].visualContextStartFrame, 0);
 assert.equal(windowedTiming.shots[4].visualContextLeadStartFrame, 29);
 
 const sameSourceComposition = structuredClone(composedPlan);
-sameSourceComposition.shots[4].visual_context_lead_source = "three";
-assert.match(calculatePlanTiming(sameSourceComposition, {
+Object.assign(sameSourceComposition.shots[4], {
+    visual_context_lead_source:"three",
+    visual_context_start_frame:0,
+    visual_context_lead_start_frame:29,
+});
+const sameSourceTiming = calculatePlanTiming(sameSourceComposition, {
     contextLength:39, videoBlendFrames:0, anchorMode:"head",
     defaultDurationSeconds:5, defaultSteps:10,
-}).errors.join("\n"), /must be different scenes/i);
+});
+assert.deepEqual(sameSourceTiming.errors, []);
+assert.equal(sameSourceTiming.shots[4].visualContextSource, 3);
+assert.equal(sameSourceTiming.shots[4].visualContextLeadSource, 3);
+assert.equal(sameSourceTiming.shots[4].visualContextLeadFrames, 5);
+assert.equal(sameSourceTiming.shots[4].visualContextStartFrame, 0);
+assert.equal(sameSourceTiming.shots[4].visualContextLeadStartFrame, 29);
 const invalidCompositionSpan = structuredClone(composedPlan);
 invalidCompositionSpan.shots[4].visual_context_lead_frames = 6;
 assert.match(calculatePlanTiming(invalidCompositionSpan, {
@@ -862,7 +872,8 @@ assert.match(editorSource, /field\("Generated continuity", generatedContinuity\)
 assert.match(editorSource, /field\("Lock source audio", lockSourceAudio\)/);
 assert.match(editorSource, /applySceneAudioOverride/);
 assert.match(editorSource, /Advanced visual context/);
-assert.match(editorSource, /Composed context first source/);
+assert.match(editorSource, /Context block 1 source/);
+assert.match(editorSource, /same scene, separate window/);
 assert.match(editorSource, /Composed total \/ split/);
 assert.match(editorSource, /visualContextCompositions/);
 assert.match(editorSource, /Visual context source/);

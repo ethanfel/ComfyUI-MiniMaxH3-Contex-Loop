@@ -40,18 +40,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.5.66";
+} from "./h3_chain_plan_core.mjs?v=0.5.67";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.5.66";
+} from "./h3_prompt_history_core.mjs?v=0.5.67";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.5.66";
+} from "./h3_reference_preview_core.mjs?v=0.5.67";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +60,12 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.5.66";
+} from "./h3_policy_core.mjs?v=0.5.67";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.5.66";
+} from "./h3_socket_presentation_core.mjs?v=0.5.67";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -90,8 +90,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.5.66";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.66";
+} from "./h3_chain_plan_studio_core.mjs?v=0.5.67";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.67";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -2795,23 +2795,12 @@ function mount(node) {
                 shot.video_blend_frames = 0;
             }
             delete shot.visual_context_start_frame;
-            const recentSource = sceneVisualContextSource(
-                state.plan, state.active + 1,
-            );
-            const leadSource = sceneVisualContextLeadSource(
-                state.plan, state.active + 1,
-            );
-            if (leadSource !== null && leadSource === recentSource) {
-                delete shot.visual_context_lead_source;
-                delete shot.visual_context_lead_frames;
-                delete shot.visual_context_lead_start_frame;
-            }
             refreshBlendControl();
             writePlan();
             renderShell();
         });
         const visualLeadSource = element("select");
-        const noLead = element("option", "", "Off · one visual source");
+        const noLead = element("option", "", "Off · one context block");
         noLead.value = "";
         visualLeadSource.append(noLead);
         const recentSourceIndex = state.active === 0 ? null
@@ -2819,19 +2808,21 @@ function mount(node) {
         if (recentSourceIndex !== null) {
             for (let sourceOffset = 0;
                 sourceOffset < state.active; sourceOffset += 1) {
-                if (sourceOffset + 1 === recentSourceIndex) continue;
                 const sourceId = safeShotId(
                     state.plan.shots[sourceOffset]?.id,
                     `clip_${String(sourceOffset + 1).padStart(4, "0")}`,
                 );
+                const sameSource = sourceOffset + 1 === recentSourceIndex;
+                const sourceLabel = `Scene ${sourceOffset + 1} · ${sourceId}`
+                    + (sameSource ? " · same scene, separate window" : "");
                 const option = element(
-                    "option", "", `Scene ${sourceOffset + 1} · ${sourceId}`,
+                    "option", "", sourceLabel,
                 );
                 option.value = sourceId;
                 visualLeadSource.append(option);
             }
         }
-        visualLeadSource.disabled = state.active === 0 || state.active < 2;
+        visualLeadSource.disabled = state.active === 0;
         try {
             const resolvedLead = sceneVisualContextLeadSource(
                 state.plan, state.active + 1,
@@ -2844,7 +2835,7 @@ function mount(node) {
         } catch (_error) {
             visualLeadSource.value = "";
         }
-        visualLeadSource.title = "Optional first scene in one composed visual context. Visual context source supplies the second block nearest generation. Either source may be chronologically newer, but they must differ; generated audio remains continuous from the immediate timeline predecessor.";
+        visualLeadSource.title = "Optional first block in one composed visual context. It may use a different scene or a second independently positioned window from the same scene. Visual context source supplies the block nearest generation; generated audio remains continuous from the immediate timeline predecessor.";
 
         const visualLeadFrames = element("select");
         const resolvedVisualContext = sceneContextLength(
@@ -2884,7 +2875,7 @@ function mount(node) {
         } else {
             visualLeadFrames.value = defaultComposition?.value ?? "";
         }
-        visualLeadFrames.title = "Select the total H3 context and its ordered two-scene split. Both orientations are available: for example, 39 total includes 17+22 and 22+17. Reverse-phase layouts are normalized once through the connected video VAE when required.";
+        visualLeadFrames.title = "Select the total H3 context and its ordered two-block split. Both blocks may use the same scene with independent floating windows. For example, 39 total includes 5+34, 17+22, and their reverse orientations.";
         function applyVisualComposition() {
             const [totalRaw, leadRaw] = visualLeadFrames.value.split(":");
             const total = Number(totalRaw);
@@ -3153,7 +3144,7 @@ function mount(node) {
         advancedGrid.append(
             field("Visual / audio context", contextPair),
             field("Visual context source", visualSource),
-            field("Composed context first source", visualLeadSource),
+            field("Context block 1 source", visualLeadSource),
             field("Composed total / split", visualLeadFrames),
             field("Implementation", continuation),
             field("Boundary spatial proxy", spatialProxy),
