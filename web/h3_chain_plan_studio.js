@@ -408,6 +408,12 @@ function injectStyles() {
             position:absolute; top:6px; bottom:6px; width:2px; background:rgba(255,255,255,.78); }
         .h3studio-context-window::before { left:4px; }
         .h3studio-context-window::after { right:4px; }
+        .h3studio-context-phase-tail { position:absolute; z-index:0; top:0; bottom:0;
+            pointer-events:none; border-left:1px dashed #d39a50;
+            background:repeating-linear-gradient(135deg,rgba(211,154,80,.24) 0,
+                rgba(211,154,80,.24) 4px,rgba(211,154,80,.06) 4px,
+                rgba(211,154,80,.06) 8px); }
+        .h3studio-context-phase-note { margin-top:4px; color:#d7ad73; font-size:10px; }
         .h3studio-context-playhead { position:absolute; z-index:2; top:0; bottom:0; width:2px;
             pointer-events:none; background:#ff9a3c; transform:translateX(-1px); }
         .h3studio-context-range-readout { display:flex; justify-content:space-between; gap:8px; }
@@ -4417,8 +4423,19 @@ function mount(node) {
             const selectedZone = element(
                 "div", "h3studio-context-window", `${block.span}f`,
             );
+            const phaseTailFrames = Math.max(0, latest - defaultStart);
+            const phaseTail = element("div", "h3studio-context-phase-tail");
+            phaseTail.hidden = phaseTailFrames < 1;
+            if (phaseTailFrames > 0) {
+                phaseTail.style.left = `${(
+                    (defaultStart + block.span) / sourceRow.deliveredFrames
+                ) * 100}%`;
+                phaseTail.style.width = `${(
+                    phaseTailFrames / sourceRow.deliveredFrames
+                ) * 100}%`;
+            }
             const playhead = element("div", "h3studio-context-playhead");
-            movieTrack.append(selectedZone, playhead);
+            movieTrack.append(phaseTail, selectedZone, playhead);
             const rangeLabel = element("span", "h3studio-context-range-label");
             const movieLength = element(
                 "span", "h3studio-context-movie-length",
@@ -4436,7 +4453,7 @@ function mount(node) {
                 selectedZone.style.width = `${layout.widthFraction * 100}%`;
                 selectedZone.title = `${block.span} context frames · ${layout.start + 1}–${layout.end} · native latent crop`;
                 const slot = validStarts.indexOf(layout.start) + 1;
-                rangeLabel.textContent = `aligned ${slot}/${validStarts.length} · frames ${layout.start + 1}–${layout.end} · ${(layout.start / FPS).toFixed(3)}–${(layout.end / FPS).toFixed(3)}s`;
+                rangeLabel.textContent = `aligned ${slot}/${validStarts.length} · frames ${layout.start + 1}–${layout.end} · ${(layout.start / FPS).toFixed(3)}–${(layout.end / FPS).toFixed(3)}s${phaseTailFrames > 0 ? ` · final ${phaseTailFrames}f use another phase` : ""}`;
                 movieTrack.setAttribute("aria-valuenow", String(layout.start));
                 movieTrack.setAttribute(
                     "aria-valuetext", `frames ${layout.start + 1} through ${layout.end}`,
@@ -4525,6 +4542,12 @@ function mount(node) {
             const rangeReadout = element("div", "h3studio-context-range-readout");
             rangeReadout.append(movieLength, rangeLabel);
             rangeWrap.append(movieTrack, rangeReadout);
+            if (phaseTailFrames > 0) {
+                rangeWrap.append(element(
+                    "div", "h3studio-context-phase-note",
+                    `The hatched final ${phaseTailFrames} frames are on a different H3 latent phase for this ${block.span}-frame block at target offset ${block.prefixFrames}. A direct latent crop cannot end there; change the composed split to use that physical tail without RGB/VAE re-encoding.`,
+                ));
+            }
             card.append(rangeWrap);
             updateSelection();
             if (video) {
