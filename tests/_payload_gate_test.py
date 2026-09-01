@@ -168,6 +168,10 @@ def main():
         return out
 
     extra_conds._h3_avbank_merge = True
+    # Real Multishot installations can inherit our generic marker from a
+    # previously loaded payload wrapper. Its specific identity must win when
+    # both markers are present (issue #38).
+    extra_conds._h3_motion_context_payload_patch = True
     extra_conds.__module__ = "custom_nodes.h3_multishot.h3_avbank_probe"
     mb2.MiniMaxH3.extra_conds = extra_conds
     sys.modules.pop("patch_payload", None)
