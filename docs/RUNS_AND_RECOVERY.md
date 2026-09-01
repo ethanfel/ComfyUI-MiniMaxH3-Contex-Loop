@@ -79,9 +79,17 @@ scene_range: blank
 
 To resume scene N, keep the original `run_name` and dependency settings, then
 set `start_clip: N`. The loop loads checkpoint N−1 and validates all completed
-predecessors. Editing scene N or later is safe; changing an earlier prompt,
+predecessors that the selected scene actually consumes. Editing scene N or
+later is safe; changing an earlier prompt,
 seed, timing, source waveform, Plan compatibility setting, or
 `generation_fingerprint` invalidates the dependent resume.
+
+A visually new scene can still consume the immediately previous generated
+audio when its video context is `0` but its audio context is positive. That
+audio-only edge validates the predecessor's prompt/model/source identity and
+saved artifacts, but ignores its unrelated incoming visual-boundary recipe.
+Set both scene video context and audio context to `0` (or select Visual Cut)
+for a completely independent scene.
 
 Loop Start's `verify_resume_history` switch is enabled by default. Disable it
 only when you intentionally want scene N to consume the existing saved scene

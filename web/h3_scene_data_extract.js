@@ -1,5 +1,5 @@
 import {app} from "../../scripts/app.js";
-import {sceneDataFieldPresentation} from "./h3_scene_data_core.mjs?v=0.6.97";
+import {sceneDataFieldPresentation} from "./h3_scene_data_core.mjs?v=0.6.98";
 
 const NODE_NAME = "MiniMaxH3SceneDataExtract";
 

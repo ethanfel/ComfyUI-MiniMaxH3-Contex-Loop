@@ -4,6 +4,13 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed zero-picture-context resume validation. When a visually new scene
+  carries only the preceding generated audio, strict history checks now ignore
+  that predecessor's unrelated incoming visual-boundary recipe while retaining
+  prompt/model/source identity and artifact-integrity checks. Resume errors now
+  report the consumed streams and selected scene's effective video/audio
+  context lengths.
+
 - Hardened the Manager-facing HTTP surface. Direct prompt optimization now
   uses a server-owned exact-origin allow-list and validates every redirect;
   custom or local providers require `H3_PROMPT_OPTIMIZER_ALLOWED_ORIGINS`.

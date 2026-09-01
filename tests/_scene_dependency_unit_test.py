@@ -938,6 +938,96 @@ assert drift_diffs == [{
     "regeneration_required": True,
 }]
 
+# A visually new scene may deliberately keep only generated-audio continuity.
+# The saved predecessor audio remains authoritative, so changing that
+# predecessor's visual incoming-boundary recipe must not block the audio-only
+# edge. Prompt/model/source identity changes remain strict, and a visual edge
+# still compares the complete dependency record.
+audio_only_resume_plan = chain._normalize_plan(
+    json.dumps({"shots": [
+        {"id": "one", "prompt": "one", "length": 90},
+        {"id": "two", "prompt": "two", "length": 90,
+         "continuation_mode": "audio_feathered_av"},
+        {"id": "clean_picture", "prompt": "three", "length": 90,
+         "context_length": 0, "audio_context_length": 39,
+         "continuation_mode": "guide"},
+    ]}),
+    "audio-only-resume-test", 64, 64, 39, "video", "head", "disabled",
+    "generated_audio", 39, 1.0, 20, 11, 18, "body:auto:v1", 0,
+    "audio_feathered_av")
+audio_only_sources = chain._resume_context_predecessors(
+    audio_only_resume_plan, 3)
+assert audio_only_sources == {
+    "visual": None, "audio": 2, "scenes": [2],
+}
+saved_audio_only_plan = json.loads(json.dumps(audio_only_resume_plan))
+saved_audio_only_plan["shots"][1]["continuation_mode"] = "drift_control_av"
+saved_audio_predecessor = chain._scene_dependency_record(
+    saved_audio_only_plan, 2, None)
+current_audio_predecessor = chain._scene_dependency_record(
+    audio_only_resume_plan, 2, None)
+assert any(item["scope"] == "incoming_boundary"
+           for item in chain._scene_dependency_diffs(
+               saved_audio_predecessor, current_audio_predecessor))
+assert chain._resume_dependency_diffs(
+    saved_audio_predecessor, current_audio_predecessor, 2,
+    audio_only_sources) == []
+visual_and_audio_sources = {
+    "visual": 2, "audio": 2, "scenes": [2],
+}
+assert any(item["scope"] == "incoming_boundary"
+           for item in chain._resume_dependency_diffs(
+               saved_audio_predecessor, current_audio_predecessor, 2,
+               visual_and_audio_sources))
+
+with tempfile.TemporaryDirectory() as temporary:
+    root = pathlib.Path(temporary)
+    original_output_root = chain._output_root
+    chain._output_root = lambda: str(root)
+    try:
+        for scene in (1, 2):
+            paths = chain._artifact_paths(saved_audio_only_plan, scene)
+            pathlib.Path(paths["segment"]).parent.mkdir(
+                parents=True, exist_ok=True)
+            pathlib.Path(paths["checkpoint"]).parent.mkdir(
+                parents=True, exist_ok=True)
+            pathlib.Path(paths["segment"]).write_bytes(
+                ("audio-only-video-%d" % scene).encode())
+            pathlib.Path(paths["checkpoint"]).write_bytes(
+                ("audio-only-checkpoint-%d" % scene).encode())
+            history = chain._history_hash(saved_audio_only_plan, scene)
+            segment = {
+                "index": scene,
+                "id": saved_audio_only_plan["shots"][scene - 1]["id"],
+                "segment": chain._relative_output_path(paths["segment"]),
+                "checkpoint": chain._relative_output_path(paths["checkpoint"]),
+                "segment_sha256": chain._file_sha256(paths["segment"]),
+                "checkpoint_sha256": chain._file_sha256(paths["checkpoint"]),
+                "history_hash": history,
+                "revision": "audio-only-%d" % scene,
+            }
+            pathlib.Path(paths["metadata"]).write_text(json.dumps({
+                "history_hash": history,
+                "compatibility": saved_audio_only_plan["compatibility"],
+                "scene_dependency": chain._scene_dependency_record(
+                    saved_audio_only_plan, scene, None),
+                "segment": segment,
+            }), encoding="utf-8")
+        audio_only_report = {"errors": [], "warnings": []}
+        audio_only_resume = chain._preflight_resume(
+            audio_only_resume_plan, 3, True, audio_only_report)
+        assert audio_only_resume["eligible"] is True
+        assert audio_only_report["errors"] == []
+        assert audio_only_resume["context_sources"] == audio_only_sources
+        assert audio_only_resume["selected_context"] == {
+            "scene": 3, "video_frames": 0, "audio_frames": 39,
+        }
+        assert audio_only_resume["predecessors"][1][
+            "consumed_streams"] == ["audio"]
+        assert audio_only_resume["predecessors"][1]["mismatches"] == []
+    finally:
+        chain._output_root = original_output_root
+
 color_drift_plan = chain._normalize_plan(
     json.dumps({"shots": [
         {"id": "one", "prompt": "@actor opens.", "length": 90},

@@ -9546,6 +9546,39 @@ def _resume_context_predecessor(
     return max(sources) if sources else None
 
 
+def _resume_predecessor_streams(
+        context_sources: dict[str, Any], index: int) -> tuple[str, ...]:
+    """Describe which saved streams one resume predecessor supplies."""
+    index = int(index)
+    streams = []
+    if context_sources.get("visual_lead") == index:
+        streams.append("visual_lead")
+    if context_sources.get("visual") == index:
+        streams.append("visual")
+    if context_sources.get("audio") == index:
+        streams.append("audio")
+    return tuple(streams)
+
+
+def _resume_dependency_diffs(
+        saved: Any, current: Any, index: int,
+        context_sources: dict[str, Any]) -> list[dict[str, Any]]:
+    """Compare only dependency scopes consumed by the selected resume edge.
+
+    A scene with zero visual context may still carry generated audio from the
+    immediate predecessor.  In that case the predecessor's already-rendered
+    audio is consumed, but its incoming visual-boundary recipe is not.  Keep
+    prompt/model/source identity checks, while preventing an unrelated AV
+    transition edit from blocking an otherwise valid audio-only resume.
+    """
+    diffs = _scene_dependency_diffs(saved, current)
+    streams = _resume_predecessor_streams(context_sources, index)
+    if streams == ("audio",):
+        diffs = [item for item in diffs
+                 if item.get("scope") != "incoming_boundary"]
+    return diffs
+
+
 def _load_resume_state(
         plan: dict[str, Any], start_clip: int,
         verify_history: bool = True, source_timeline: Any = None,
@@ -9586,8 +9619,9 @@ def _load_resume_state(
                             "source_reference_window")
             current_dependency = _scene_dependency_record(
                 plan, index, current_source_dependency)
-            dependency_diffs = _scene_dependency_diffs(
-                saved_dependency, current_dependency)
+            dependency_diffs = _resume_dependency_diffs(
+                saved_dependency, current_dependency, index,
+                context_sources)
             if dependency_diffs:
                 raise ValueError(
                     "Cannot resume clip %d: %s. Regenerate scene %d before "
@@ -15049,6 +15083,18 @@ def _preflight_resume(
     }
     if int(start) <= 1:
         return result
+    selected_shot = plan["shots"][int(start) - 1]
+    selected_video_context = _shot_context_length(
+        selected_shot, int(plan["compatibility"].get("context_length", 0)))
+    selected_audio_context = _shot_audio_context_length(
+        selected_shot,
+        int(plan["compatibility"].get("audio_context_length", 0)),
+        selected_video_context)
+    result["selected_context"] = {
+        "scene": int(start),
+        "video_frames": int(selected_video_context),
+        "audio_frames": int(selected_audio_context),
+    }
     context_sources = _resume_context_predecessors(plan, int(start))
     consumed_predecessors = set(context_sources["scenes"])
     result["context_sources"] = context_sources
@@ -15080,8 +15126,9 @@ def _preflight_resume(
                                 "source_reference_window")
                 current_dependency = _scene_dependency_record(
                     plan, index, current_source_dependency)
-                dependency_diffs = _scene_dependency_diffs(
-                    saved_dependency, current_dependency)
+                dependency_diffs = _resume_dependency_diffs(
+                    saved_dependency, current_dependency, index,
+                    context_sources)
                 accepted = (str(metadata.get("history_hash") or "") or None)
             else:
                 # These clips remain part of final assembly, but the selected
@@ -15090,6 +15137,8 @@ def _preflight_resume(
                 # them to edits in the current Plan.
                 accepted = str(metadata.get("history_hash") or "") or None
             item["mismatches"] = dependency_diffs
+            item["consumed_streams"] = list(
+                _resume_predecessor_streams(context_sources, index))
             if dependency_diffs:
                 raise ValueError(
                     "Predecessor scene %d dependency mismatch: %s" % (
@@ -15128,6 +15177,13 @@ def _preflight_resume(
                 measurements={
                     "dependency_mismatch_count": len(
                         item.get("mismatches") or ()),
+                    "consumed_streams": ",".join(
+                        item.get("consumed_streams") or ()) or "assembly",
+                    "selected_scene": int(start),
+                    "selected_video_context_frames": int(
+                        selected_video_context),
+                    "selected_audio_context_frames": int(
+                        selected_audio_context),
                 }, scene=index, scene_id=str(shot["id"]))
         result["predecessors"].append(item)
     return result
@@ -16068,10 +16124,12 @@ def _plan_studio_preflight_input_types():
             "tooltip": "Optional contiguous scene selection to preflight."}),
         "verify_resume_history": ("BOOLEAN", {
             "default": True,
-            "tooltip": "When resuming after scene 1, compare every "
-                       "saved predecessor dependency with the active "
-                       "Plan. Disable only for an intentional advanced "
-                       "recovery from known artifacts."}),
+            "tooltip": "When resuming after scene 1, compare each saved "
+                       "predecessor actually consumed by the selected "
+                       "scene with the active Plan. Audio-only carry ignores "
+                       "the predecessor's unrelated visual-boundary recipe. "
+                       "Disable only for an intentional advanced recovery "
+                       "from known artifacts."}),
         "tagged_references": (TAGGED_REFERENCE_TYPE, {
             "tooltip": "Optional active prompt-driven reference registry. "
                        "In standalone Plan Studio it also supplies the "
@@ -17081,10 +17139,12 @@ class MiniMaxH3ChainLoopStart:
                                "are rejected because they break continuity."}),
                 "verify_resume_history": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Recommended ON: require every completed "
-                               "predecessor to match the current Plan's "
+                    "tooltip": "Recommended ON: require every predecessor "
+                               "consumed by this scene to match the current Plan's "
                                "prompts, seeds, timing, source audio, model, "
-                               "and reference fingerprint. Turn OFF only to "
+                               "and reference fingerprint. An audio-only "
+                               "edge does not compare the saved predecessor's "
+                               "unrelated visual-boundary recipe. Turn OFF only to "
                                "deliberately reuse the saved predecessor after "
                                "changing the current Plan. Missing files, "
                                "SHA-256 artifact integrity, checkpoint tensor "
