@@ -3,9 +3,11 @@ import fs from "node:fs";
 import {
     ADVANCED_POLICY_NODE,
     CHAIN_POLICY_NODE,
+    MODERN_PLAN_NODE,
     PROFILE_POLICY_NODE,
     applySocketPresentation,
     hasSourceTimeline,
+    isPlanNode,
     policyPlanConsumers,
     presentationForNode,
     resolveAudioContextLength,
@@ -83,6 +85,30 @@ assert.equal(planPresentation.hiddenOutputs.has("summary"), true);
 assert.equal(planPresentation.hiddenOutputs.has("clip_count"), true);
 assert.equal(planPresentation.hiddenOutputs.has("video_blend_frames"), true);
 assert.equal(presentationForNode(plan, true).hiddenWidgets.size, 0);
+
+const modernPlan = node(4, MODERN_PLAN_NODE, [
+    ["chain_policy", 13],
+], [
+    ["plan", [14]], ["summary", null], ["clip_count", null],
+    ["video_blend_frames", null],
+], [
+    ["encode_mode", "video"], ["crop", "disabled"],
+    ["video_blend_frames", 0],
+]);
+const modernStart = node(5, "MiniMaxH3ChainLoopStart", [
+    ["plan", 14], ["source_audio", null], ["source_timeline", null],
+]);
+new Graph([audioPolicy, modernPlan, modernStart], {
+    13: {origin_id: 1, target_id: 4},
+    14: {origin_id: 4, target_id: 5},
+});
+assert.equal(isPlanNode(modernPlan), true);
+assert.equal(resolveTransitionPolicy(modernStart).known, true);
+assert.equal(resolveAudioPolicy(modernStart).known, true);
+const modernPresentation = presentationForNode(modernPlan, false);
+assert.equal(modernPresentation.hiddenOutputs.has("summary"), true);
+assert.equal(modernPresentation.hiddenOutputs.has("clip_count"), true);
+assert.equal(modernPresentation.hiddenWidgets.has("encode_mode"), false);
 
 const studio = node(30, "MiniMaxH3ChainPlanStudio", [], [], [
     ["verify_resume_history", true], ["plan_json", "{}"],

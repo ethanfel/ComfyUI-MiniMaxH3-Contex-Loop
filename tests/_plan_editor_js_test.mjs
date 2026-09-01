@@ -976,7 +976,20 @@ const editorSource = fs.readFileSync(
     new URL("../web/h3_chain_plan_editor.js", import.meta.url),
     "utf8",
 );
+const upgradeSource = fs.readFileSync(
+    new URL("../web/h3_plan_upgrade_core.mjs", import.meta.url),
+    "utf8",
+);
 assert.match(editorSource, /collapseWidget\(planWidget\)/);
+assert.match(upgradeSource, /MiniMaxH3ChainPlanModern/);
+assert.match(editorSource, /Upgrade to Modern Plan/);
+assert.match(editorSource, /replaceWithModernPlan/);
+assert.match(editorSource, /Generation Profile required/);
+assert.match(editorSource, /Project/);
+assert.match(editorSource, /Canvas & context fitting/);
+assert.match(editorSource, /Generation defaults/);
+assert.match(editorSource, /Delivery/);
+assert.match(editorSource, /collapseModernBackingWidgets/);
 assert.match(editorSource, /display[^\n]+none[^\n]+important/);
 assert.match(editorSource, /pointer-events[^\n]+none[^\n]+important/);
 assert.match(editorSource, /widget\.onRemove\(\)/);

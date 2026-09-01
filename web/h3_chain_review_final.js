@@ -4,12 +4,12 @@ import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.6.99";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.99";
+} from "./h3_chain_plan_core.mjs?v=0.7.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.99";
+} from "./h3_plan_restore_core.mjs?v=0.7.0";
 import {
     acceptedPreviewDisposition,
     applyCheckpointRevisionSet,
@@ -22,10 +22,11 @@ import {
     reviewLocalDeadline,
     reviewPlanScenePrompt,
     reviewSeed,
-} from "./h3_chain_review_core.mjs?v=0.6.99";
+} from "./h3_chain_review_core.mjs?v=0.7.0";
 
 const NODE_NAME = "MiniMaxH3ChainReview";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const PLAN_NAMES = new Set([PLAN_NAME, "MiniMaxH3ChainPlanModern"]);
 const PROMPT_EDITOR_SETTING = "MiniMaxH3ContexLoop.ReviewGate.PromptEditor";
 const VIDEO_HEIGHT_PROPERTY = "h3_chain_review_video_height";
 const PROMPT_HEIGHT_PROPERTY = "h3_chain_review_prompt_height";
@@ -302,7 +303,9 @@ function findUpstreamNode(start, wantedType) {
         const node = queue.shift();
         if (!node || seen.has(node)) continue;
         seen.add(node);
-        if (node !== start && nodeType(node) === wantedType) return node;
+        const matches = wantedType instanceof Set
+            ? wantedType.has(nodeType(node)) : nodeType(node) === wantedType;
+        if (node !== start && matches) return node;
         for (const input of node.inputs ?? []) {
             if (input.link == null) continue;
             const link = node.graph?.links?.[input.link];
@@ -323,8 +326,8 @@ function videoUrl(item) {
 }
 
 function upstreamPlanNode(reviewNode) {
-    return findUpstreamNode(reviewNode, PLAN_NAME) ??
-        allNodes(app.graph).find((item) => nodeType(item) === PLAN_NAME);
+    return findUpstreamNode(reviewNode, PLAN_NAMES) ??
+        allNodes(app.graph).find((item) => PLAN_NAMES.has(nodeType(item)));
 }
 
 function widgetByName(node, name) {
@@ -648,7 +651,7 @@ function deliverReview(node, data) {
     if (!node || nodeType(node) !== NODE_NAME) return false;
     const expectedRun = String(data?.run_name ?? "").trim();
     if (expectedRun) {
-        const planNode = findUpstreamNode(node, PLAN_NAME);
+        const planNode = findUpstreamNode(node, PLAN_NAMES);
         const actualRun = String(widgetByName(planNode, "run_name")?.value ?? "").trim();
         if (actualRun && actualRun !== expectedRun) return false;
     }
@@ -671,7 +674,7 @@ function reviewFallbackNode(data) {
     const expectedRun = String(data?.run_name ?? "").trim();
     if (expectedRun) {
         const matchingRun = gates.filter((item) => {
-            const planNode = findUpstreamNode(item, PLAN_NAME);
+            const planNode = findUpstreamNode(item, PLAN_NAMES);
             return String(widgetByName(planNode, "run_name")?.value ?? "").trim() ===
                 expectedRun;
         });

@@ -105,7 +105,7 @@ See [How disabled nodes are shown](docs/NODE_REFERENCE.md#how-disabled-nodes-are
 | Node | Main input | Main output | Use it for |
 |---|---|---|---|
 | **Generation Profile** | Continuity and audio choices | `chain_policy` | Choose normal behavior in two controls. |
-| **Plan** | Scene prompts, `run_name`, size, policy | `plan` | Define the production. |
+| **Plan (Modern)** | Scene prompts, organized settings, required policy | `plan` | Define the production without legacy fallback controls. The original Plan remains available for existing workflows. |
 | **Preflight** | `plan` | checked `plan`, `ready`, `status` | Catch problems before model loading. |
 | **Loop Start** | checked `plan` | `flow`, `state` | Start or resume a run. |
 | **Current Shot** | `state` | prompt, seed, timing, size | Drive the current scene. |

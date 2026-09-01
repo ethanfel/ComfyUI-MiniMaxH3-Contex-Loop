@@ -5,15 +5,16 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.6.99";
+} from "./h3_project_asset_editor_core.mjs?v=0.7.0";
 import {
     publishProjectAssetCatalogChanged,
     serializedProjectAssetCatalog,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.99";
+} from "./h3_project_asset_sync_core.mjs?v=0.7.0";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
-    "MiniMaxH3ChainPlan", "MiniMaxH3ChainPlanStudio",
+    "MiniMaxH3ChainPlan", "MiniMaxH3ChainPlanModern",
+    "MiniMaxH3ChainPlanStudio",
 ]);
 const ROLES = {
     image: ["picture", "semantic_anchor"],

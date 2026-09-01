@@ -31,8 +31,8 @@ import {
     shotLengthMode,
     sharedPrompt,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.99";
-import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.6.99";
+} from "./h3_chain_plan_core.mjs?v=0.7.0";
+import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.7.0";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -41,16 +41,21 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.99";
+} from "./h3_policy_core.mjs?v=0.7.0";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.99";
+} from "./h3_socket_presentation_core.mjs?v=0.7.0";
 import {
     availableLoRARoutes,
     loraRouteLabel,
-} from "./h3_lora_scheduler_core.mjs?v=0.6.99";
+} from "./h3_lora_scheduler_core.mjs?v=0.7.0";
+import {
+    MODERN_PLAN_NODE as MODERN_NODE_NAME,
+    MODERN_PLAN_WIDGET_NAMES as MODERN_BACKING_WIDGETS,
+    upgradeLegacyPlanNode,
+} from "./h3_plan_upgrade_core.mjs?v=0.7.0";
 
 // This scene editor is an original implementation. Its quick @ reference and
 // # dialogue interactions are inspired by nkxx188/ComfyUI-MiniMaxH3-Easy,
@@ -58,6 +63,7 @@ import {
 
 const EXTENSION = "minimax_h3_context_loop.chain_plan_editor";
 const NODE_NAME = "MiniMaxH3ChainPlan";
+const NODE_NAMES = new Set([NODE_NAME, MODERN_NODE_NAME]);
 const MIN_WIDTH = 700;
 const EDITOR_HEIGHT = 650;
 const SCENE_COLOR_PROPERTY = "h3_chain_scene_colors";
@@ -142,6 +148,23 @@ function injectStyles() {
             border-radius: 7px;
             background: var(--h3c-panel);
         }
+        .h3c-settings { display:none; }
+        .h3c-settings.h3c-open { display:block; }
+        .h3c-settings-head { display:flex; align-items:center; gap:8px;
+            margin-bottom:8px; }
+        .h3c-settings-head strong { font-size:13px; }
+        .h3c-policy-status { margin-left:auto; color:var(--h3c-muted); }
+        .h3c-policy-status.h3c-missing { color:#ffb4b8; }
+        .h3c-settings-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+            gap:8px; }
+        .h3c-settings-group { min-width:0; padding:8px; border:1px solid var(--h3c-border);
+            border-radius:6px; background:var(--h3c-bg); }
+        .h3c-settings-group-title { margin-bottom:7px; color:var(--h3c-accent);
+            font-weight:700; }
+        .h3c-settings-fields { display:grid; grid-template-columns:repeat(2,minmax(0,1fr));
+            gap:7px; }
+        .h3c-settings-fields .h3c-wide { grid-column:1 / -1; }
+        .h3c-managed-note { margin-top:6px; color:var(--h3c-muted); }
         .h3c-label { display: block; margin-bottom: 4px; color: var(--h3c-muted); font-weight: 650; }
         .h3c-help { margin-top: 4px; color: var(--h3c-muted); }
         .h3c-prefix { min-height: 88px; }
@@ -213,8 +236,10 @@ function injectStyles() {
         .h3c-footer a { color: var(--h3c-accent); }
         @media (max-width: 650px) {
             .h3c-length-row, .h3c-advanced-fields,
-            .h3c-seed-control, .h3c-boundary-fields, .h3c-audio-fields {
+            .h3c-seed-control, .h3c-boundary-fields, .h3c-audio-fields,
+            .h3c-settings-grid, .h3c-settings-fields {
                 grid-template-columns: 1fr; }
+            .h3c-settings-fields .h3c-wide { grid-column:1; }
             .h3c-seed-status { grid-column:1; }
             .h3c-card-head { flex-wrap: wrap; }
             .h3c-timing { width: 100%; }
@@ -278,6 +303,17 @@ function numberInput(value, options = {}) {
     return input;
 }
 
+function selectInput(value, choices) {
+    const select = element("select");
+    for (const [choice, label] of choices) {
+        const option = element("option", "", label);
+        option.value = choice;
+        select.append(option);
+    }
+    select.value = String(value ?? "");
+    return select;
+}
+
 function widgetValue(node, name, fallback) {
     const widget = node.widgets?.find((item) => item.name === name);
     return widget?.value ?? fallback;
@@ -286,6 +322,15 @@ function widgetValue(node, name, fallback) {
 function inputConnected(node, name) {
     const input = node.inputs?.find((item) => item.name === name);
     return input?.link !== null && input?.link !== undefined;
+}
+
+function setWidgetValue(node, name, value) {
+    const widget = node.widgets?.find((item) => item.name === name);
+    if (!widget || Object.is(widget.value, value)) return;
+    widget.value = value;
+    widget.callback?.(value);
+    node.graph?.setDirtyCanvas?.(true, true);
+    app.graph?.setDirtyCanvas?.(true, true);
 }
 
 function collapseWidget(widget) {
@@ -319,6 +364,14 @@ function collapseWidget(widget) {
     // with its value and callback intact for workflow serialization.
     if (widget.element && widget.id && typeof widget.onRemove === "function") {
         widget.onRemove();
+    }
+}
+
+function collapseModernBackingWidgets(node) {
+    if ((node.comfyClass ?? node.type) !== MODERN_NODE_NAME) return;
+    for (const name of MODERN_BACKING_WIDGETS) {
+        const widget = node.widgets?.find((item) => item.name === name);
+        if (widget) collapseWidget(widget);
     }
 }
 
@@ -424,10 +477,42 @@ function downloadJson(value, filename) {
     setTimeout(() => URL.revokeObjectURL(url), 0);
 }
 
+function replaceWithModernPlan(node) {
+    const createNode = globalThis.LiteGraph?.createNode;
+    const result = upgradeLegacyPlanNode(node, {
+        createNode,
+        confirmUpgrade: () => (
+            typeof globalThis.confirm !== "function" || globalThis.confirm(
+                "Replace this Plan with MiniMax H3 Plan (Modern)?\n\n" +
+                "Scenes, supported settings, position, and links are preserved. " +
+                "Legacy fallback settings are intentionally not copied.",
+            )
+        ),
+    });
+    if (result.ok) {
+        app.canvas?.selectNode?.(result.node);
+        return;
+    }
+    if (result.reason === "cancelled") return;
+    const messages = {
+        policy_required:
+            "Connect MiniMax H3 Generation Profile to this Plan before upgrading. " +
+            "The Modern Plan has no legacy continuity or audio fallbacks, so the " +
+            "original node was kept unchanged.",
+        modern_unregistered:
+            "MiniMax H3 Plan (Modern) is not registered. Restart ComfyUI after " +
+            "updating the node pack.",
+        create_unavailable:
+            "ComfyUI could not create the Modern Plan node.",
+    };
+    globalThis.alert?.(messages[result.reason] ?? "The Plan could not be upgraded.");
+}
+
 function mountEditor(node) {
     if (node._h3ChainEditor || typeof node.addDOMWidget !== "function") return;
     const planWidget = node.widgets?.find((widget) => widget.name === "plan_json");
     if (!planWidget) return;
+    const modern = (node.comfyClass ?? node.type) === MODERN_NODE_NAME;
 
     injectStyles();
     const root = element("div", "h3c-editor");
@@ -443,6 +528,7 @@ function mountEditor(node) {
         plan: null,
         advanced: Boolean(savedLayout.advanced),
         jsonOpen: Boolean(savedLayout.jsonOpen),
+        settingsOpen: modern && savedLayout.settingsOpen !== false,
         lastWidgetValue: "",
         syncing: false,
         draggedIndex: null,
@@ -452,6 +538,7 @@ function mountEditor(node) {
     node._h3ChainEditor = state;
 
     collapseWidget(planWidget);
+    collapseModernBackingWidgets(node);
 
     const domWidget = node.addDOMWidget("h3_chain_scene_editor", "h3-chain-editor", root, {
         serialize: false,
@@ -469,6 +556,7 @@ function mountEditor(node) {
         const layout = planLayout(node);
         layout.advanced = state.advanced;
         layout.jsonOpen = state.jsonOpen;
+        layout.settingsOpen = state.settingsOpen;
         graphDirty();
     }
 
@@ -515,6 +603,7 @@ function mountEditor(node) {
 
     function applyResponsiveSize() {
         collapseWidget(planWidget);
+        collapseModernBackingWidgets(node);
         const width = Math.max(Number(node.size?.[0]) || MIN_WIDTH, MIN_WIDTH);
         // Preserve the workflow/user-selected height. The DOM widget receives
         // all free vertical space above its minimum, so taller nodes reveal
@@ -1483,6 +1572,167 @@ function mountEditor(node) {
         return card;
     }
 
+    function renderModernSettings() {
+        if (!modern) return null;
+        const managed = inputConnected(node, "project_assets");
+        const panel = element(
+            "section",
+            `h3c-section h3c-settings${state.settingsOpen ? " h3c-open" : ""}`,
+        );
+        const heading = element("div", "h3c-settings-head");
+        const profileConnected = inputConnected(node, "chain_policy");
+        const policyStatus = element(
+            "span",
+            `h3c-policy-status${profileConnected ? "" : " h3c-missing"}`,
+            profileConnected
+                ? "Generation Profile connected"
+                : "Generation Profile required",
+        );
+        heading.append(
+            element("strong", "", "Plan settings"),
+            element(
+                "span", "h3c-help",
+                "Continuity and audio live in Generation Profile.",
+            ),
+            policyStatus,
+        );
+
+        function group(title, ...fields) {
+            const wrap = element("div", "h3c-settings-group");
+            wrap.append(element("div", "h3c-settings-group-title", title));
+            const grid = element("div", "h3c-settings-fields");
+            grid.append(...fields);
+            wrap.append(grid);
+            return wrap;
+        }
+
+        function textSetting(name, label, options = {}) {
+            const control = element("input");
+            control.type = "text";
+            if (options.numeric) control.inputMode = "numeric";
+            control.value = String(widgetValue(node, name, options.fallback ?? ""));
+            control.disabled = Boolean(options.disabled);
+            control.title = options.title ?? "";
+            control.addEventListener("change", () => {
+                let value = control.value;
+                if (options.numeric) {
+                    value = value.trim();
+                    if (!/^\d+$/.test(value)) {
+                        control.value = String(widgetValue(
+                            node, name, options.fallback ?? "0"));
+                        return;
+                    }
+                }
+                setWidgetValue(node, name, value);
+                updateTiming();
+            });
+            const wrapped = field(label, control);
+            if (options.wide) wrapped.classList.add("h3c-wide");
+            return wrapped;
+        }
+
+        function numberSetting(name, label, options) {
+            const control = numberInput(widgetValue(node, name, options.fallback), {
+                min: options.min,
+                max: options.max,
+                step: options.step,
+            });
+            control.title = options.title ?? "";
+            control.addEventListener("change", () => {
+                if (!control.validity.valid || control.value === "") {
+                    control.value = String(widgetValue(
+                        node, name, options.fallback));
+                    return;
+                }
+                setWidgetValue(node, name, Number(control.value));
+                updateTiming();
+            });
+            return field(label, control);
+        }
+
+        function choiceSetting(name, label, choices, title) {
+            const control = selectInput(widgetValue(node, name, choices[0][0]), choices);
+            control.title = title;
+            control.addEventListener("change", () => {
+                setWidgetValue(node, name, control.value);
+                updateTiming();
+            });
+            return field(label, control);
+        }
+
+        const run = textSetting("run_name", "Run name", {
+            fallback: "h3_chain", disabled: managed,
+            title: managed
+                ? "Managed by the connected Project Asset Carousel."
+                : "Folder and checkpoint identity for this production.",
+        });
+        const fingerprint = textSetting(
+            "generation_fingerprint", "Generation fingerprint", {
+                fallback: "", disabled: managed, wide: true,
+                title: managed
+                    ? "Project Assets contributes the active reference lineage."
+                    : "Change this when model, VAE, LoRA, CFG, sampler, scheduler, or global references change.",
+            },
+        );
+        const project = group("Project", run, fingerprint);
+        if (managed) {
+            project.append(element(
+                "div", "h3c-managed-note",
+                "Run identity and reference lineage are managed by Project Assets.",
+            ));
+        }
+
+        const canvas = group(
+            "Canvas & context fitting",
+            numberSetting("width", "Width", {
+                fallback:960, min:32, max:4096, step:32,
+                title:"Generation width; must be a multiple of 32.",
+            }),
+            numberSetting("height", "Height", {
+                fallback:544, min:32, max:4096, step:32,
+                title:"Generation height; must be a multiple of 32.",
+            }),
+            choiceSetting("encode_mode", "Context encoding", [
+                ["video", "Video · preserve motion"],
+                ["frames", "Frames · still anchors"],
+            ], "How carried picture context is encoded."),
+            choiceSetting("crop", "Context fit", [
+                ["disabled", "Resize to canvas"],
+                ["center", "Preserve ratio + center crop"],
+            ], "How saved picture context is fitted to the Plan canvas."),
+        );
+        const defaults = group(
+            "Generation defaults",
+            numberSetting("default_duration_seconds", "Default seconds", {
+                fallback:15, min:0.1, max:15.0833333333, step:0.01,
+                title:"Used only when a scene has no explicit duration or frame length.",
+            }),
+            numberSetting("default_steps", "Default steps", {
+                fallback:20, min:1, max:10000, step:1,
+                title:"Used only when a scene has no sampler-step override.",
+            }),
+            textSetting("base_seed", "Base seed", {
+                fallback:"0", numeric:true, wide:true,
+                title:"Stable uint64 base used to derive one seed per scene.",
+            }),
+        );
+        const delivery = group(
+            "Delivery",
+            numberSetting("segment_crf", "Scene MP4 quality (CRF)", {
+                fallback:18, min:0, max:51, step:1,
+                title:"Lower is higher quality; 18 is visually high quality.",
+            }),
+            numberSetting("video_blend_frames", "Default crossfade frames", {
+                fallback:0, min:0, max:243, step:1,
+                title:"Default final-assembly picture blend entering a scene; 0 is a hard cut.",
+            }),
+        );
+        const grid = element("div", "h3c-settings-grid");
+        grid.append(project, canvas, defaults, delivery);
+        panel.append(heading, grid);
+        return panel;
+    }
+
     function render() {
         if (!state.plan) return;
         disconnectResizeObservers();
@@ -1539,8 +1789,23 @@ function mountEditor(node) {
         openOutput.setAttribute("aria-label", "Open project output folder");
         setOutputButtonLabel(openOutput, "Output", true);
         const headerActions = element("div", "h3c-header-actions");
+        if (modern) {
+            headerActions.append(button(
+                state.settingsOpen ? "Hide settings" : "Settings",
+                "Show or hide the organized Plan settings",
+                () => {
+                    state.settingsOpen = !state.settingsOpen;
+                    savePanelState();
+                    render();
+                },
+            ));
+        }
         headerActions.append(openOutput, element("div", "h3c-summary"));
-        header.append(element("div", "h3c-title", "MiniMax H3 Scene Plan"), headerActions);
+        header.append(element(
+            "div", "h3c-title",
+            modern ? "MiniMax H3 Modern Plan" : "MiniMax H3 Scene Plan",
+        ), headerActions);
+        const settingsPanel = renderModernSettings();
 
         const externalNotice = element("div", "h3c-external-plan");
         externalNotice.append(
@@ -1657,6 +1922,7 @@ function mountEditor(node) {
 
         root.append(
             header,
+            ...(settingsPanel ? [settingsPanel] : []),
             ...(externalPlanConnected ? [externalNotice] : []),
             prefixSection,
             toolbar,
@@ -1701,6 +1967,7 @@ function mountEditor(node) {
     for (const name of [
         "context_length", "audio_context_length", "encode_mode", "anchor_mode", "continuation_mode",
         "default_duration_seconds", "default_steps", "base_seed",
+        "video_blend_frames",
     ]) {
         const widget = node.widgets?.find((item) => item.name === name);
         if (!widget || widget._h3TimingWrapped) continue;
@@ -1723,10 +1990,12 @@ function mountEditor(node) {
 
     node._h3ChainEditorRefresh = () => {
         collapseWidget(planWidget);
+        collapseModernBackingWidgets(node);
         syncProjectAssetManagedWidgets();
         const layout = planLayout(node);
         state.advanced = Boolean(layout.advanced);
         state.jsonOpen = Boolean(layout.jsonOpen);
+        state.settingsOpen = modern && layout.settingsOpen !== false;
         loadFromWidget(true);
         scheduleResponsiveSize();
     };
@@ -1753,7 +2022,7 @@ function mountEditor(node) {
 app.registerExtension({
     name: EXTENSION,
     async beforeRegisterNodeDef(nodeType, nodeData) {
-        if (nodeData.name !== NODE_NAME) return;
+        if (!NODE_NAMES.has(nodeData.name)) return;
 
         const onNodeCreated = nodeType.prototype.onNodeCreated;
         nodeType.prototype.onNodeCreated = function () {
@@ -1791,5 +2060,17 @@ app.registerExtension({
             setTimeout(() => this._h3ChainEditorConnectionRefresh?.(), 0);
             return result;
         };
+
+        if (nodeData.name === NODE_NAME) {
+            const getExtraMenuOptions = nodeType.prototype.getExtraMenuOptions;
+            nodeType.prototype.getExtraMenuOptions = function (_, options) {
+                const result = getExtraMenuOptions?.apply(this, arguments);
+                options.push({
+                    content: "Upgrade to Modern Plan…",
+                    callback: () => replaceWithModernPlan(this),
+                });
+                return result;
+            };
+        }
     },
 });

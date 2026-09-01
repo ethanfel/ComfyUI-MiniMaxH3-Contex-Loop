@@ -8755,7 +8755,8 @@ def _matching_plan_node_ids(api_prompt: Any,
     candidates: list[tuple[str, dict[str, Any]]] = []
     exact: list[tuple[str, dict[str, Any]]] = []
     for node_id, node in document.items():
-        if not isinstance(node, dict) or node.get("class_type") != "MiniMaxH3ChainPlan":
+        if (not isinstance(node, dict) or node.get("class_type") not in
+                ("MiniMaxH3ChainPlan", "MiniMaxH3ChainPlanModern")):
             continue
         inputs = node.get("inputs")
         if not isinstance(inputs, dict):
@@ -8783,7 +8784,8 @@ def _patched_workflow(workflow: Any, plan: dict[str, Any],
     effective_json = json.dumps(
         _effective_editor_plan(plan), ensure_ascii=False, indent=2)
     candidates = [node for node in nodes if isinstance(node, dict) and
-                  node.get("type") == "MiniMaxH3ChainPlan"]
+                  node.get("type") in
+                  ("MiniMaxH3ChainPlan", "MiniMaxH3ChainPlanModern")]
     selected = []
     for node in candidates:
         widgets = node.get("widgets_values")
@@ -14955,6 +14957,155 @@ class MiniMaxH3ChainPlan:
                 plan["compatibility"]["width"],
                 plan["compatibility"]["height"],
                 plan["compatibility"]["video_blend_frames"])
+
+
+class MiniMaxH3ChainPlanModern(MiniMaxH3ChainPlan):
+    """Modern Plan surface with policy-owned continuity and audio settings.
+
+    This is deliberately a distinct ComfyUI node type. Ordinary widget values
+    are serialized positionally in workflow JSON, so removing or reordering the
+    legacy Plan's widgets under its existing type would corrupt old workflows.
+    Both nodes compile to the exact same PLAN_TYPE contract.
+    """
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        sample = json.dumps({
+            "shots": [
+                {"id": "intro", "prompt": "Describe the opening shot."},
+                {"id": "continuation", "prompt": "Continue the same take."},
+            ]
+        }, indent=2)
+        return {
+            "required": {
+                "plan_json": ("STRING", {
+                    "default": sample,
+                    "multiline": True,
+                    "dynamicPrompts": False,
+                    "tooltip": "Serialized backing document for the visual "
+                               "scene-column editor. Use Raw JSON only for "
+                               "import, export, or advanced editing.",
+                }),
+                "chain_policy": (CHAIN_POLICY_TYPE, {
+                    "tooltip": "Required modern generation intent. Connect "
+                               "MiniMax H3 Generation Profile, optionally "
+                               "through Advanced Policy Override. Continuity "
+                               "and audio behavior are not duplicated on this "
+                               "Plan node.",
+                }),
+                "run_name": ("STRING", {
+                    "default": "h3_chain",
+                    "tooltip": "Identity of this render history and its "
+                               "output/h3_chains folder. Project Assets can "
+                               "own and synchronize it instead.",
+                }),
+                "generation_fingerprint": ("STRING", {
+                    "default": "",
+                    "tooltip": "Compatibility tag for generation inputs not "
+                               "stored in the Plan: model, VAE, LoRAs, CFG, "
+                               "sampler, scheduler, and global references. "
+                               "Project Assets contributes its lineage "
+                               "automatically.",
+                }),
+                "width": ("INT", {
+                    "default": 960, "min": 32, "max": 4096, "step": 32,
+                    "tooltip": "Generation width for every scene.",
+                }),
+                "height": ("INT", {
+                    "default": 544, "min": 32, "max": 4096, "step": 32,
+                    "tooltip": "Generation height for every scene.",
+                }),
+                "encode_mode": (["video", "frames"], {
+                    "default": "video",
+                    "tooltip": "Encode carried picture context as one "
+                               "motion-bearing video (recommended) or as "
+                               "separate still-frame anchors.",
+                }),
+                "crop": (["disabled", "center"], {
+                    "default": "disabled",
+                    "tooltip": "Fit saved context to the Plan canvas by "
+                               "direct resize or aspect-preserving center crop.",
+                }),
+                "default_duration_seconds": ("FLOAT", {
+                    "default": 15.0, "min": 0.1,
+                    "max": MAX_H3_FRAMES / FPS, "step": 0.01,
+                    "tooltip": "Fallback duration when a scene and its JSON "
+                               "defaults omit both seconds and frame length.",
+                }),
+                "default_steps": ("INT", {
+                    "default": 20, "min": 1, "max": 10000,
+                    "tooltip": "Fallback sampler steps for scenes without an "
+                               "explicit override.",
+                }),
+                "base_seed": ("INT", {
+                    "default": 0, "min": 0, "max": MAX_SEED,
+                    "tooltip": "Stable base used to derive a distinct seed "
+                               "for every scene without an explicit seed.",
+                }),
+                "segment_crf": ("INT", {
+                    "default": 18, "min": 0, "max": 51,
+                    "tooltip": "H.264 quality for saved scene MP4 files. "
+                               "Lower values give higher quality.",
+                }),
+                "video_blend_frames": ("INT", {
+                    "default": 0, "min": 0, "max": 243,
+                    "tooltip": "Default final-assembly picture crossfade. A "
+                               "scene can override it; 0 is a hard cut.",
+                }),
+            },
+            "optional": {
+                "plan_json_input": ("STRING", {
+                    "forceInput": True,
+                    "tooltip": "Optional complete Plan JSON from another "
+                               "node. A non-empty value overrides the visual "
+                               "editor's serialized fallback.",
+                }),
+                "project_assets": (PROJECT_ASSETS_TYPE, {
+                    "tooltip": "Optional Project Asset Carousel. It owns the "
+                               "run name, reference lineage, and source track "
+                               "when connected.",
+                }),
+            },
+        }
+
+    DESCRIPTION = (
+        "Modern, organized MiniMax H3 production Plan. It preserves the "
+        "familiar scene-column editor and the established Plan output contract "
+        "while moving continuity and audio intent exclusively to Generation "
+        "Profile. The original Plan remains available for old workflows."
+    )
+
+    def build(self, plan_json, chain_policy, run_name,
+              generation_fingerprint, width, height, encode_mode, crop,
+              default_duration_seconds, default_steps, base_seed, segment_crf,
+              video_blend_frames=0, plan_json_input=None,
+              project_assets=None):
+        # These valid compatibility defaults are never authoritative: the
+        # required Chain Policy replaces context, continuation, and audio before
+        # normalization. Keeping one normalizer guarantees identical PLAN_TYPE
+        # output for old and modern authoring surfaces.
+        return super().build(
+            plan_json=plan_json,
+            run_name=run_name,
+            generation_fingerprint=generation_fingerprint,
+            width=width,
+            height=height,
+            context_length=22,
+            encode_mode=encode_mode,
+            anchor_mode="head",
+            crop=crop,
+            audio_mode="generated_audio",
+            audio_context_length=22,
+            default_duration_seconds=default_duration_seconds,
+            default_steps=default_steps,
+            base_seed=base_seed,
+            segment_crf=segment_crf,
+            video_blend_frames=video_blend_frames,
+            continuation_mode="guide",
+            plan_json_input=plan_json_input,
+            chain_policy=chain_policy,
+            project_assets=project_assets,
+        )
 
 
 class MiniMaxH3ChainScenePromptEditor:
@@ -26690,6 +26841,7 @@ CHAIN_NODE_CLASS_MAPPINGS = {
     "MiniMaxH3AdvancedPolicy": MiniMaxH3AdvancedPolicy,
     "MiniMaxH3Legacy04PolicyAdapter": MiniMaxH3Legacy04PolicyAdapter,
     "MiniMaxH3ChainPlan": MiniMaxH3ChainPlan,
+    "MiniMaxH3ChainPlanModern": MiniMaxH3ChainPlanModern,
     "MiniMaxH3ChainScenePromptEditor": MiniMaxH3ChainScenePromptEditor,
     "MiniMaxH3ChainRichScenePromptEditor": MiniMaxH3ChainRichScenePromptEditor,
     "MiniMaxH3ChainPlanStudio": MiniMaxH3ChainPlanStudio,
@@ -26752,6 +26904,7 @@ CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3Legacy04PolicyAdapter": (
         "MiniMax H3 Legacy 0.4 Policy Adapter"),
     "MiniMaxH3ChainPlan": "MiniMax H3 Contex Loop Plan",
+    "MiniMaxH3ChainPlanModern": "MiniMax H3 Plan (Modern)",
     "MiniMaxH3ChainScenePromptEditor": "MiniMax H3 Scene Prompt Editor",
     "MiniMaxH3ChainRichScenePromptEditor": (
         "MiniMax H3 Rich Scene Prompt Editor (Experimental)"),

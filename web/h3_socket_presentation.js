@@ -3,6 +3,7 @@ import {
     ADVANCED_POLICY_NODE,
     CHAIN_POLICY_NODE,
     LEGACY_POLICY_NODE,
+    MODERN_PLAN_NODE,
     PLAN_NODE,
     PROFILE_POLICY_NODE,
     applySocketPresentation,
@@ -10,12 +11,12 @@ import {
     nodeType,
     policyPlanConsumers,
     presentationForNode,
-} from "./h3_socket_presentation_core.mjs?v=0.6.99";
+} from "./h3_socket_presentation_core.mjs?v=0.7.0";
 
 const EXTENSION = "minimax_h3_context_loop.socket_presentation";
 const WATCHED_POLICY_NODES = new Set([
     PROFILE_POLICY_NODE, CHAIN_POLICY_NODE, ADVANCED_POLICY_NODE,
-    LEGACY_POLICY_NODE, PLAN_NODE,
+    LEGACY_POLICY_NODE, PLAN_NODE, MODERN_PLAN_NODE,
 ]);
 const WIDGET_LABELS = Object.freeze({
     [PROFILE_POLICY_NODE]: Object.freeze({

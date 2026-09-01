@@ -1,7 +1,8 @@
 # MiniMax H3 Loop Plan Formatting Guide
 
 This guide belongs to `ComfyUI-MiniMaxH3-Contex-Loop` and describes the JSON
-accepted by `MiniMax H3 Contex Loop Plan` (`MiniMaxH3ChainPlan`), including
+accepted by both `MiniMax H3 Contex Loop Plan` (`MiniMaxH3ChainPlan`) and
+`MiniMax H3 Plan (Modern)` (`MiniMaxH3ChainPlanModern`), including
 scene lengths, prompts, seeds, steps, audio timing, and resume-safe settings.
 
 ## Visual editor or raw JSON

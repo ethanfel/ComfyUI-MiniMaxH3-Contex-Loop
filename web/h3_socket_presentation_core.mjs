@@ -5,13 +5,15 @@ import {
     TRANSITION_PRESETS,
     transitionPreset,
     transitionPresetName,
-} from "./h3_policy_core.mjs?v=0.6.99";
+} from "./h3_policy_core.mjs?v=0.7.0";
 
 export const CHAIN_POLICY_NODE = "MiniMaxH3ChainPolicy";
 export const PROFILE_POLICY_NODE = "MiniMaxH3GenerationProfile";
 export const ADVANCED_POLICY_NODE = "MiniMaxH3AdvancedPolicy";
 export const LEGACY_POLICY_NODE = "MiniMaxH3Legacy04PolicyAdapter";
 export const PLAN_NODE = "MiniMaxH3ChainPlan";
+export const MODERN_PLAN_NODE = "MiniMaxH3ChainPlanModern";
+export const PLAN_NODES = new Set([PLAN_NODE, MODERN_PLAN_NODE]);
 
 const CONDITIONAL_SOURCE_AUDIO_NODES = new Set([
     "MiniMaxH3ChainLoopStart",
@@ -27,6 +29,7 @@ const ASSEMBLE_NODE = "MiniMaxH3ChainAssemble";
 const ADVANCED_OUTPUTS = Object.freeze({
     MiniMaxH3ChainPolicy: ["status"],
     MiniMaxH3ChainPlan: ["summary", "clip_count", "video_blend_frames"],
+    MiniMaxH3ChainPlanModern: ["summary", "clip_count", "video_blend_frames"],
     MiniMaxH3ChainPlanStudio: [
         "status", "report_json", "plan_summary", "clip_count",
         "video_blend_frames",
@@ -62,6 +65,10 @@ export function nodeType(node) {
     return node?.comfyClass ?? node?.type ?? null;
 }
 
+export function isPlanNode(node) {
+    return PLAN_NODES.has(typeof node === "string" ? node : nodeType(node));
+}
+
 export function widgetByName(node, name) {
     return node?.widgets?.find((widget) => widget.name === name) ?? null;
 }
@@ -94,7 +101,7 @@ export function policyPlanConsumers(policyNode) {
     if (!inputNames.length) return [];
     const graph = policyNode?.graph;
     return (graph?._nodes ?? []).filter((candidate) =>
-        nodeType(candidate) === PLAN_NODE
+        isPlanNode(candidate)
         && inputNames.some((name) => {
             const origin = linkedOrigin(candidate, inputByName(candidate, name));
             return upstreamNodes(origin).includes(policyNode);
@@ -197,7 +204,7 @@ export function resolveAudioPolicy(start) {
     for (const node of upstreamNodes(start)) {
         const direct = audioPolicyFromWidgets(node);
         if (direct) return direct;
-        if (nodeType(node) !== PLAN_NODE) continue;
+        if (!isPlanNode(node)) continue;
         if (!linkedOrigin(node, inputByName(node, "chain_policy"))) {
             planFallback ??= legacyAudioPolicy(node);
         }
@@ -237,7 +244,7 @@ export function resolveAudioContextLength(start) {
     for (const node of upstreamNodes(start)) {
         const direct = directAudioContextLength(node);
         if (direct != null) return direct;
-        if (nodeType(node) !== PLAN_NODE) continue;
+        if (!isPlanNode(node)) continue;
         if (!linkedOrigin(node, inputByName(node, "chain_policy"))) {
             const legacy = Number(
                 widgetByName(node, "audio_context_length")?.value);
@@ -311,7 +318,7 @@ export function resolveTransitionPolicy(start) {
     for (const node of upstreamNodes(start)) {
         const direct = transitionPolicyFromWidgets(node);
         if (direct) return direct;
-        if (nodeType(node) !== PLAN_NODE) continue;
+        if (!isPlanNode(node)) continue;
         if (!linkedOrigin(node, inputByName(node, "chain_policy"))) {
             planFallback ??= legacyTransitionPolicy(node);
         }

@@ -59,6 +59,16 @@ the [workflow catalog](../example_workflows/README.md#deferred-upscale).
 
 ### Plan
 
+For a new graph, use **MiniMax H3 Plan (Modern)**. It keeps the established
+vertical scene-column editor but groups its smaller control set into Project,
+Canvas, Generation defaults, and Delivery. Its Generation Profile connection
+is required, and it has no legacy context, audio, or continuation fallbacks.
+
+The original **MiniMax H3 Contex Loop Plan** remains unchanged so old workflows
+open safely. After connecting Generation Profile, right-click it and choose
+**Upgrade to Modern Plan…** to preserve its scenes, supported settings,
+position, and links.
+
 Set these values first:
 
 | Control | First-run choice |

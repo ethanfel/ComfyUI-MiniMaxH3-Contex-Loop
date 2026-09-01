@@ -10,21 +10,22 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.6.99";
+} from "./h3_checkpoint_manager_core.mjs?v=0.7.0";
 import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.6.99";
-import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.99";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.99";
+} from "./h3_chain_plan_core.mjs?v=0.7.0";
+import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.7.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.99";
+} from "./h3_plan_restore_core.mjs?v=0.7.0";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const PLAN_NAMES = new Set([PLAN_NAME, "MiniMaxH3ChainPlanModern"]);
 const START_NAME = "MiniMaxH3ChainLoopStart";
 const RUN_PROPERTY = "h3_checkpoint_manager_run";
 const SCENE_PROPERTY = "h3_checkpoint_manager_scene";
@@ -44,7 +45,7 @@ function upstreamPlanNode(start) {
         const current = queue.shift();
         if (!current || seen.has(current)) continue;
         seen.add(current);
-        if (current !== start && nodeType(current) === PLAN_NAME) return current;
+        if (current !== start && PLAN_NAMES.has(nodeType(current))) return current;
         for (const input of current.inputs ?? []) {
             if (input.link == null) continue;
             const link = graphLink(current.graph, input.link);

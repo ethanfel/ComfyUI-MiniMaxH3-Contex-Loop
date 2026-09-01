@@ -6,16 +6,16 @@ import {
     promptTextToLines,
     promptValueToText,
     sharedPrompt,
-} from "./h3_chain_plan_core.mjs?v=0.6.99";
+} from "./h3_chain_plan_core.mjs?v=0.7.0";
 import {
     buildPromptAssistantContext,
     makePromptAssistRequest,
-} from "./h3_prompt_assistant_core.mjs?v=0.6.99";
-import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.6.99";
+} from "./h3_prompt_assistant_core.mjs?v=0.7.0";
+import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.7.0";
 import {
     directOptimizerConfigurationError,
     makeDirectPromptOptimizeRequest,
-} from "./h3_prompt_optimizer_core.mjs?v=0.6.99";
+} from "./h3_prompt_optimizer_core.mjs?v=0.7.0";
 import {
     openPromptOptimizerSettings,
     promptOptimizerBackend,
@@ -27,7 +27,7 @@ import {
     promptRevisionLabel,
     promptRevisionNavigation,
     promptRevisionTree,
-} from "./h3_prompt_history_core.mjs?v=0.6.99";
+} from "./h3_prompt_history_core.mjs?v=0.7.0";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
@@ -35,7 +35,7 @@ import {
     replacePromptReferenceOccurrence,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.99";
+} from "./h3_reference_preview_core.mjs?v=0.7.0";
 import {
     PromptUndoHistory,
     RICH_PROMPT_GUIDES,
@@ -45,13 +45,13 @@ import {
     richGenerationMode,
     richGuideInstruction,
     tokenizeRichPrompt,
-} from "./h3_rich_prompt_editor_core.mjs?v=0.6.99";
-import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.6.99";
-import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.6.99";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.99";
+} from "./h3_rich_prompt_editor_core.mjs?v=0.7.0";
+import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.7.0";
+import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.7.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
 import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.99";
+} from "./h3_project_asset_sync_core.mjs?v=0.7.0";
 
 const {publishCompanionScene, rebaseScenePrompt} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -64,6 +64,7 @@ function publishCompanionPrompt(...args) {
 
 const NODE_NAME = "MiniMaxH3ChainRichScenePromptEditor";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const PLAN_NAMES = new Set([PLAN_NAME, "MiniMaxH3ChainPlanModern"]);
 const ACTIVE_PROPERTY = "h3_rich_prompt_active_scene";
 const FONT_PROPERTY = "h3_rich_prompt_font_size";
 const GUIDE_PROPERTY = "h3_rich_prompt_guide";
@@ -281,7 +282,7 @@ function upstreamPlanNode(start) {
         const candidate = queue.shift();
         if (!candidate || seen.has(candidate)) continue;
         seen.add(candidate);
-        if (candidate !== start && nodeType(candidate) === PLAN_NAME) return candidate;
+        if (candidate !== start && PLAN_NAMES.has(nodeType(candidate))) return candidate;
         for (const input of candidate.inputs ?? []) {
             const link = input.link == null ? null : candidate.graph?.links?.[input.link];
             const parent = link ? candidate.graph?.getNodeById?.(link.origin_id) : null;

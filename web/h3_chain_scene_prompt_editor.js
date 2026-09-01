@@ -8,7 +8,7 @@ import {
     promptTextToLines,
     promptValueToText,
     sharedPrompt,
-} from "./h3_chain_plan_core.mjs?v=0.6.99";
+} from "./h3_chain_plan_core.mjs?v=0.7.0";
 import {
     PROMPT_ASSIST_DEFAULT_INSTRUCTIONS,
     PROMPT_ASSIST_MODES,
@@ -17,14 +17,14 @@ import {
     makePromptAssistRequest,
     promptSceneKey,
     promptSourceRevision,
-} from "./h3_prompt_assistant_core.mjs?v=0.6.99";
-import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.6.99";
+} from "./h3_prompt_assistant_core.mjs?v=0.7.0";
+import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.7.0";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
     promptRevisionTree,
-} from "./h3_prompt_history_core.mjs?v=0.6.99";
+} from "./h3_prompt_history_core.mjs?v=0.7.0";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
@@ -32,18 +32,18 @@ import {
     replacePromptReferenceOccurrence,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.99";
+} from "./h3_reference_preview_core.mjs?v=0.7.0";
 import {
     PromptUndoHistory,
     promptUndoDirection,
     tokenizeRichPrompt,
-} from "./h3_rich_prompt_editor_core.mjs?v=0.6.99";
-import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.6.99";
-import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.6.99";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.99";
+} from "./h3_rich_prompt_editor_core.mjs?v=0.7.0";
+import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.7.0";
+import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.7.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
 import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.99";
+} from "./h3_project_asset_sync_core.mjs?v=0.7.0";
 
 const {publishCompanionScene, rebaseScenePrompt} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -55,6 +55,7 @@ function publishCompanionPrompt(...args) {
 
 const NODE_NAME = "MiniMaxH3ChainScenePromptEditor";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const PLAN_NAMES = new Set([PLAN_NAME, "MiniMaxH3ChainPlanModern"]);
 const ACTIVE_SCENE_PROPERTY = "h3_scene_prompt_editor_active_scene";
 const FONT_SIZE_PROPERTY = "h3_scene_prompt_editor_font_size";
 const PRESENTATION_PROPERTY = "h3_scene_prompt_editor_rich_text";
@@ -361,7 +362,7 @@ function upstreamPlanNode(start) {
         const node = queue.shift();
         if (!node || seen.has(node)) continue;
         seen.add(node);
-        if (node !== start && nodeType(node) === PLAN_NAME) return node;
+        if (node !== start && PLAN_NAMES.has(nodeType(node))) return node;
         for (const input of node.inputs ?? []) {
             if (input.link == null) continue;
             const link = node.graph?.links?.[input.link];

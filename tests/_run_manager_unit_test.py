@@ -63,6 +63,32 @@ def main():
     }, "old_run")
     assert drift_restore["continuation_mode"] == "drift_control_av"
 
+    modern_widgets = [
+        '{"shots":[{"prompt":"modern"}]}', "modern_run", "models-v4",
+        1280, 704, "video", "center", 10.0, 30,
+        "18446744073709551615", 17, 5,
+    ]
+    modern_restore = _workflow_inputs({
+        "nodes": [{"type": "MiniMaxH3ChainPlanModern",
+                   "widgets_values": modern_widgets}],
+    }, "modern_run")
+    assert json.loads(modern_restore.pop("plan_json")) == {
+        "shots": [{"prompt": "modern"}],
+    }
+    assert modern_restore == {
+        "run_name": "modern_run",
+        "generation_fingerprint": "models-v4",
+        "width": 1280,
+        "height": 704,
+        "encode_mode": "video",
+        "crop": "center",
+        "default_duration_seconds": 10.0,
+        "default_steps": 30,
+        "base_seed": "18446744073709551615",
+        "segment_crf": 17,
+        "video_blend_frames": 5,
+    }
+
     with tempfile.TemporaryDirectory() as temporary:
         root = pathlib.Path(temporary)
         exact = root / "h3_chains" / "variant_exact"

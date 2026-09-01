@@ -1,14 +1,15 @@
 import {app} from "/scripts/app.js";
 import {api} from "/scripts/api.js";
-import {parsePlanJson, planToJson, randomSceneSeed} from "./h3_chain_plan_core.mjs?v=0.6.99";
+import {parsePlanJson, planToJson, randomSceneSeed} from "./h3_chain_plan_core.mjs?v=0.7.0";
 import {
     activeSceneFromOutput,
     applySceneReroll,
     resumeSelection,
-} from "./h3_chain_cancel_reroll_core.mjs?v=0.6.99";
+} from "./h3_chain_cancel_reroll_core.mjs?v=0.7.0";
 
 const CURRENT_TYPE = "MiniMaxH3ChainCurrent";
 const PLAN_TYPE = "MiniMaxH3ChainPlan";
+const PLAN_TYPES = new Set([PLAN_TYPE, "MiniMaxH3ChainPlanModern"]);
 const START_TYPE = "MiniMaxH3ChainLoopStart";
 const SETTING_ID = "MiniMaxH3ContexLoop.cancelRerollControl";
 const GENERATION_FINISHED_TYPES = new Set([
@@ -61,7 +62,9 @@ function findUpstreamNode(start, wantedType) {
         const node = queue.shift();
         if (!node || seen.has(node)) continue;
         seen.add(node);
-        if (node !== start && nodeType(node) === wantedType) return node;
+        const matches = wantedType instanceof Set
+            ? wantedType.has(nodeType(node)) : nodeType(node) === wantedType;
+        if (node !== start && matches) return node;
         for (const input of node.inputs ?? []) {
             if (input.link == null) continue;
             const link = node.graph?.links?.[input.link];
@@ -242,7 +245,7 @@ function requireVisibleWorkflow(record) {
         throw new Error("Return to the running H3 workflow before requeueing the scene.");
     }
     const startNode = findUpstreamNode(currentNode, START_TYPE);
-    const planNode = findUpstreamNode(currentNode, PLAN_TYPE);
+    const planNode = findUpstreamNode(currentNode, PLAN_TYPES);
     const runName = String(widgetByName(planNode, "run_name")?.value ?? "").trim();
     if (!startNode || !planNode
         || (record.scene.runName && runName !== record.scene.runName)) {
@@ -360,7 +363,7 @@ function onCurrentExecuted(data) {
     const currentNode = findNodeByDisplayId(data.display_node);
     if (nodeType(currentNode) !== CURRENT_TYPE) return;
     const startNode = findUpstreamNode(currentNode, START_TYPE);
-    const planNode = findUpstreamNode(currentNode, PLAN_TYPE);
+    const planNode = findUpstreamNode(currentNode, PLAN_TYPES);
     if (!startNode || !planNode) return;
     showActive({
         promptId: String(data.prompt_id),

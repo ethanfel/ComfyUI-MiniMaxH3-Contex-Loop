@@ -4,6 +4,16 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added **MiniMax H3 Plan (Modern)** as a clean, opt-in replacement for the
+  original Plan node. It preserves the familiar vertical scene-column editor
+  and exact Plan output sockets, but organizes its controls into Project,
+  Canvas, Generation defaults, and Delivery while requiring Generation Profile
+  and exposing no legacy context/audio/continuation fallbacks. The original
+  Plan remains unchanged; its **Upgrade to Modern Plan…** action preserves
+  scenes, supported settings, placement, and graph connections. Plan Studio,
+  prompt editors, Review, reroll, Run/Checkpoint Managers, project assets, and
+  recovery archives recognize both Plan types.
+
 - Fixed zero-picture-context resume validation. When a visually new scene
   carries only the preceding generated audio, strict history checks now ignore
   that predecessor's unrelated incoming visual-boundary recipe while retaining

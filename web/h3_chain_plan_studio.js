@@ -47,18 +47,18 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.6.99";
+} from "./h3_chain_plan_core.mjs?v=0.7.0";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.6.99";
+} from "./h3_prompt_history_core.mjs?v=0.7.0";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.99";
+} from "./h3_reference_preview_core.mjs?v=0.7.0";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -67,16 +67,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.99";
+} from "./h3_policy_core.mjs?v=0.7.0";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.99";
+} from "./h3_socket_presentation_core.mjs?v=0.7.0";
 import {
     availableLoRARoutes,
     loraRouteLabel,
-} from "./h3_lora_scheduler_core.mjs?v=0.6.99";
+} from "./h3_lora_scheduler_core.mjs?v=0.7.0";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -107,8 +107,8 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.99";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.99";
+} from "./h3_chain_plan_studio_core.mjs?v=0.7.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
@@ -117,6 +117,8 @@ function publishCompanionPrompt(...args) {
 
 const NODE_NAME = "MiniMaxH3ChainPlanStudio";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const MODERN_PLAN_NAME = "MiniMaxH3ChainPlanModern";
+const PLAN_NAMES = new Set([PLAN_NAME, MODERN_PLAN_NAME]);
 const ACTIVE_PROPERTY = "h3_plan_studio_active_scene";
 const ACTIVE_CHAPTER_PROPERTY = "h3_plan_studio_active_chapter";
 const VIEW_PROPERTY = "h3_plan_studio_view";
@@ -475,7 +477,7 @@ function upstreamPlanNode(start) {
         const node = queue.shift();
         if (!node || seen.has(node)) continue;
         seen.add(node);
-        if (node !== start && nodeType(node) === PLAN_NAME) return node;
+        if (node !== start && PLAN_NAMES.has(nodeType(node))) return node;
         for (const input of node.inputs ?? []) {
             if (input.link == null) continue;
             const link = node.graph?.links?.[input.link];
@@ -3746,6 +3748,7 @@ function mount(node) {
         const panel = element("div");
         const grid = element("div", "h3studio-plan-settings");
         const owner = state.planOwner ?? node;
+        const modernPlan = owner?.type === MODERN_PLAN_NAME;
         const transition = resolveTransitionPolicy(owner);
         const audioPolicy = resolveAudioPolicy(owner);
         const projectAssetsManaged = inputConnected(owner, "project_assets");
@@ -3808,7 +3811,7 @@ function mount(node) {
         });
 
         const mode = state.planNode
-            ? "Connected mode · changes are written to the H3 Chain Plan and mirrored into Studio. Disconnecting keeps this synchronized snapshot."
+            ? `Connected mode · changes are written to the ${modernPlan ? "Modern Plan" : "H3 Chain Plan"} and mirrored into Studio. Disconnecting keeps this synchronized snapshot.`
             : "Standalone mode · this node owns, validates, and outputs the complete H3 Chain Plan.";
         const identityFields = projectAssetsManaged ? [
             element(
@@ -3840,12 +3843,27 @@ function mount(node) {
             field("Context encoding", selectControl("encode_mode", [
                 ["video", "Video clip"], ["frames", "Separate frames"],
             ], "video")),
-            field("Anchor placement", selectControl("anchor_mode", [
-                ["head", "Head (tested)"], ["before", "Before timeline (experimental)"],
-            ], "head")),
             field("Context fit", selectControl("crop", [
                 ["disabled", "Resize directly"], ["center", "Preserve aspect + center crop"],
             ], "disabled")),
+        );
+        if (modernPlan) {
+            grid.append(
+                section("Generation Profile"),
+                element(
+                    "div", "h3studio-plan-defaults-help",
+                    transition.known || audioPolicy.known
+                        ? "Visual transition, context length, audio behavior, and continuation are owned by the connected Generation Profile. Per-scene Context controls remain available for deliberate overrides."
+                        : "Connect a Generation Profile to the Modern Plan. It owns visual transition, context length, audio behavior, and continuation.",
+                ),
+            );
+            panel.append(grid);
+            return panel;
+        }
+        grid.append(
+            field("Anchor placement", selectControl("anchor_mode", [
+                ["head", "Head (tested)"], ["before", "Before timeline (experimental)"],
+            ], "head")),
             section("Legacy policy fallback"),
         );
         const context = selectControl(

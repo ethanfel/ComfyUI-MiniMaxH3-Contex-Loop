@@ -2,7 +2,7 @@ import {app} from "/scripts/app.js";
 import {
     createLegacyWidgetWidthController,
     graphNodes,
-} from "./h3_legacy_widget_width_fix_core.mjs?v=0.6.99";
+} from "./h3_legacy_widget_width_fix_core.mjs?v=0.7.0";
 
 const SETTING_ID = "MiniMaxH3ContexLoop.legacyWidgetWidthFix";
 const LEGACY_FIX_NODE = "LegacyWidgetWidthFix";
@@ -14,6 +14,7 @@ const H3_NODE_TYPES = new Set([
     "MiniMaxH3LoopTrim",
     "MiniMaxH3ContexLoopSeamProbe",
     "MiniMaxH3ChainPlan",
+    "MiniMaxH3ChainPlanModern",
     "MiniMaxH3ChainCheckpointManager",
     "MiniMaxH3ChainScenePromptEditor",
     "MiniMaxH3ChainRunManager",
