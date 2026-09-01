@@ -303,10 +303,6 @@ def _already_patched(cls):
     fn = getattr(cls, "extra_conds", None)
     if fn is None:
         return None
-    if getattr(fn, PATCH_MARKER, False):
-        return "same"
-    if getattr(fn, "__name__", "") == "_patched_extra_conds":
-        return "other"
     # H3-Multishot installs its AV-bank merge at package import time. Its
     # wrapper calls stock first, then rebuilds cond_video_latents as keyframes
     # followed by reference video latents -- the same row order required here.
@@ -319,6 +315,14 @@ def _already_patched(cls):
             and (where == "h3_avbank_probe"
                  or where.endswith(".h3_avbank_probe"))):
         return "h3_multishot"
+    # Check the specific Multishot identity before this generic shared marker.
+    # Some releases preserve attributes from the wrapper they replace and
+    # consequently carry both markers. Treating that dual-marker function as
+    # merely "same" skips the safe keyframe-audio layer above Multishot.
+    if getattr(fn, PATCH_MARKER, False):
+        return "same"
+    if getattr(fn, "__name__", "") == "_patched_extra_conds":
+        return "other"
     if hasattr(fn, "__wrapped__"):
         return "foreign"
     home = getattr(cls, "__module__", None)
