@@ -602,15 +602,21 @@ relative to that output root, supports nested folders and the same date tokens,
 and may be empty to place the copy directly in `output/`. The existing
 `filename` value is used for both copies, and collisions are versioned.
 
-## Re-decode checkpoints to PNG
+## Re-decode checkpoints to PNG and WAV
 
-Connect a manifest and the original H3 video VAE to **Export PNG Sequence**. It
-verifies each safetensors checkpoint, decodes one scene at a time, removes the
-repeated overlap, converts small frame chunks to 8-bit RGB in one operation,
-and writes each chunk through bounded parallel atomic PNG workers. ComfyUI's
-progress bar covers verification, GPU decode, and saving. The server log reports
-the verify, checkpoint-load, decode, conversion, and save time for every scene.
-The final sequence and `export.json` are written under:
+Connect a manifest to **Export PNG Sequence + Audio**, then connect the original
+H3 video VAE, audio VAE, or both. Video-only writes PNGs, audio-only writes one
+continuous `audio.wav`, and both inputs produce a synchronized image sequence
+and soundtrack in the same folder. The WAV is decoded from the checkpointed H3
+audio latents, preserves the generated AV boundary ownership, and follows the
+same selected scene order and latent-safe trims as the gap-free PNG sequence.
+
+The node verifies each safetensors checkpoint, decodes one scene at a time,
+removes repeated overlap, converts small frame chunks to 8-bit RGB in one
+operation, and writes each chunk through bounded parallel atomic PNG workers.
+ComfyUI's progress bar covers verification, GPU decode, and saving. The server
+log reports verify, checkpoint-load, decode, conversion, and save timings. The
+deliverables and `export.json` are written under:
 
 ```text
 output/h3_chains/<run_name>/frames/<export_name>/

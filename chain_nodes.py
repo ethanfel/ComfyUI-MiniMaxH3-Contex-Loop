@@ -21609,9 +21609,24 @@ def _generated_audio(manifest: dict[str, Any]) -> dict[str, Any]:
             "mode": mode,
         })
 
+    return _assemble_generated_audio_records(records, int(sample_rate))
+
+
+def _assemble_generated_audio_records(
+    records: list[dict[str, Any]], sample_rate: int
+) -> dict[str, Any]:
+    """Assemble decoded scene audio with the saved AV-boundary ownership."""
+    if torch is None:
+        raise RuntimeError("Generated-audio assembly requires torch.")
+    if not records:
+        raise ValueError("Generated-audio assembly requires at least one scene.")
+    sample_rate = int(sample_rate)
+    if sample_rate <= 0:
+        raise ValueError("Generated-audio assembly sample rate must be positive.")
+
     total_frames = sum(record["delivered_frames"] for record in records)
     total_samples = sample_boundary_from_frames(
-        total_frames, int(sample_rate), FPS)
+        total_frames, sample_rate, FPS)
     first = records[0]["delivered"]
     assembled = torch.zeros(
         (*tuple(first.shape[:-1]), total_samples),
@@ -21653,9 +21668,9 @@ def _generated_audio(manifest: dict[str, Any]) -> dict[str, Any]:
 
         end_frame = cumulative_frames + record["delivered_frames"]
         start_sample = sample_boundary_from_frames(
-            start_frame, int(sample_rate), FPS)
+            start_frame, sample_rate, FPS)
         end_sample = sample_boundary_from_frames(
-            end_frame, int(sample_rate), FPS)
+            end_frame, sample_rate, FPS)
         budget = end_sample - start_sample
         have = int(source.shape[-1])
         if have > budget:
@@ -21671,7 +21686,7 @@ def _generated_audio(manifest: dict[str, Any]) -> dict[str, Any]:
             device=assembled.device, dtype=assembled.dtype)
         cumulative_frames = end_frame
 
-    result = {"waveform": assembled, "sample_rate": int(sample_rate)}
+    result = {"waveform": assembled, "sample_rate": sample_rate}
     first_record = records[0]
     if (first_record["mode"] in MASKED_CONTINUATION_MODES
             and first_record["repeated_frames"] > 0
@@ -23463,6 +23478,113 @@ def _png_export_check_interrupted() -> None:
         pass
 
 
+def _png_export_audio_sample_rate(audio_vae: Any) -> int:
+    sample_rate = int(getattr(audio_vae, "audio_sample_rate", 0) or 0)
+    first_stage = getattr(audio_vae, "first_stage_model", None)
+    if sample_rate <= 0 and first_stage is not None:
+        sample_rate = int(getattr(first_stage, "output_sample_rate", 0) or 0)
+    if sample_rate <= 0:
+        raise ValueError(
+            "H3 PNG/WAV export could not determine the connected audio "
+            "VAE's sample rate. Connect the MiniMax H3 audio VAE.")
+    return sample_rate
+
+
+def _png_export_audio_record(
+    segment: dict[str, Any], tensors: dict[str, Any], audio_vae: Any,
+    sample_rate: int, default_mode: str,
+) -> dict[str, Any]:
+    """Decode one complete sampled audio latent and recover its clean body."""
+    index = int(segment["index"])
+    latent = tensors.get("audio")
+    if latent is None:
+        raise ValueError(
+            "H3 PNG/WAV export checkpoint for clip %d has no audio latent." %
+            index)
+    decoded = audio_vae.decode(latent)
+    if not torch.is_tensor(decoded):
+        raise ValueError(
+            "H3 PNG/WAV export audio VAE returned %r instead of an audio "
+            "tensor for clip %d." % (type(decoded), index))
+    # MiniMax H3 decodes [batch,channels,samples]. Accommodate generic audio
+    # VAE wrappers that expose [batch,samples,channels] at their boundary.
+    if (decoded.ndim == 3 and int(decoded.shape[1]) not in (1, 2)
+            and int(decoded.shape[-1]) in (1, 2)):
+        decoded = decoded.movedim(-1, 1)
+    waveform, _ = _audio_waveform_3d({
+        "waveform": decoded,
+        "sample_rate": sample_rate,
+    }, "H3 PNG/WAV export clip %d decoded audio" % index)
+    raw_frames = int(segment.get("raw_frames", 0))
+    delivered_frames = int(segment.get("delivered_frames", 0))
+    repeated_frames = raw_frames - delivered_frames
+    if raw_frames < 1 or delivered_frames < 1 or repeated_frames < 0:
+        raise ValueError(
+            "H3 PNG/WAV export clip %d has invalid raw/delivered frame "
+            "counts %d/%d." % (index, raw_frames, delivered_frames))
+    raw_samples = sample_boundary_from_frames(raw_frames, sample_rate, FPS)
+    if int(waveform.shape[-1]) != raw_samples:
+        waveform = conform_waveform_length(
+            waveform, raw_samples,
+            "H3 PNG/WAV export clip %d raw audio" % index)
+    cut = sample_boundary_from_frames(repeated_frames, sample_rate, FPS)
+    delivered_samples = sample_boundary_from_frames(
+        delivered_frames, sample_rate, FPS)
+    delivered = waveform[..., cut:cut + delivered_samples]
+    if int(delivered.shape[-1]) != delivered_samples:
+        delivered = conform_waveform_length(
+            delivered, delivered_samples,
+            "H3 PNG/WAV export clip %d delivered audio" % index)
+    return {
+        "segment": segment,
+        "delivered": delivered.detach().to(device="cpu").contiguous(),
+        "overlap": (
+            waveform.detach().to(device="cpu").contiguous()
+            if (migrate_continuation_mode(segment.get(
+                    "continuation_mode", default_mode)) in
+                MASKED_CONTINUATION_MODES and repeated_frames > 0)
+            else None),
+        "delivered_frames": delivered_frames,
+        "raw_frames": raw_frames,
+        "repeated_frames": repeated_frames,
+        "mode": migrate_continuation_mode(segment.get(
+            "continuation_mode", default_mode)),
+    }
+
+
+def _png_export_packed_audio_records(
+    segments: list[dict[str, Any]],
+    editorial_segments: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], int]:
+    """Map generated audio into the exact gap-free order of exported PNGs."""
+    source_starts: dict[int, int] = {}
+    source_cursor = 0
+    for offset, segment in enumerate(segments, start=1):
+        index = int(segment.get("index", offset))
+        source_starts[index] = source_cursor
+        source_cursor += int(segment["delivered_frames"])
+    records = []
+    target_cursor = 0
+    for offset, segment in enumerate(editorial_segments, start=1):
+        index = int(segment.get("index", offset))
+        frames = _editorial_segment_delivered_frames(segment)
+        if index not in source_starts:
+            raise ValueError(
+                "H3 PNG/WAV export presentation references unknown clip %d."
+                % index)
+        records.append({
+            "kind": "scene",
+            "scene": index,
+            "scene_id": str(segment.get("id") or "clip_%04d" % index),
+            "start_frame": target_cursor,
+            "frame_count": frames,
+            "source_frame_count": int(segment["delivered_frames"]),
+            "source_start_frame": source_starts[index],
+        })
+        target_cursor += frames
+    return records, target_cursor
+
+
 class MiniMaxH3ChainExportPNG:
     @classmethod
     def INPUT_TYPES(cls):
@@ -23472,11 +23594,6 @@ class MiniMaxH3ChainExportPNG:
                     "tooltip": "Completed or partial manifest from Loop End or "
                                "Manifest Load. Checkpoint latents are decoded "
                                "scene by scene; the H.264 segments are not used."}),
-                "video_vae": ("VAE", {
-                    "tooltip": "The same MiniMax H3 video VAE used for the "
-                               "original render. Decode precision and VAE "
-                               "settings determine whether regenerated pixels "
-                               "exactly match the first decode."}),
                 "export_name": ("STRING", {
                     "default": "png_sequence",
                     "tooltip": "Folder name under output/h3_chains/<run>/frames. "
@@ -23500,6 +23617,14 @@ class MiniMaxH3ChainExportPNG:
                                "first frame of every scene."}),
             },
             "optional": {
+                "video_vae": ("VAE", {
+                    "tooltip": "Connect the original MiniMax H3 video VAE to "
+                               "export PNG frames. Leave it disconnected for "
+                               "an audio-only WAV export."}),
+                "audio_vae": ("VAE", {
+                    "tooltip": "Connect the original MiniMax H3 audio VAE to "
+                               "decode and export one frame-locked audio.wav. "
+                               "It can be used with or without video_vae."}),
                 "save_workers": ("INT", {
                     "default": 0, "min": 0, "max": 64,
                     "tooltip": "Parallel PNG writers. 0 selects up to 8 CPU "
@@ -23513,31 +23638,39 @@ class MiniMaxH3ChainExportPNG:
             },
         }
 
-    RETURN_TYPES = ("STRING", "INT", "STRING")
-    RETURN_NAMES = ("output_directory", "frame_count", "status")
+    RETURN_TYPES = ("STRING", "INT", "STRING", "STRING")
+    RETURN_NAMES = ("output_directory", "frame_count", "status", "audio_path")
     OUTPUT_TOOLTIPS = (
-        "Absolute folder containing the continuous PNG sequence and export.json.",
-        "Total number of delivered frames written across all decoded scenes.",
-        "Export folder, scene count, frame count, and frame-number range.",
+        "Absolute folder containing the selected deliverables and export.json.",
+        "Total PNG frames written; zero in audio-only mode.",
+        "Export folder, generated deliverables, scene count, and duration.",
+        "Absolute audio.wav path when audio_vae is connected; blank otherwise.",
     )
     FUNCTION = "export"
     OUTPUT_NODE = True
     CATEGORY = "conditioning/minimax/context_loop"
-    DESCRIPTION = ("Re-decode every saved H3 video checkpoint with the selected "
-                   "VAE, remove each scene's repeated context overlap, and write "
-                   "a continuous lossless PNG sequence with bounded parallel "
-                   "saving, progress, and partial-export recovery.")
+    DESCRIPTION = ("Re-decode saved H3 video and/or audio checkpoints, remove "
+                   "repeated context overlap, and write a continuous lossless "
+                   "PNG sequence, synchronized PCM WAV, or both. Either VAE can "
+                   "be connected independently.")
 
     @classmethod
     def IS_CHANGED(cls, *args, **kwargs):
         return float("NaN")
 
-    def export(self, manifest, video_vae, export_name, first_frame_number,
-               png_compression, embed_workflow, save_workers=0,
-               checkpoint_verification="cached"):
+    def export(self, manifest, video_vae=None, export_name="png_sequence",
+               first_frame_number=1, png_compression=1, embed_workflow=True,
+               save_workers=0, checkpoint_verification="cached",
+               audio_vae=None):
         if _st_load is None or torch is None or np is None:
             raise RuntimeError(
-                "H3 PNG export requires safetensors, torch, and NumPy.")
+                "H3 PNG/WAV export requires safetensors, torch, and NumPy.")
+        video_enabled = video_vae is not None
+        audio_enabled = audio_vae is not None
+        if not video_enabled and not audio_enabled:
+            raise ValueError(
+                "H3 PNG/WAV export needs video_vae, audio_vae, or both. "
+                "Connect only audio_vae for an audio-only export.")
         segments = _checkpoint_export_segments(manifest)
         editorial = _load_run_editorial(manifest.get("run_name"))
         editorial_segments = [
@@ -23563,7 +23696,9 @@ class MiniMaxH3ChainExportPNG:
         total_frames = sum(
             _editorial_segment_delivered_frames(segment)
             for segment in editorial_segments)
-        progress_total = max(1, total_frames * 3)
+        progress_units = (3 if video_enabled else 0) + (
+            2 if audio_enabled else 0)
+        progress_total = max(1, total_frames * progress_units)
         progress_bar = _png_export_progress(progress_total)
         progress_done = 0
         chunk_frames = min(
@@ -23578,6 +23713,9 @@ class MiniMaxH3ChainExportPNG:
         written = 0
         clip_records = []
         clip_timings = []
+        audio_path = ""
+        audio_record = None
+        audio_timings = []
         archive_metadata = (_archive_media_metadata(manifest.get("archives"))
                             if bool(embed_workflow) else {})
         manifest_metadata = json.dumps(
@@ -23603,23 +23741,27 @@ class MiniMaxH3ChainExportPNG:
                     "save_workers": workers,
                     "checkpoint_verification": verification,
                     "conversion_chunk_frames": chunk_frames,
+                    "export_video": video_enabled,
+                    "export_audio": audio_enabled,
                 },
+                "audio": audio_record,
                 "archives": manifest.get("archives", {}),
             }
             _atomic_json(partial_path, partial)
 
         _LOG.info(
-            "H3 PNG export starting: %d clips, %d frames, compression=%d, "
-            "workers=%d, verification=%s, output=%s",
-            len(editorial_segments), total_frames, compression, workers,
-            verification, output_dir)
+            "H3 PNG/WAV export starting: %d clips, %d timeline frames, "
+            "video=%s, audio=%s, compression=%d, workers=%d, "
+            "verification=%s, output=%s",
+            len(editorial_segments), total_frames, video_enabled,
+            audio_enabled, compression, workers, verification, output_dir)
         save_partial("starting")
 
         with concurrent.futures.ThreadPoolExecutor(
                 max_workers=workers,
                 thread_name_prefix="h3-png-export") as executor:
             for clip_position, editorial_segment in enumerate(
-                    editorial_segments, start=1):
+                    editorial_segments if video_enabled else (), start=1):
                 _png_export_check_interrupted()
                 segment = editorial_segment
                 index = int(segment["index"])
@@ -23801,6 +23943,130 @@ class MiniMaxH3ChainExportPNG:
                     delivered_frames / max(save_seconds, 1e-9))
                 del images, video, tensors
 
+        if audio_enabled:
+            sample_rate = _png_export_audio_sample_rate(audio_vae)
+            audio_frames_by_index = {
+                int(segment.get("index", offset)):
+                    _editorial_segment_delivered_frames(segment)
+                for offset, segment in enumerate(editorial_segments, start=1)
+            }
+            default_mode = migrate_continuation_mode(
+                (manifest.get("compatibility") or {}).get(
+                    "continuation_mode", "guide"))
+            decoded_records = []
+            audio_started = time.perf_counter()
+            for clip_position, segment in enumerate(segments, start=1):
+                _png_export_check_interrupted()
+                index = int(segment["index"])
+                delivered_progress = int(audio_frames_by_index.get(index, 0))
+                checkpoint = _absolute_output_path(segment["checkpoint"])
+
+                save_partial("verifying audio checkpoint", index)
+                phase_started = time.perf_counter()
+                verification_result, cache_changed = (
+                    _verify_png_export_checkpoint(
+                        checkpoint, segment.get("checkpoint_sha256", ""),
+                        verification, hash_cache))
+                verification_seconds = time.perf_counter() - phase_started
+                if cache_changed:
+                    _atomic_json(cache_path, hash_cache)
+                progress_done += delivered_progress
+                _png_export_update_progress(
+                    progress_bar, progress_done, progress_total)
+
+                save_partial("decoding audio VAE on GPU", index)
+                phase_started = time.perf_counter()
+                tensors = _st_load(checkpoint)
+                load_seconds = time.perf_counter() - phase_started
+                phase_started = time.perf_counter()
+                record = _png_export_audio_record(
+                    segment, tensors, audio_vae, sample_rate, default_mode)
+                decode_seconds = time.perf_counter() - phase_started
+                decoded_records.append(record)
+                progress_done += delivered_progress
+                _png_export_update_progress(
+                    progress_bar, progress_done, progress_total)
+                audio_timings.append({
+                    "index": index,
+                    "verification": verification_result,
+                    "verification_seconds": round(verification_seconds, 3),
+                    "checkpoint_load_seconds": round(load_seconds, 3),
+                    "vae_decode_seconds": round(decode_seconds, 3),
+                })
+                _LOG.info(
+                    "H3 WAV export clip %d/%d (scene %d): %s in %.2fs, "
+                    "checkpoint load %.2fs, audio VAE decode %.2fs",
+                    clip_position, len(segments), index, verification_result,
+                    verification_seconds, load_seconds, decode_seconds)
+                del tensors
+
+            save_partial("assembling synchronized WAV")
+            phase_started = time.perf_counter()
+            assembled_audio = _assemble_generated_audio_records(
+                decoded_records, sample_rate)
+            packed_records, packed_frames = _png_export_packed_audio_records(
+                segments, editorial_segments)
+            if packed_frames != total_frames:
+                raise RuntimeError(
+                    "H3 PNG/WAV export audio timeline resolved %d frames; "
+                    "the PNG timeline contains %d." %
+                    (packed_frames, total_frames))
+            assembled_audio = _audio_with_editorial_timeline(
+                assembled_audio, packed_records,
+                int(manifest["total_delivered_frames"]), total_frames,
+                "H3 PNG/WAV packed editorial audio")
+            waveform, output_sample_rate = _validate_audio(
+                assembled_audio, "H3 PNG/WAV export audio",
+                expected_frames=total_frames)
+            audio_path = os.path.join(output_dir, "audio.wav")
+            _atomic_wav({
+                "waveform": waveform,
+                "sample_rate": output_sample_rate,
+            }, audio_path)
+            audio_seconds = time.perf_counter() - phase_started
+            audio_record = {
+                "file": "audio.wav",
+                "sample_rate": output_sample_rate,
+                "channels": int(_audio_waveform_3d(
+                    assembled_audio, "H3 PNG/WAV export audio")[
+                        0].shape[1]),
+                "samples": int(waveform.shape[-1]),
+                "duration_seconds": round(
+                    int(waveform.shape[-1]) / float(output_sample_rate), 6),
+                "sha256": _file_sha256(audio_path),
+                "vae_decode_timings": audio_timings,
+                "assembly_and_save_seconds": round(audio_seconds, 3),
+                "elapsed_seconds": round(
+                    time.perf_counter() - audio_started, 3),
+            }
+            save_partial("audio complete")
+            _LOG.info(
+                "H3 WAV export complete: %d samples at %d Hz (%.3fs) -> %s",
+                int(waveform.shape[-1]), output_sample_rate,
+                int(waveform.shape[-1]) / float(output_sample_rate),
+                audio_path)
+
+        if not video_enabled:
+            timeline_cursor = 0
+            for offset, segment in enumerate(editorial_segments, start=1):
+                index = int(segment.get("index", offset))
+                delivered_frames = _editorial_segment_delivered_frames(segment)
+                clip_records.append({
+                    "index": index,
+                    "id": str(segment.get("id") or "clip_%04d" % index),
+                    "checkpoint": segment["checkpoint"],
+                    "prompt": str(segment.get("prompt") or ""),
+                    "prompt_hash": str(segment.get("prompt_hash") or ""),
+                    "seed": segment.get("seed"),
+                    "trim_frames": int(segment["raw_frames"])
+                                   - delivered_frames,
+                    "delivered_frames": delivered_frames,
+                    "timeline_first_frame": timeline_cursor,
+                    "timeline_last_frame": (
+                        timeline_cursor + delivered_frames - 1),
+                })
+                timeline_cursor += delivered_frames
+
         _png_export_update_progress(
             progress_bar, progress_total, progress_total)
         elapsed = time.perf_counter() - started
@@ -23812,29 +24078,47 @@ class MiniMaxH3ChainExportPNG:
             "source_manifest_format": manifest.get("format"),
             "source_plan_hash": manifest.get("plan_hash"),
             "first_frame_number": first_number,
-            "last_frame_number": frame_number - 1,
+            "last_frame_number": (
+                frame_number - 1 if video_enabled else None),
             "frame_count": written,
+            "timeline_frame_count": total_frames,
             "clips": clip_records,
             "timings": clip_timings,
+            "audio": audio_record,
             "elapsed_seconds": round(elapsed, 3),
             "settings": {
                 "png_compression": compression,
                 "save_workers": workers,
                 "checkpoint_verification": verification,
                 "conversion_chunk_frames": chunk_frames,
+                "export_video": video_enabled,
+                "export_audio": audio_enabled,
             },
             "archives": manifest.get("archives", {}),
         }
         _atomic_json(final_path, export_record)
         _safe_unlink(partial_path)
-        status = ("exported %d clips / %d PNG frames (%d..%d) in %.1fs "
-                  "(%.2f frames/s) -> %s" %
-                  (len(editorial_segments), written, first_number,
-                   frame_number - 1, elapsed,
-                   written / max(elapsed, 1e-9), output_dir))
+        if video_enabled and audio_enabled:
+            status = (
+                "exported %d clips / %d PNG frames (%d..%d) + synchronized "
+                "PCM WAV in %.1fs -> %s" %
+                (len(editorial_segments), written, first_number,
+                 frame_number - 1, elapsed, output_dir))
+        elif video_enabled:
+            status = ("exported %d clips / %d PNG frames (%d..%d) in %.1fs "
+                      "(%.2f frames/s) -> %s" %
+                      (len(editorial_segments), written, first_number,
+                       frame_number - 1, elapsed,
+                       written / max(elapsed, 1e-9), output_dir))
+        else:
+            status = (
+                "exported synchronized PCM WAV for %d clips / %d timeline "
+                "frames (%.3fs) in %.1fs -> %s" %
+                (len(editorial_segments), total_frames,
+                 total_frames / float(FPS), elapsed, audio_path))
         _LOG.info("H3 Chain %s", status)
         return {"ui": {"text": [status]},
-                "result": (output_dir, written, status)}
+                "result": (output_dir, written, status, audio_path)}
 
 
 def _full_chain_blend_schedule(
@@ -27635,7 +27919,8 @@ CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3ChainReview": "MiniMax H3 Context Loop Review Gate",
     "MiniMaxH3ChainLoopEnd": "MiniMax H3 Context Loop End",
     "MiniMaxH3ChainManifestLoad": "MiniMax H3 Context Loop Load Manifest",
-    "MiniMaxH3ChainExportPNG": "MiniMax H3 Context Loop Export PNG Sequence",
+    "MiniMaxH3ChainExportPNG": (
+        "MiniMax H3 Context Loop Export PNG Sequence + Audio"),
     "MiniMaxH3ChainLatentVideoAdapter": (
         "MiniMax H3 Full-Chain Latent Video Adapter"),
     "MiniMaxH3ChainAssemble": "MiniMax H3 Context Loop Assemble",

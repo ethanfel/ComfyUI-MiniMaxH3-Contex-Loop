@@ -4,6 +4,14 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Extended **Export PNG Sequence** into an independent picture/audio exporter.
+  Its video and audio VAE sockets are now both optional: connect either one for
+  PNG-only or WAV-only output, or both for a continuous PNG sequence plus a
+  synchronized `audio.wav`. The WAV is decoded from the saved H3 audio latents,
+  preserves AV overlap ownership, and follows the same selected scene order and
+  latent-safe trims as the exported frames. Existing video-VAE connections and
+  output indexes remain valid; `audio_path` is appended as a new output.
+
 - Accelerated **Export PNG Sequence** with chunked batch conversion and up to
   eight bounded parallel atomic PNG writers, inspired by JSON-Dynamic's Fast
   Absolute Saver. New nodes default to lossless compression level 1; existing
