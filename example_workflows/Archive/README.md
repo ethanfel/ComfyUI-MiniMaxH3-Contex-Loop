@@ -1,10 +1,15 @@
 # Archived example workflows
 
-These are the previous mixed and experimental examples retained unchanged for
-compatibility and reference. The recommended type-based workflow pairs now
-live one level above this folder, beginning with
-[`T2V Normal - MiniMax H3.json`](<../T2V Normal - MiniMax H3.json>) and
-[`T2V Studio - MiniMax H3.json`](<../T2V Studio - MiniMax H3.json>).
+The complete maintained 0.5 catalog is preserved unchanged in [`0.5/`](0.5/).
+Those files retain their historical node types, positional widget values,
+frontend metadata, prompts, and asset bindings for exact reproduction; they
+are not recommended for a new 0.6 project.
+
+The additional files directly in this Archive are still older mixed and
+experimental examples retained for compatibility and reference. The clean 0.6
+workflow catalog lives one level above this folder, beginning with
+[`T2V Normal - MiniMax H3 0.6.json`](<../T2V Normal - MiniMax H3 0.6.json>) and
+[`T2V Studio - MiniMax H3 0.6.json`](<../T2V Studio - MiniMax H3 0.6.json>).
 
 `Ref2V Legacy Scheduled - MiniMax H3.json` and
 `Ref2V Studio Legacy Scheduled - MiniMax H3.json` preserve the former active

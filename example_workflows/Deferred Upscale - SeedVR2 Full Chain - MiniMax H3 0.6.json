@@ -1,0 +1,437 @@
+{
+  "id": "cf4e9827-ea7c-5deb-ad88-85da862c853b",
+  "revision": 0,
+  "last_node_id": 8,
+  "last_link_id": 6,
+  "nodes": [
+    {
+      "id": 1,
+      "type": "MiniMaxH3ChainCheckpointManager",
+      "pos": [
+        -1824.0,
+        1440.0
+      ],
+      "size": [
+        1376,
+        1088
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "selected_manifest",
+          "type": "H3_CHAIN_MANIFEST",
+          "links": [
+            1
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ChainCheckpointManager"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 2,
+      "type": "VAELoader",
+      "pos": [
+        -1824,
+        -192
+      ],
+      "size": [
+        416,
+        96
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "minimax_h3_video_vae_fp16.safetensors"
+      ]
+    },
+    {
+      "id": 3,
+      "type": "MiniMaxH3ChainLatentVideoAdapter",
+      "pos": [
+        -448,
+        64
+      ],
+      "size": [
+        544,
+        448
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "manifest",
+          "type": "H3_CHAIN_MANIFEST",
+          "link": 1
+        },
+        {
+          "name": "video_vae",
+          "type": "VAE",
+          "link": 2
+        },
+        {
+          "name": "source_audio",
+          "type": "AUDIO",
+          "shape": 7,
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": [
+            3
+          ]
+        },
+        {
+          "name": "video_path",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ChainLatentVideoAdapter"
+      },
+      "widgets_values": [
+        "plan",
+        "plan",
+        "disk-backed",
+        true,
+        256
+      ]
+    },
+    {
+      "id": 4,
+      "type": "SeedVR2LoadDiTModel",
+      "pos": [
+        -448,
+        -960
+      ],
+      "size": [
+        448,
+        352
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "torch_compile_args",
+          "shape": 7,
+          "type": "TORCH_COMPILE_ARGS",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SEEDVR2_DIT",
+          "type": "SEEDVR2_DIT",
+          "links": [
+            4
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SeedVR2LoadDiTModel"
+      },
+      "widgets_values": [
+        "seedvr2_ema_3b_fp16.safetensors",
+        "cuda:0",
+        32,
+        false,
+        "cpu",
+        false,
+        "sdpa"
+      ]
+    },
+    {
+      "id": 5,
+      "type": "SeedVR2LoadVAEModel",
+      "pos": [
+        64,
+        -960
+      ],
+      "size": [
+        448,
+        448
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "torch_compile_args",
+          "shape": 7,
+          "type": "TORCH_COMPILE_ARGS",
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SEEDVR2_VAE",
+          "type": "SEEDVR2_VAE",
+          "links": [
+            5
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SeedVR2LoadVAEModel"
+      },
+      "widgets_values": [
+        "ema_vae_fp16.safetensors",
+        "cuda:0",
+        true,
+        1024,
+        128,
+        true,
+        768,
+        128,
+        "false",
+        "cpu",
+        false
+      ]
+    },
+    {
+      "id": 6,
+      "type": "SeedVR2DirectVideoUpscaler",
+      "pos": [
+        640,
+        64
+      ],
+      "size": [
+        640,
+        768
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 3
+        },
+        {
+          "name": "dit",
+          "type": "SEEDVR2_DIT",
+          "link": 4
+        },
+        {
+          "name": "vae",
+          "type": "SEEDVR2_VAE",
+          "link": 5
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": [
+            6
+          ]
+        },
+        {
+          "name": "audio",
+          "type": "AUDIO",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "SeedVR2DirectVideoUpscaler"
+      },
+      "widgets_values": [
+        42,
+        "fixed",
+        1080,
+        0,
+        5,
+        21,
+        2,
+        false,
+        0,
+        0,
+        "lab",
+        0.0,
+        0.0,
+        "cpu",
+        18,
+        false
+      ]
+    },
+    {
+      "id": 7,
+      "type": "SaveVideo",
+      "pos": [
+        1408,
+        64
+      ],
+      "size": [
+        448,
+        320
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "link": 6
+        }
+      ],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": [
+        "video/h3_seedvr2_%date:yyyy-MM-dd%",
+        "auto",
+        "auto"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "Note",
+      "pos": [
+        1408,
+        480
+      ],
+      "size": [
+        896,
+        640
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "Node name for S&R": "Note"
+      },
+      "widgets_values": [
+        "WHOLE-CHAIN SEEDVR2 FINISH\n\n1. In Checkpoint Manager select the final scene of a COMPLETE branch.\n2. Use the original H3 VIDEO VAE. Do not select minimax_h3_audio_vae: it has 32 latent channels and cannot decode the 24-channel video latent.\n3. Keep decode_buffer=disk-backed. MiniMax's temporal VAE writes the active scene to a temporary mmap; only boundary frames stay in ordinary RAM.\n4. The adapter trims saved context, resolves the Plan's boundary blends, embeds the saved final audio policy, and caches one continuous lossless movie under output/h3_chains/<run>/upscaled/seedvr2/source/.\n5. SeedVR2 Direct reads that movie in chunk_size batches. chunk_size=21 and overlap=2 are conservative defaults; its batching is independent of H3 scene boundaries.\n6. The ethanfel SeedVR2 fork preserves input audio in its returned VIDEO, so it connects directly to core Save Video.\n\nNo Plan, Source Timeline, source media, per-scene upscale loop, IMAGE batch, or manual intermediate path is required. Legacy source-audio runs without a saved Source Timeline are the only case that may need source_audio on the adapter.\n\nRequired SeedVR2 fork: https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler"
+      ]
+    }
+  ],
+  "links": [
+    [
+      1,
+      1,
+      0,
+      3,
+      0,
+      "H3_CHAIN_MANIFEST"
+    ],
+    [
+      2,
+      2,
+      0,
+      3,
+      1,
+      "VAE"
+    ],
+    [
+      3,
+      3,
+      0,
+      6,
+      0,
+      "VIDEO"
+    ],
+    [
+      4,
+      4,
+      0,
+      6,
+      1,
+      "SEEDVR2_DIT"
+    ],
+    [
+      5,
+      5,
+      0,
+      6,
+      2,
+      "SEEDVR2_VAE"
+    ],
+    [
+      6,
+      6,
+      0,
+      7,
+      0,
+      "VIDEO"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "0.6 GENERATION RUNTIME",
+      "bounding": [
+        -1888.0,
+        -1056.0,
+        4256.0,
+        2240.0
+      ],
+      "color": "#744c8c",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "0.6 AUTHORING + PROJECT",
+      "bounding": [
+        -1888.0,
+        1344.0,
+        1504.0,
+        1248.0
+      ],
+      "color": "#3f789e",
+      "font_size": 24,
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.55,
+      "offset": [
+        320.0,
+        160.0
+      ]
+    },
+    "comfyui_mcp": {
+      "workflow_uuid": "cf4e9827-ea7c-5deb-ad88-85da862c853b"
+    }
+  },
+  "version": 0.4
+}

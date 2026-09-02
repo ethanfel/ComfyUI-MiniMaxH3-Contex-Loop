@@ -1,143 +1,114 @@
-# Example workflows
+# MiniMax H3 0.6 example workflows
 
-Choose the smallest workflow that matches your input. Start with **Normal**;
-Studio adds an experimental editorial timeline but uses the same generation
-loop.
+These are clean ComfyUI UI-workflow documents built for the 0.6 node surface.
+They use fresh IDs and metadata, the organized **Production Plan**, explicit
+**Generation Profile**, and collision-free runtime and authoring rows. Older
+0.5 files are preserved unchanged in [`Archive/0.5/`](Archive/0.5/).
 
-For installation and first-run steps, see [Getting started](../docs/GETTING_STARTED.md).
+For installation and first-run setup, see
+[Getting started](../docs/GETTING_STARTED.md).
 
-## Quick choice
+The loader defaults use the canonical filenames from the
+[official Comfy-Org MiniMax H3 package](https://huggingface.co/Comfy-Org/MiniMax-H3):
+put diffusion weights in `models/diffusion_models/`, the Qwen3-VL encoder in
+`models/text_encoders/`, and both VAEs in `models/vae/`. The workflows do not
+assume a custom model subfolder.
 
-| Starting point | Recommended workflow |
+## Choose a starting point
+
+| Input or task | Recommended workflow |
 |---|---|
-| Text only | [T2V Normal](<T2V Normal - MiniMax H3.json>) |
-| One opening image | [I2V Normal](<I2V Normal - MiniMax H3.json>) |
-| First and last images | [FL2V Normal](<FL2V Normal - MiniMax H3.json>) |
-| A few global Ref2VA references | [Ref2V Basic](<Ref2V Basic - MiniMax H3.json>) |
-| Prompt-selected references | [Ref2V Tagged](<Ref2V Tagged - MiniMax H3.json>) |
-| Prompt-selected references plus source audio | [Ref2V Studio Tagged Source Audio](<Ref2V Studio Tagged Source Audio - MiniMax H3.json>) |
-| Video inpainting | [Masked Video Inpaint](<Masked Video Inpaint - MiniMax H3.json>) |
-| Ref2VA-guided video inpainting | [Ref2V Masked Video Inpaint](<Ref2V Masked Video Inpaint - MiniMax H3.json>) |
-| Continue one existing clip | [Masked AV Extension — Single Clip](<Masked AV Extension - Single Clip - MiniMax H3.json>) |
-| Continue an existing clip across several scenes | [Masked AV Extension — Chain](<Masked AV Extension - Chain + Reference Image - MiniMax H3.json>) |
-| Fill the gap between two clips | [Masked AV Bridge — Two Clips](<Masked AV Bridge - Two Clips - MiniMax H3.json>) |
+| Text only | [T2V Normal](<T2V Normal - MiniMax H3 0.6.json>) |
+| Text-only timeline, takes, and trims | [T2V Studio](<T2V Studio - MiniMax H3 0.6.json>) |
+| One opening image | [I2V Normal](<I2V Normal - MiniMax H3 0.6.json>) |
+| Image-led timeline, takes, and trims | [I2V Studio](<I2V Studio - MiniMax H3 0.6.json>) |
+| First and last images | [FL2V Normal](<FL2V Normal - MiniMax H3 0.6.json>) |
+| A few global Ref2VA pictures | [Ref2V Basic](<Ref2V Basic - MiniMax H3 0.6.json>) |
+| Prompt-selected `@tag` references | [Ref2V Tagged](<Ref2V Tagged - MiniMax H3 0.6.json>) |
+| Tagged references with full project authoring | [Ref2V Studio](<Ref2V Studio - MiniMax H3 0.6.json>) |
+| Project references plus exact source audio | [Ref2V Studio Source Audio](<Ref2V Studio Source Audio - MiniMax H3 0.6.json>) |
+| Video inpainting | [Masked Video Inpaint](<Masked Video Inpaint - MiniMax H3 0.6.json>) |
+| Ref2VA-guided video inpainting | [Ref2V Masked Video Inpaint](<Ref2V Masked Video Inpaint - MiniMax H3 0.6.json>) |
+| Continue existing video | [Masked AV Extension — Single Clip](<Masked AV Extension - Single Clip - MiniMax H3 0.6.json>) |
+| Extend existing video over several scenes | [Masked AV Extension — Chain](<Masked AV Extension - Chain + Reference Image - MiniMax H3 0.6.json>) |
+| Generate the exact gap between two clips | [Masked AV Bridge — Two Clips](<Masked AV Bridge - Two Clips - MiniMax H3 0.6.json>) |
 
-## What the labels mean
+## Normal and Studio
 
-| Label | Meaning |
-|---|---|
-| **Normal** | Standard Plan plus Scene Prompt Editor. Recommended starting point. |
-| **Studio** | Experimental Plan Studio timeline and rich prompt editor. Sampling is unchanged. |
-| **Experimental** | A useful test graph whose behavior is not a default recommendation. |
-| **Muted recovery nodes** | Present for later assembly, but mode `2`; they do not run during generation. |
-| **Bypassed node** | Mode `4`; forwards a compatible input without applying its operation. |
+**Normal** workflows keep the familiar scene-column Production Plan and the
+standard prompt editor. They are the smallest useful graphs.
 
-Most generation examples contain an intentionally muted recovery pair:
+**Studio** workflows add the Plan Studio timeline, Project Asset Carousel, rich
+prompt editor, and Checkpoint Manager. The Carousel owns the project/run name,
+reference lineage, and optional Source Track. Checkpoint Manager browses saved
+scenes, alternate branches, trims, previews, and restoration state. These
+authoring tools do not change the sampler body.
 
-```text
-[MUTED] Load Manifest  ──>  [MUTED] Assemble without rendering
-```
+To initialize a Studio reference project:
 
-Leave it muted while generating. To assemble an existing run, unmute both
-nodes and queue only the recovery Assemble node. See the
-[disabled-node guide](../docs/NODE_REFERENCE.md#how-disabled-nodes-are-shown).
+1. Copy or import the two 0.6 courier images from [`assets/`](assets/).
+2. In Project Asset Carousel, tag the arrival image `courier_arrival` and the
+   delivery image `greenhouse_delivery`; assign both the **Picture** role.
+3. In the Source Audio workflow, also import one audio file and assign
+   **Source track**. Generation Profile is already set to
+   **Lip-sync to source audio**.
+4. Edit the example scenes and queue the workflow.
 
-## Text, image, and reference generation
+The Carousel stores media as ordinary project assets rather than embedding
+image bytes or stale file bindings into workflow JSON.
 
-| Workflow | What it demonstrates |
-|---|---|
-| [T2V Normal](<T2V Normal - MiniMax H3.json>) | Two text-generated scenes, standard editor, checkpoint/review loop, final assembly |
-| [T2V Studio](<T2V Studio - MiniMax H3.json>) | The same T2V sampler with Plan Studio authoring |
-| [I2V Normal](<I2V Normal - MiniMax H3.json>) | Opening image applied only to scene 1 through Frame Gate |
-| [I2V Studio](<I2V Studio - MiniMax H3.json>) | The same I2V sampler with Plan Studio authoring |
-| [FL2V Normal](<FL2V Normal - MiniMax H3.json>) | A→B→A endpoint sequence using Frame Index Switch and Frame Gate |
-| [Ref2V Basic](<Ref2V Basic - MiniMax H3.json>) | Core Ref2VA with global references |
-| [Ref2V Tagged](<Ref2V Tagged - MiniMax H3.json>) | Prompt-driven `@tag` references with the standard editor |
-| [Ref2V Studio Tagged](<Ref2V Studio Tagged - MiniMax H3.json>) | Tagged references, Plan Studio, and project/run restoration tools |
-| [Ref2V Studio Tagged Source Audio](<Ref2V Studio Tagged Source Audio - MiniMax H3.json>) | Tagged references plus a Source Timeline soundtrack |
-| [Ref2V Sequential Motion — Experimental](<Ref2V Sequential Motion - EXPERIMENTAL - MiniMax H3.json>) | An advancing long motion-reference timeline combined with recursive context |
+## Current 0.6 authoring contract
 
-In I2V workflows, do not bypass **Frame Gate**. It prevents the opening image
-from being reapplied to every scene.
+Every maintained recursive workflow uses:
 
-For prompt syntax and timing, use [Scene authoring](../docs/SCENE_AUTHORING.md).
-For `@tags`, schedules, motion references, and Source Timeline, use
+- **MiniMax H3 Generation Profile** for scene continuity and audio intent;
+- **MiniMax H3 Production Plan** for scene columns, timing, seeds, and output;
+- 20-step `res_multistep` / `simple` sampling defaults;
+- explicit carried-overlap language in continuation prompts, so new action
+  begins after the inherited boundary rather than being cut short;
+- a muted manifest/assembly recovery path where appropriate.
+
+In I2V workflows, do not bypass **Frame Gate**. It prevents the opening picture
+from being reapplied to every scene. FL2V uses Frame Index Switch plus Frame
+Gate to demonstrate an A→B→A endpoint sequence.
+
+For prompt syntax, see [Scene authoring](../docs/SCENE_AUTHORING.md). For tags,
+motion references, and source media, see
 [Scheduled references](../docs/SCHEDULED_REFERENCES.md).
 
 ## Masked editing and existing video
 
-| Workflow | What it demonstrates |
-|---|---|
-| [Masked Video Inpaint](<Masked Video Inpaint - MiniMax H3.json>) | Recursive source-video editing with an H3-grid mask |
-| [Ref2V Masked Video Inpaint](<Ref2V Masked Video Inpaint - MiniMax H3.json>) | The same mask path with a picture defining the replacement appearance |
-| [Masked AV Extension — Single Clip](<Masked AV Extension - Single Clip - MiniMax H3.json>) | Continue one source clip from a protected AV prefix |
-| [Masked AV Extension — Chain](<Masked AV Extension - Chain + Reference Image - MiniMax H3.json>) | Three reviewed extensions plus a tagged appearance reference |
-| [Masked AV Bridge — Two Clips](<Masked AV Bridge - Two Clips - MiniMax H3.json>) | Protect both endpoints and generate the exact middle gap |
+The masked workflows keep the bundled CC0 soldier-crab source because it gives
+the mask, source-video, source-audio, and protected-boundary examples a legal,
+reproducible common input. Copy the required files from `assets/` to
+`ComfyUI/input/` before opening those workflows.
 
-The masking examples use the bundled soldier-crab media. Copy the required
-files from [`assets/`](assets/) into `ComfyUI/input/` before loading them.
-
-The two-clip bridge is a single masked target with an ordinary sampler; it does
-not pretend to be a recursive multi-scene run. The extension and inpaint
-examples use the normal checkpoint, review, resume, and assembly loop.
-
-See [Masked editing](../docs/MASKED_EDITING.md) for mask meaning, 32×32 H3
-cells, tracked masks, audio protection, and outpaint preparation.
+The two-clip bridge is a single masked target with an ordinary sampler. The
+extension and inpaint workflows use the checkpoint/review/resume loop. See
+[Masked editing](../docs/MASKED_EDITING.md) for H3 grid behavior and audio
+protection.
 
 ## Deferred upscale
 
-These are second-pass workflows for a saved Context Loop run. They are not good
-first-install tests.
+Deferred workflows start from a lineage selected in Checkpoint Manager; they
+are not first-install tests.
 
-| Workflow | Extra requirement | Use it for |
-|---|---|---|
-| [SeedVR2 Full Chain](<Deferred Upscale - SeedVR2 Full Chain - MiniMax H3.json>) | [ethanfel SeedVR2 fork](https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler) | Decode the selected lineage into one disk-backed video, then upscale it in low-RAM chunks. |
-| [H3 LBH 3D](<Deferred Upscale - H3 LBH 3D - MiniMax H3.json>) | [Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) and its 3D checkpoint | Upscale each saved H3 scene in a resumable child loop. |
-| [H3 LBH 3D + De-Rope](<Deferred Upscale + De-Rope - H3 LBH 3D - MiniMax H3.json>) | LBH pack plus [ComfyUI-MAINodes](https://github.com/matlowai/ComfyUI-MAINodes) | Combine latent spatial upscale with the guarded De-Rope recovery path. |
-
-The attention override in both LBH examples is deliberately **bypassed**.
-Large canvases can exceed the prequantized attention path's stride limits, so
-the supplied graph keeps ComfyUI's normal attention backend.
-
-Checkpoint Manager supplies the selected, verified scene lineage. Upscale
-profiles save separately under
-`output/h3_chains/<run>/upscaled/<profile>/`; they do not replace the source
-checkpoints.
-
-See [Runs and recovery](../docs/RUNS_AND_RECOVERY.md#whole-chain-seedvr2-finishing)
-for caching, source-audio handling, pass-2 conditioning, and resume rules.
-
-## Bundled assets
-
-| File | Used by |
+| Workflow | Extra requirement |
 |---|---|
-| `jigen_market_garden_doom_opening.png` | I2V and Ref2V examples |
-| `jigen_market_garden_doom_last.png` | FL2V and Ref2V examples |
-| `soldier_crabs_bribie_island_cc0.webm` | Masked inpaint, extension, and bridge examples |
-| `soldier_crabs_inpaint_mask.png` | Masked inpaint examples |
-| `soldier_crabs_reference_cc0.png` | Ref2V masked/extension examples |
+| [SeedVR2 Full Chain](<Deferred Upscale - SeedVR2 Full Chain - MiniMax H3 0.6.json>) | [ethanfel SeedVR2 fork](https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler) |
+| [H3 LBH 3D](<Deferred Upscale - H3 LBH 3D - MiniMax H3 0.6.json>) | [LBH H3 latent upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) |
+| [H3 LBH 3D + De-Rope](<Deferred Upscale + De-Rope - H3 LBH 3D - MiniMax H3 0.6.json>) | LBH pack plus [ComfyUI-MAINodes](https://github.com/matlowai/ComfyUI-MAINodes) |
 
-Read [`assets/README.md`](assets/README.md) for exact copy instructions,
-licenses, and provenance. ComfyUI does not load arbitrary files directly from a
-custom-node repository; media must be copied or imported into its input area.
+Upscaled variants are saved below
+`output/h3_chains/<run>/upscaled/<profile>/` and never replace source
+checkpoints. See [Runs and recovery](../docs/RUNS_AND_RECOVERY.md).
 
-## Prompt and media credits
+## Assets and provenance
 
-- T2V scene 1 is reproduced from a prompt shared by **🦙rishappi** in
-  Banodoco's `#minimax_h3_chatter` on August 11, 2026:
-  [original message](https://discord.com/channels/1076117621407223829/1532625331960152124/1536689209761599608).
-- The I2V opening image and scene-1 prompt were shared by **ᴊɪɢᴇɴ** in
-  Banodoco's `#minimax_h3_gens` on August 12, 2026:
-  [prompt and image](https://discord.com/channels/1076117621407223829/1533677158067736777/1537180042210054226),
-  [generated result](https://discord.com/channels/1076117621407223829/1533677158067736777/1537178443358142555).
-- The soldier-crab examples use bundled CC0 footage and original repository
-  prompts. They do not use or imitate the copyrighted *Crab Rave* soundtrack,
-  music video, choreography, or branding.
+The arrival/delivery pictures were generated specifically as neutral 0.6
+reference assets. The masked examples use CC0 footage. Exact hashes, licenses,
+copy instructions, and the older 0.5 reference provenance are documented in
+[`assets/README.md`](assets/README.md).
 
-Source notes are also embedded as visible notes in the relevant workflows.
-
-## Archive
-
-Maintained workflow JSON files stay directly in `example_workflows/` so
-ComfyUI can discover them. Retired and older type-based examples live in
-[`Archive/`](Archive/); use them only when reproducing an older graph.
+ComfyUI cannot load arbitrary files from the custom-node repository directly;
+copy them to `ComfyUI/input/` or import them through Project Asset Carousel.

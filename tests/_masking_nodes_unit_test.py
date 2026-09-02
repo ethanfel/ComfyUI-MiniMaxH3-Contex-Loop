@@ -253,7 +253,8 @@ def main():
     assert not old_pack_ids.intersection(nodes.NODE_CLASS_MAPPINGS)
 
     workflow_path = os.path.join(
-        ROOT, "example_workflows", "Masked Video Inpaint - MiniMax H3.json")
+        ROOT, "example_workflows",
+        "Masked Video Inpaint - MiniMax H3 0.6.json")
     with open(workflow_path, "r", encoding="utf-8") as handle:
         workflow = json.load(handle)
     workflow_nodes = {item["id"]: item for item in workflow["nodes"]}

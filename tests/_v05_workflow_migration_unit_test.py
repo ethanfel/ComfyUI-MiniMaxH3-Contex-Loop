@@ -89,7 +89,7 @@ def main():
     assert migrated == stable
 
     source_demo = load(
-        "example_workflows/"
+        "example_workflows/Archive/0.5/"
         "Ref2V Studio Tagged Source Audio - MiniMax H3.json")
     migration.migrate(source_demo, migration.SOURCE_AUDIO_DEMO)
     assert_original_names_first(source_demo)
@@ -203,9 +203,11 @@ def main():
         "generated_audio", "masked_av", 39, 22]
     assert mismatch_output == 0
 
-    assert [path.name for path in migration.active_paths()] == list(
-        migration.MAINTAINED_DEMOS)
-    for path in migration.active_paths():
+    archived_paths = [
+        ROOT / "example_workflows" / "Archive" / "0.5" / name
+        for name in migration.MAINTAINED_DEMOS]
+    assert all(path.is_file() for path in archived_paths)
+    for path in archived_paths:
         maintained = json.loads(path.read_text(encoding="utf-8"))
         stable_maintained = copy.deepcopy(maintained)
         migration.migrate(maintained, path.name)
