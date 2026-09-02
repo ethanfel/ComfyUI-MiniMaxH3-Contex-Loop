@@ -55,6 +55,7 @@ import {
 
 const {
     activeSceneIndexAfterRefresh,
+    planHasNonPromptChanges,
     publishCompanionScene,
     rebaseScenePrompt,
 } = promptCompanionSync;
@@ -2305,6 +2306,18 @@ function mount(node) {
     };
     node._h3PromptCompanionSetScenePrompt = (planNode, index, text) => {
         if (planNode !== state.planNode || !state.plan?.shots?.[index]) return false;
+        const liveValue = String(state.planWidget?.value ?? "");
+        let livePlanParsed = false;
+        try {
+            const livePlan = parsePlanJson(liveValue);
+            livePlanParsed = true;
+            if (planHasNonPromptChanges(state.plan, livePlan)) {
+                loadPlan(true);
+                return true;
+            }
+        } catch (_error) {
+            // Leave lastValue untouched so normal polling reports invalid JSON.
+        }
         state.plan.shots[index].prompt = promptTextToLines(text);
         const shotId = String(
             state.plan.shots[index].id
@@ -2324,7 +2337,7 @@ function mount(node) {
                 state.schema?.refresh();
             }
         }
-        state.lastValue = String(state.planWidget?.value ?? state.lastValue);
+        if (livePlanParsed) state.lastValue = liveValue;
         return true;
     };
     node._h3RichPromptRefresh = () => loadPlan(true);

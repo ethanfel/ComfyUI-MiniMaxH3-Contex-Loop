@@ -7,6 +7,7 @@ import {
     adjacentPlanCompanions,
     connectedPlanStudios,
     connectedPromptEditors,
+    planHasNonPromptChanges,
     publishCompanionPrompt,
     publishCompanionScene,
     publishPlanCompanionScene,
@@ -86,6 +87,23 @@ assert.deepEqual(localPlan.shots[0], {id:"two", prompt:["edited two"], seed:"22"
 assert.deepEqual(localPlan.shots[1], {id:"one", prompt:["live one"], seed:"11"});
 assert.equal(rebaseScenePrompt({shots:[{id:"gone",prompt:[]}]}, livePlan, 0), -1);
 
+assert.equal(planHasNonPromptChanges(
+    {shared:"same", shots:[{id:"one", prompt:["old"], seed:"11", length:90}]},
+    {shared:"same", shots:[{id:"one", prompt:["new"], seed:"11", length:90}]},
+), false, "a prompt-only broadcast can update in place without rerendering");
+assert.equal(planHasNonPromptChanges(
+    {shared:"same", shots:[{id:"one", prompt:["old"], seed:"11", length:90}]},
+    {shared:"same", shots:[{id:"one", prompt:["new"], seed:"22", length:90}]},
+), true, "candidate seed acceptance must reload the complete Plan");
+assert.equal(planHasNonPromptChanges(
+    {shared:"same", shots:[{id:"one", prompt:["old"], seed:"11", length:90}]},
+    {shared:"same", shots:[{id:"one", prompt:["new"], seed:"11", length:141}]},
+), true, "candidate length acceptance must reload the complete Plan");
+assert.equal(planHasNonPromptChanges(
+    {shared:"old", shots:[{id:"one", prompt:["same"]}]},
+    {shared:"new", shots:[{id:"one", prompt:["same"]}]},
+), true, "shared and plan-level fields remain synchronized");
+
 for (const relative of [
     "../web/h3_chain_scene_prompt_editor.js",
     "../web/h3_chain_rich_scene_prompt_editor.js",
@@ -94,6 +112,8 @@ for (const relative of [
     const source = fs.readFileSync(new URL(relative, import.meta.url), "utf8");
     assert.match(source, /import \* as promptCompanionSync/);
     assert.match(source, /promptCompanionSync\.publishCompanionPrompt\?\./);
+    assert.match(source, /planHasNonPromptChanges\(state\.plan, livePlan\)/);
+    assert.match(source, /loadPlan\(true\)/);
 }
 
 const reviewSource = fs.readFileSync(
@@ -102,5 +122,10 @@ assert.match(reviewSource, /import \* as promptCompanionSync/);
 assert.match(reviewSource, /promptCompanionSync\.publishCompanionPrompt\?\./);
 assert.match(reviewSource, /promptCompanionSync\.publishPlanCompanionScene\?\./);
 assert.match(reviewSource, /_h3PromptCompanionSetScenePrompt/);
+assert.equal(
+    reviewSource.match(/refreshRestoredPlanEditors\(planNode\)/g)?.length,
+    3,
+    "review edits, checkpoint revisions, and saved-input restore all refresh complete Plan data",
+);
 
 console.log("H3 prompt companions: active-scene and review prompt synchronization pass");

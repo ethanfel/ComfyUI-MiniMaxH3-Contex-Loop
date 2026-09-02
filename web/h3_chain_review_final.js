@@ -358,7 +358,7 @@ function updatePlan(reviewNode, index, prompt, seed, length) {
     const value = planToJson(plan);
     widget.value = value;
     widget.callback?.(value);
-    planNode._h3ChainEditorRefresh?.();
+    refreshRestoredPlanEditors(planNode);
     planNode.graph?.setDirtyCanvas?.(true, true);
     publishCompanionPrompt(
         reviewNode,
@@ -394,7 +394,7 @@ function updatePlanFromCheckpointRevisions(reviewNode, revisions) {
     const value = planToJson(plan);
     widget.value = value;
     widget.callback?.(value);
-    planNode._h3ChainEditorRefresh?.();
+    refreshRestoredPlanEditors(planNode);
     planNode.graph?.setDirtyCanvas?.(true, true);
     for (const revision of revisions ?? []) {
         const sceneIndex = Number(revision?.scene) - 1;

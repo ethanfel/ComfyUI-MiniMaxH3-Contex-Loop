@@ -112,7 +112,11 @@ import {
 } from "./h3_chain_plan_studio_core.mjs?v=0.7.0";
 import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
 
-const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
+const {
+    connectedPromptEditors,
+    planHasNonPromptChanges,
+    publishCompanionScene,
+} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
     return promptCompanionSync.publishCompanionPrompt?.(...args) ?? 0;
 }
@@ -5953,6 +5957,18 @@ function mount(node) {
     };
     node._h3PromptCompanionSetScenePrompt = (planNode, index, text) => {
         if (planNode !== state.planNode || !state.plan?.shots?.[index]) return false;
+        const liveValue = String(state.planWidget?.value ?? "");
+        let livePlanParsed = false;
+        try {
+            const livePlan = parsePlanJson(liveValue);
+            livePlanParsed = true;
+            if (planHasNonPromptChanges(state.plan, livePlan)) {
+                loadPlan(true);
+                return true;
+            }
+        } catch (_error) {
+            // Leave lastValue untouched so normal polling reports invalid JSON.
+        }
         state.plan.shots[index].prompt = promptTextToLines(text);
         if (index === state.active && state.history.textarea
                 && state.history.textarea.value !== text) {
@@ -5967,7 +5983,7 @@ function mount(node) {
                 String(state.plan.shots[index].id || `clip_${String(index + 1).padStart(4, "0")}`),
                 text);
         }
-        state.lastValue = String(state.planWidget?.value ?? state.lastValue);
+        if (livePlanParsed) state.lastValue = liveValue;
         return true;
     };
     node._h3PlanStudioRefresh = () => {

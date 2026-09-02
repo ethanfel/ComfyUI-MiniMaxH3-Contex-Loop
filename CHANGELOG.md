@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Review candidate acceptance and rerolls leaving Plan Studio and
+  prompt-editor companions on stale scene metadata. Selecting a 10x candidate
+  now refreshes the complete Plan—including seed, length, steps, context, and
+  scene order—while prompt-only edits retain their selection- and undo-safe
+  fast path.
+
 - Added the nightly **Picture Context Builder** to Plan Studio. Scene Context
   now owns picture/audio totals, boundary implementation, and spatial proxy;
   selecting 1–N picture blocks exposes every H3-native repartition through

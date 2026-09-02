@@ -6,6 +6,7 @@ import {
     applySceneReroll,
     resumeSelection,
 } from "./h3_chain_cancel_reroll_core.mjs?v=0.7.0";
+import {refreshRestoredPlanEditors} from "./h3_plan_restore_core.mjs?v=0.7.0";
 
 const CURRENT_TYPE = "MiniMaxH3ChainCurrent";
 const PLAN_TYPE = "MiniMaxH3ChainPlan";
@@ -282,7 +283,7 @@ function updateWorkflowForReroll(record, seed) {
     const serialized = planToJson(plan);
     planWidget.value = serialized;
     planWidget.callback?.(serialized);
-    planNode._h3ChainEditorRefresh?.();
+    refreshRestoredPlanEditors(planNode);
     startWidget.value = resume.startClip;
     startWidget.callback?.(resume.startClip);
     if (rangeWidget) {
