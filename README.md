@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/minimax-h3-contex-loop.svg" alt="MiniMax H3 Contex Loop — scene plans that survive the render" width="100%">
+  <img src="assets/minimax-h3-contex-loop.svg" alt="MiniMax H3 Context Loop — scene plans that survive the render" width="100%">
 </p>
 
-# ComfyUI MiniMax H3 Contex Loop
+# ComfyUI MiniMax H3 Context Loop
 
 Build a multi-scene MiniMax H3 video with one reusable sampling graph. Every
 scene can be reviewed, retried, checkpointed, resumed, and assembled later.
@@ -12,7 +12,9 @@ scene can be reviewed, retried, checkpointed, resumed, and assembled later.
 **[Choose a workflow](example_workflows/README.md)** ·
 **[All documentation](docs/README.md)**
 
-> **Contex** is the intentional public repository spelling.
+> The public GitHub repository slug retains its original `Contex-Loop`
+> spelling for compatibility. Package, node, menu, and documentation labels
+> use the correctly spelled **Context Loop** name.
 
 ## What this pack does
 
@@ -40,7 +42,7 @@ with native **Add Guide for MiniMax H3** support is recommended. `ffmpeg` on
 `PATH` gives the best review and assembly support; ComfyUI's PyAV is used as a
 fallback where supported.
 
-The MultiRef pack provides the maintained public Motion Context node. Contex
+The MultiRef pack provides the maintained public Motion Context node. Context
 Loop uses it automatically for compatible Guide scenes and keeps its own
 specialized fallback for loop-only modes.
 
@@ -80,7 +82,7 @@ an experimental timeline interface; it does not change the generation graph.
 ## How the graph is organized
 
 <p align="center">
-  <img src="assets/workflow-overview.svg" alt="Contex Loop node flow with active generation nodes and a muted recovery branch" width="100%">
+  <img src="assets/workflow-overview.svg" alt="Context Loop node flow with active generation nodes and a muted recovery branch" width="100%">
 </p>
 
 Only the current scene enters the sampling body. **Loop End** either starts the

@@ -411,7 +411,7 @@ class MiniMaxH3ReferenceVideoFadeModelPatch:
         "guides, and target streams remain unchanged.",
     )
     FUNCTION = "patch"
-    CATEGORY = "conditioning/minimax/contex_loop/experimental"
+    CATEGORY = "conditioning/minimax/context_loop/experimental"
     DESCRIPTION = (
         "Experimental low-memory Ref2VA freedom control. H3 still receives "
         "the complete native reference video, but its attention value "

@@ -1,5 +1,5 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="650" viewBox="0 0 1400 650" role="img" aria-labelledby="title desc">
-  <title id="title">MiniMax H3 Contex Loop workflow overview</title>
+  <title id="title">MiniMax H3 Context Loop workflow overview</title>
   <desc id="desc">Active setup and loop nodes with a muted recovery branch. Solid cards execute; grey dashed cards are muted.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">

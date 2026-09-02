@@ -401,7 +401,7 @@
         "Node name for S&R": "Note"
       },
       "widgets_values": [
-        "Core MiniMax H3 Image-to-Video conditioning remains owned by ComfyUI. This workflow adds the disk-backed Contex Loop plan, continuation, checkpoint, review, recovery, and assembly stages around it.\n\nRecursive GraphBuilder traversal is a specialized MiniMax adaptation of Ethanfel's SxCP loop implementation in ComfyUI-Prompt-Builder.\n\nThe FL2VA prompt follows the bundled H3 prompt-writing format: an exact first/last alignment instruction followed by integrated_multimodal_description, overall_soundscape, and non_diegetic_music."
+        "Core MiniMax H3 Image-to-Video conditioning remains owned by ComfyUI. This workflow adds the disk-backed Context Loop plan, continuation, checkpoint, review, recovery, and assembly stages around it.\n\nRecursive GraphBuilder traversal is a specialized MiniMax adaptation of Ethanfel's SxCP loop implementation in ComfyUI-Prompt-Builder.\n\nThe FL2VA prompt follows the bundled H3 prompt-writing format: an exact first/last alignment instruction followed by integrated_multimodal_description, overall_soundscape, and non_diegetic_music."
       ],
       "color": "#432f66",
       "bgcolor": "rgba(24,24,27,.9)"

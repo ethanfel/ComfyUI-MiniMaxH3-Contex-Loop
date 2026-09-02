@@ -163,7 +163,7 @@ class MiniMaxH3ContexTrimSourceAV:
         "Human-readable summary of the frame and audio trimming performed.",
     )
     FUNCTION = "trim"
-    CATEGORY = "conditioning/minimax/contex_loop/masking"
+    CATEGORY = "conditioning/minimax/context_loop/masking"
     DESCRIPTION = ("Trim source video and optional audio to the largest H3 "
                    "17k+5 run without inventing frames or silence.")
 
@@ -251,7 +251,7 @@ class MiniMaxH3ContexMaskedTarget:
         "each stream.",
     )
     FUNCTION = "apply"
-    CATEGORY = "conditioning/minimax/contex_loop/masking"
+    CATEGORY = "conditioning/minimax/context_loop/masking"
     DESCRIPTION = ("Attach causal, token-aligned H3 video/audio denoise masks "
                    "to a real source AV target for inpainting and temporal "
                    "edits. Ordinary AV extension needs no user mask.")
@@ -406,7 +406,7 @@ class MiniMaxH3ContexMaskGridPreview:
         "coverage.",
     )
     FUNCTION = "preview"
-    CATEGORY = "conditioning/minimax/contex_loop/masking"
+    CATEGORY = "conditioning/minimax/context_loop/masking"
     DESCRIPTION = ("Preview and snap a video mask to H3's effective 32x32 "
                    "source-pixel generation cells.")
 

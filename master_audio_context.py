@@ -262,7 +262,7 @@ class MiniMaxH3ContexMasterAudioMaskedAV:
         "Exact master-audio interval represented by this raw target.",
     )
     FUNCTION = "prepare"
-    CATEGORY = "conditioning/minimax/contex_loop/masking"
+    CATEGORY = "conditioning/minimax/context_loop/masking"
     DESCRIPTION = (
         "Insert an exact master-audio interval into the complete H3 audio "
         "target with optional real-song encode context and vocal-aware "

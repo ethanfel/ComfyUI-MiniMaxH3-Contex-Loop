@@ -1,6 +1,6 @@
 # Node guide
 
-This is a user-facing map of the nodes you normally see in a Contex Loop
+This is a user-facing map of the nodes you normally see in a Context Loop
 workflow. It focuses on what to connect and what comes out; exact expert fields
 remain documented by the node tooltips and the linked specialist guides.
 
@@ -49,20 +49,20 @@ for compatibility.
 |---|---|---|---|
 | **MiniMax H3 Generation Profile** | Widgets: Scene continuity, Audio profile. Optional: `lip_sync_options`. | `chain_policy`, `status` | Turns two user choices into the complete policy expected by Plan. |
 | **MiniMax H3 Plan (Modern)** | Required `chain_policy`; organized Project, Canvas, Generation defaults, and Delivery settings; optional `project_assets`. | `plan`, `summary`, scene count, width, height, blend frames | Recommended for new graphs. Keeps the familiar scene-column editor, removes all legacy fallback controls, and compiles the same Plan contract as the original node. |
-| **MiniMax H3 Contex Loop Plan** | Widgets: Scene Plan, `run_name`, size, duration, seed. Optional sockets: `chain_policy`, `project_assets`. | `plan`, `summary`, scene count, width, height, blend frames | Original compatibility-preserving Plan. Existing workflows keep it unchanged. Connect Generation Profile, then use **Upgrade to Modern Plan…** from its context menu when desired. |
+| **MiniMax H3 Context Loop Plan** | Widgets: Scene Plan, `run_name`, size, duration, seed. Optional sockets: `chain_policy`, `project_assets`. | `plan`, `summary`, scene count, width, height, blend frames | Original compatibility-preserving Plan. Existing workflows keep it unchanged. Connect Generation Profile, then use **Upgrade to Modern Plan…** from its context menu when desired. |
 | **MiniMax H3 Chain Preflight** | `plan` | checked `plan`, `preflight`, `ready`, `status`, report JSON | Validates the full plan before model-heavy nodes execute. Wire its Plan output to Loop Start. |
-| **MiniMax H3 Contex Loop Start** | `plan`. Optional: scene range, source timeline, source audio, external context. | `flow`, `state`, `status` | Starts scene 1, a bounded range, or a compatible resume. |
-| **MiniMax H3 Contex Loop Current Shot** | `state`. Optional source-audio fallback. | state, scene index/count, prompt, seed, raw length, steps, size, source-audio slice, blend frames | Exposes the current scene as ordinary ComfyUI values. |
+| **MiniMax H3 Context Loop Start** | `plan`. Optional: scene range, source timeline, source audio, external context. | `flow`, `state`, `status` | Starts scene 1, a bounded range, or a compatible resume. |
+| **MiniMax H3 Context Loop Current Shot** | `state`. Optional source-audio fallback. | state, scene index/count, prompt, seed, raw length, steps, size, source-audio slice, blend frames | Exposes the current scene as ordinary ComfyUI values. |
 | **MiniMax H3 Current Tagged Ref2VA Scene** | `state`, CLIP, video VAE, audio VAE, tagged references. Optional: Tagged Scene Options. | state, positive conditioning, latent, typed scene data | Compact prompt-driven Ref2VA route. It replaces the visible Current Shot + Tagged Ref2VA pair in new reference graphs. |
-| **MiniMax H3 Contex Loop Context** | state, conditioning, video VAE, latent. Optional: audio VAE, model, drift sigmas, anchors, lip-sync voice. | conditioning, trim frames, continuation flag, latent, model | Adds the selected visual/audio continuation. Scene 1 is effectively a pass-through. |
-| **MiniMax H3 Contex Loop Trim** | decoded images, trim count. Optional: audio, FPS, overlap controls, state. | delivered images/audio, overlap-ready images, overlap count | Removes the repeated head context and retains any frames needed for assembly blending. |
-| **MiniMax H3 Contex Loop Segment + Checkpoint** | state, delivered images, sampled latent. Optional: audio, overlap-ready images, denoised latent. | `segment`, `status` | Saves the scene movie, latent continuation, dependency record, and immutable revision. |
-| **MiniMax H3 Contex Loop Review Gate** | state, segment. Widgets: enabled, timeout, candidate count, memory cleanup, partial assembly. | reviewed `segment`, `status` | Pauses for approve, retry, reroll, candidate selection, or clean stop. |
-| **MiniMax H3 Contex Loop End** | flow, state, images, sampled latent, reviewed segment. | manifest, manifest JSON, final context frames, final context latent | Recurses into the next scene or finishes the selected range. |
-| **MiniMax H3 Contex Loop Assemble** | manifest. Widgets: audio source, filename, bitrate. Optional: output copy, blend/tone controls, recovery media. | `video_path` | Verifies selected segments, joins them, and muxes the chosen audio into the final MP4. |
+| **MiniMax H3 Context Loop Context** | state, conditioning, video VAE, latent. Optional: audio VAE, model, drift sigmas, anchors, lip-sync voice. | conditioning, trim frames, continuation flag, latent, model | Adds the selected visual/audio continuation. Scene 1 is effectively a pass-through. |
+| **MiniMax H3 Context Loop Trim** | decoded images, trim count. Optional: audio, FPS, overlap controls, state. | delivered images/audio, overlap-ready images, overlap count | Removes the repeated head context and retains any frames needed for assembly blending. |
+| **MiniMax H3 Context Loop Segment + Checkpoint** | state, delivered images, sampled latent. Optional: audio, overlap-ready images, denoised latent. | `segment`, `status` | Saves the scene movie, latent continuation, dependency record, and immutable revision. |
+| **MiniMax H3 Context Loop Review Gate** | state, segment. Widgets: enabled, timeout, candidate count, memory cleanup, partial assembly. | reviewed `segment`, `status` | Pauses for approve, retry, reroll, candidate selection, or clean stop. |
+| **MiniMax H3 Context Loop End** | flow, state, images, sampled latent, reviewed segment. | manifest, manifest JSON, final context frames, final context latent | Recurses into the next scene or finishes the selected range. |
+| **MiniMax H3 Context Loop Assemble** | manifest. Widgets: audio source, filename, bitrate. Optional: output copy, blend/tone controls, recovery media. | `video_path` | Verifies selected segments, joins them, and muxes the chosen audio into the final MP4. |
 
 The H3 model loader, scheduler, sampler, and VAE decoders are ordinary ComfyUI
-or MiniMax H3 nodes. Contex Loop provides the plan, continuity, checkpoint, and
+or MiniMax H3 nodes. Context Loop provides the plan, continuity, checkpoint, and
 recovery layer around them.
 
 ## Authoring and policy nodes

@@ -848,7 +848,7 @@ function mount(node) {
 
     const promptNotice = document.createElement("div");
     promptNotice.className = "h3r-prompt-notice";
-    promptNotice.textContent = "Prompt editing in Review Gate is disabled by default in 0.5. Use Scene Prompt Editor or Rich Scene Prompt Editor, then Retry or Reroll here.\n\nTo restore the old field: ComfyUI Settings → MiniMax H3 Contex Loop → Interface → Review Gate.";
+    promptNotice.textContent = "Prompt editing in Review Gate is disabled by default in 0.5. Use Scene Prompt Editor or Rich Scene Prompt Editor, then Retry or Reroll here.\n\nTo restore the old field: ComfyUI Settings → MiniMax H3 Context Loop → Interface → Review Gate.";
 
     function refreshPromptEditorSetting() {
         const enabled = reviewPromptEditorEnabled();
@@ -1890,7 +1890,7 @@ app.registerExtension({
     init() {
         app.ui?.settings?.addSetting?.({
             id: PROMPT_EDITOR_SETTING,
-            category: ["MiniMax H3 Contex Loop", "Interface", "Review Gate"],
+            category: ["MiniMax H3 Context Loop", "Interface", "Review Gate"],
             name: "Enable prompt editing inside Review Gate",
             tooltip: "Disabled by default in 0.5. Keep prompt authoring in Scene Prompt Editor or Rich Scene Prompt Editor. Enable this only to restore the legacy Review Gate textarea.",
             type: "boolean",

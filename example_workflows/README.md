@@ -86,7 +86,7 @@ cells, tracked masks, audio protection, and outpaint preparation.
 
 ## Deferred upscale
 
-These are second-pass workflows for a saved Contex Loop run. They are not good
+These are second-pass workflows for a saved Context Loop run. They are not good
 first-install tests.
 
 | Workflow | Extra requirement | Use it for |

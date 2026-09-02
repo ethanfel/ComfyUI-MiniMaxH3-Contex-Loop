@@ -192,7 +192,7 @@ class MiniMaxH3ContexLoopSourceAVTarget:
         "tail padding.",
     )
     FUNCTION = "prepare"
-    CATEGORY = "conditioning/minimax/contex_loop/masking"
+    CATEGORY = "conditioning/minimax/context_loop/masking"
     DESCRIPTION = (
         "Select the current Chain Loop interval from a source video and copy "
         "frame-locked video/audio encodes into the stock H3 joint target.")
@@ -308,7 +308,7 @@ class MiniMaxH3ContexLoopMaskSlice:
         "broadcast or sliced.",
     )
     FUNCTION = "slice"
-    CATEGORY = "conditioning/minimax/contex_loop/masking"
+    CATEGORY = "conditioning/minimax/context_loop/masking"
     DESCRIPTION = (
         "Broadcast one static mask or slice the exact tracked-mask interval "
         "for the current Chain Loop scene and its continuation overlap.")

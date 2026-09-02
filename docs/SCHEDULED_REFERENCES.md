@@ -228,7 +228,7 @@ No source render or manual file move is required.
 ## Patch priority
 
 If an older compatible H3 Motion Context copy wins process load order, insert
-**MiniMax H3 Patch Priority** between Ref2VA/I2V conditioning and Contex Loop
+**MiniMax H3 Patch Priority** between Ref2VA/I2V conditioning and Context Loop
 Context. It passes conditioning unchanged while claiming only the recognized
 shared patch family. Known H3-Multishot and SolAttn hooks remain active; unknown
 wrappers produce a clear error rather than being overwritten.

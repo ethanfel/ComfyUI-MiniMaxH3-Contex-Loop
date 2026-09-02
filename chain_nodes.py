@@ -6189,7 +6189,7 @@ def _validate_audio(audio: Any, label: str,
             raise ValueError(
                 "%s contains %d samples at %d Hz; expected exactly %d samples "
                 "for %d delivered frames at %d fps. Wire decoded audio through "
-                "MiniMax H3 Contex Loop Trim with match_tail enabled." %
+                "MiniMax H3 Context Loop Trim with match_tail enabled." %
                 (label, samples, sample_rate, expected, int(expected_frames), FPS))
     return waveform, sample_rate
 
@@ -11062,7 +11062,7 @@ class MiniMaxH3ReferenceVideoPrepare:
         "Input route, source timing, selected frame count, and copied audio.",
     )
     FUNCTION = "prepare"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Normalize a native VIDEO or IMAGE/AUDIO source to an "
                    "exact one-pass H3 Ref2VA performance reference while "
                    "copying, not regenerating, its synchronized soundtrack.")
@@ -11171,7 +11171,7 @@ class MiniMaxH3ScheduledPictureReference:
         "Normalized tag, scene selector, entry count, and fingerprint.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/legacy_schedule"
+    CATEGORY = "conditioning/minimax/context_loop/references/legacy_schedule"
     DESCRIPTION = ("Add one scene-scheduled picture using a stable @tag. "
                    "Tags identify assets; they do not reserve native H3 "
                    "numbers. The final wrapper keeps only pictures active "
@@ -11270,7 +11270,7 @@ class MiniMaxH3ScheduledVideoReference:
         "Normalized video/audio tags, selector, entry count, and fingerprint.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/legacy_schedule"
+    CATEGORY = "conditioning/minimax/context_loop/references/legacy_schedule"
     DESCRIPTION = ("Add one scene-scheduled 24 fps video and an optional "
                    "index-paired soundtrack using stable @tags. Tags identify "
                    "assets while the wrapper assigns compact <Video N> and "
@@ -11357,7 +11357,7 @@ class MiniMaxH3ScheduledAudioReference:
         "Normalized tag, scene selector, entry count, and fingerprint.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/legacy_schedule"
+    CATEGORY = "conditioning/minimax/context_loop/references/legacy_schedule"
     DESCRIPTION = ("Add one scene-scheduled standalone audio reference using "
                    "a stable @tag. The wrapper compactly renumbers active "
                    "audio as <Audio N> in each scene. Write the @tag and its "
@@ -11434,7 +11434,7 @@ class MiniMaxH3SemanticPictureAnchor:
         "Registered semantic tag and draft size.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/semantic"
+    CATEGORY = "conditioning/minimax/context_loop/references/semantic"
     DESCRIPTION = (
         "Register one Qwen-only semantic image under a #tag. These images are "
         "kept outside the native Tagged Ref2VA registry, so any number of "
@@ -11506,7 +11506,7 @@ class MiniMaxH3SemanticAnchorBundle:
         "Semantic count, native count, mode, size, and fingerprint.",
     )
     FUNCTION = "bundle"
-    CATEGORY = "conditioning/minimax/contex_loop/references/semantic"
+    CATEGORY = "conditioning/minimax/context_loop/references/semantic"
     DESCRIPTION = (
         "Finalize any number of Qwen-only semantic pictures behind one graph "
         "socket, centralize their presentation scale/mode, optionally pass "
@@ -11577,7 +11577,7 @@ class MiniMaxH3TaggedPictureReference:
         "Registered tag, media kind, source count, and fingerprint summary.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = ("Register one native Ref2VA picture under a stable @tag. "
                    "Existing workflows can still present it through #tag as "
                    "a compatibility path; use the separate Semantic Picture "
@@ -11653,7 +11653,7 @@ class MiniMaxH3TaggedVideoReference:
         "Registered tags, timeline mode, source count, and fingerprint summary.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = ("Register one 24 fps video and optional paired soundtrack "
                    "under stable @tags. Tagged Ref2VA activates the pair only "
                    "when either registered tag occurs in the current prompt.")
@@ -11792,7 +11792,7 @@ class MiniMaxH3TaggedMotionReference:
         "summary.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = (
         "Register a video as H3 motion/action evidence. The native video "
         "remains <Video N>, while @tag compiles to a distinct reusable "
@@ -11903,7 +11903,7 @@ class MiniMaxH3SourceTimeline:
         "fingerprint.",
     )
     FUNCTION = "build"
-    CATEGORY = "conditioning/minimax/contex_loop/media"
+    CATEGORY = "conditioning/minimax/context_loop/media"
     DESCRIPTION = (
         "0.5 source-media entry point. It records video, audio, native timing, "
         "origin, content fingerprints, and recovery data behind one typed "
@@ -12006,7 +12006,7 @@ class MiniMaxH3LazyMotionAVLoader:
         "Resolved path, skipped origin, audio duration, and lazy-load summary.",
     )
     FUNCTION = "load"
-    CATEGORY = "conditioning/minimax/contex_loop/media"
+    CATEGORY = "conditioning/minimax/context_loop/media"
     DESCRIPTION = (
         "Legacy 0.4 adapter: load one motion-reference container without "
         "decoding its video frames. source_video is ComfyUI's native "
@@ -12106,7 +12106,7 @@ class MiniMaxH3TaggedMotionReferenceTimeline:
         "the full source.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = (
         "Primary 0.5 motion-reference node. It registers the typed Source "
         "Timeline without decoding a full video or full audio track; Tagged "
@@ -12250,7 +12250,7 @@ class MiniMaxH3TaggedMotionReferencePath:
         "when embedded audio is disabled and no AUDIO was supplied.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = (
         "Path-backed Tagged Motion Ref. It stores a file descriptor and "
         "fingerprint instead of a full decoded IMAGE batch. Tagged Ref2VA "
@@ -12383,7 +12383,7 @@ class MiniMaxH3LazyMotionScenePreview:
         "Selected scene, timeline rule, decoded frame count, and dimensions.",
     )
     FUNCTION = "preview"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = (
         "Decode the exact lazy motion-reference window for a selected Plan "
         "scene. It is an inspection branch only and does not feed the "
@@ -12476,7 +12476,7 @@ class MiniMaxH3SourceTimelineScenePreview:
         "Selected scene, timeline rule, decoded frame count, and dimensions.",
     )
     FUNCTION = "preview"
-    CATEGORY = "conditioning/minimax/contex_loop/media"
+    CATEGORY = "conditioning/minimax/context_loop/media"
     DESCRIPTION = (
         "Preview the exact Source Timeline window selected for one Plan scene. "
         "No Plan means no video or audio decode."
@@ -12570,7 +12570,7 @@ class MiniMaxH3TaggedAudioReference:
         "fingerprint summary.",
     )
     FUNCTION = "add"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = ("Register audio under a stable @tag. It can remain a fixed "
                    "standalone reference or hold the full Loop source track "
                    "while Tagged Ref2VA derives an exact per-scene timeline "
@@ -12720,7 +12720,7 @@ class MiniMaxH3ScheduledReferenceToVideo:
         "sources are static.",
     )
     FUNCTION = "apply"
-    CATEGORY = "conditioning/minimax/contex_loop/references/legacy_schedule"
+    CATEGORY = "conditioning/minimax/context_loop/references/legacy_schedule"
     DESCRIPTION = ("Select scheduled references for the current scene, "
                    "remove inactive entries, and compactly number each media "
                    "type from 1. Stable @tags in the Plan prompt are compiled "
@@ -13233,7 +13233,7 @@ class MiniMaxH3BoundaryAnchorPrepass:
         "Scene count, reel length, endpoint positions, and audio status.",
     )
     FUNCTION = "prepare"
-    CATEGORY = "conditioning/minimax/contex_loop/research"
+    CATEGORY = "conditioning/minimax/context_loop/research"
     DESCRIPTION = (
         "Prepare one short, jointly sampled boundary reel for the whole Plan. "
         "Each scene contributes its exact final 17 source frames and matching "
@@ -13323,7 +13323,7 @@ class MiniMaxH3ExtractBoundaryAnchors:
         "Extracted latent indices and registry fingerprint.",
     )
     FUNCTION = "extract"
-    CATEGORY = "conditioning/minimax/contex_loop/research"
+    CATEGORY = "conditioning/minimax/context_loop/research"
     DESCRIPTION = (
         "Slice each scene's final endpoint step directly from one jointly "
         "sampled H3 latent. Transition steps and the generated audio stream "
@@ -13417,7 +13417,7 @@ class MiniMaxH3SemanticAnchorConditioning:
         "Semantic-anchor mode, selected checkpoints, and presentation summary.",
     )
     FUNCTION = "apply"
-    CATEGORY = "conditioning/minimax/contex_loop/references/internal"
+    CATEGORY = "conditioning/minimax/context_loop/references/internal"
     DESCRIPTION = (
         "Internal Tagged Ref2VA stage. Re-encodes the complete Qwen media "
         "presentation with timestamped semantic Video checkpoints or "
@@ -13557,7 +13557,7 @@ class MiniMaxH3TaggedReferenceToVideo:
         "anchors are excluded.",
     )
     FUNCTION = "apply"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = ("Prompt-driven H3 references with no numeric schedule. "
                    "Each scene activates only registered @tags present in its "
                    "resolved prompt, compactly renumbers those assets to native "
@@ -13978,7 +13978,7 @@ class MiniMaxH3TaggedSceneOptions:
     OUTPUT_TOOLTIPS = (
         "Validated modern settings for Current Tagged Ref2VA Scene.",)
     FUNCTION = "options"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = (
         "Reusable modern settings for Current Tagged Ref2VA Scene. The "
         "versioned carrier deliberately has no legacy 0.4 audio socket.")
@@ -14080,7 +14080,7 @@ class MiniMaxH3CurrentTaggedScenePack:
     OUTPUT_TOOLTIPS = (
         "Packed modern Current Shot and Tagged Ref2VA secondary values.",)
     FUNCTION = "pack"
-    CATEGORY = "conditioning/minimax/contex_loop/internal"
+    CATEGORY = "conditioning/minimax/context_loop/internal"
     DESCRIPTION = (
         "Internal packer for the modern Current Tagged Ref2VA Scene node.")
 
@@ -14152,7 +14152,7 @@ class MiniMaxH3CurrentTaggedReferenceScene:
         "your workflow actually needs.",
     )
     FUNCTION = "expand"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = (
         "Modern compact replacement for Current Shot plus Tagged Ref2VA. It "
         "keeps those established internals but removes their legacy 0.4 "
@@ -14233,7 +14233,7 @@ class MiniMaxH3SceneDataExtract:
     OUTPUT_TOOLTIPS = (
         "Selected value; its visible socket type follows the field dropdown.",)
     FUNCTION = "extract"
-    CATEGORY = "conditioning/minimax/contex_loop/references/prompt_driven"
+    CATEGORY = "conditioning/minimax/context_loop/references/prompt_driven"
     DESCRIPTION = (
         "Extract one labeled value from modern scene_data. The frontend "
         "updates this node's output socket to the selected concrete type.")
@@ -14335,7 +14335,7 @@ class MiniMaxH3ChainExternalVideo:
         "and prepend status.",
     )
     FUNCTION = "prepare"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Turn a native VIDEO or separately decoded IMAGE/AUDIO "
                    "video into scene 1's visual/audio predecessor, with "
                    "optional original-video prepend during assembly.")
@@ -14571,7 +14571,7 @@ class MiniMaxH3LipSyncOptions:
         "Resolved contextual encoding and vocal-gate recipe.",
     )
     FUNCTION = "build"
-    CATEGORY = "conditioning/minimax/contex_loop/policies"
+    CATEGORY = "conditioning/minimax/context_loop/policies"
     DESCRIPTION = (
         "Optional controls for Generation Profile's Lip-sync to source audio "
         "mode. The source song remains exact; these settings change how its "
@@ -14645,7 +14645,7 @@ class MiniMaxH3GenerationProfile:
         "Resolved scene-continuity and audio behavior summary.",
     )
     FUNCTION = "build"
-    CATEGORY = "conditioning/minimax/contex_loop/policies"
+    CATEGORY = "conditioning/minimax/context_loop/policies"
     DESCRIPTION = (
         "Choose understandable scene-continuity and audio profiles. The node "
         "compiles them to the same stable Chain Policy used by Plan, so it "
@@ -14751,7 +14751,7 @@ class MiniMaxH3ChainPolicy:
         "continuity, and exact-target lock summary.",
     )
     FUNCTION = "build"
-    CATEGORY = "conditioning/minimax/contex_loop/policies"
+    CATEGORY = "conditioning/minimax/context_loop/policies"
     DESCRIPTION = (
         "Set the normal 0.5 transition and audio intent in one place. Plan "
         "stores canonical audio and transition records so checkpoint "
@@ -14815,7 +14815,7 @@ class MiniMaxH3AdvancedPolicy:
         "Resolved advanced transition and preserved audio-intent summary.",
     )
     FUNCTION = "apply"
-    CATEGORY = "conditioning/minimax/contex_loop/policies"
+    CATEGORY = "conditioning/minimax/context_loop/policies"
     DESCRIPTION = (
         "Layer a named advanced incoming-transition recipe onto an existing "
         "Generation Profile or Manual Chain Policy. This is the normal route "
@@ -14904,7 +14904,7 @@ class MiniMaxH3Legacy04PolicyAdapter:
         "Human-readable summary of the translated legacy settings.",
     )
     FUNCTION = "build"
-    CATEGORY = "conditioning/minimax/contex_loop/policies/legacy"
+    CATEGORY = "conditioning/minimax/context_loop/policies/legacy"
     DESCRIPTION = (
         "Migration-only adapter for the combined audio mode, raw incoming-"
         "transition implementation, visual context, and audio context "
@@ -15231,7 +15231,7 @@ class MiniMaxH3ChainPlan:
         "it to Loop Trim in 0.5; connect Current Shot state to Loop Trim state.",
     )
     FUNCTION = "build"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Parse and validate a frame-exact MiniMax H3 shot plan. "
                    "The plan computes valid lengths, overlaps, audio windows, "
                    "seeds, and checkpoint compatibility hashes.")
@@ -15466,7 +15466,7 @@ class MiniMaxH3ChainScenePromptEditor:
         "an editor-only branch.",
     )
     FUNCTION = "passthrough"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Large, keyboard-friendly companion editor synchronized "
                    "bidirectionally with each scene prompt in the connected "
                    "H3 Chain Plan.")
@@ -15496,7 +15496,7 @@ class MiniMaxH3ChainRichScenePromptEditor:
         "editor-only branch.",
     )
     FUNCTION = "passthrough"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Experimental prompt-only scene editor with color-coded "
                    "references, media previews, prompt guides, revision "
                    "history, and optional one-click Direct API or MCP agent "
@@ -17186,7 +17186,7 @@ class MiniMaxH3ChainPlanStudio:
         "Legacy Plan-wide blend default; Current Shot state remains preferred.",
     )
     FUNCTION = "passthrough"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Dual-mode timeline-oriented H3 Plan authoring studio with "
                    "scene navigation, prompt revisions, saved-segment status, "
                    "source-audio waveform, and synchronized preview playback. "
@@ -17316,7 +17316,7 @@ class MiniMaxH3ChainPreflight:
     RETURN_NAMES = ("plan", "preflight", "ready", "status", "report_json")
     OUTPUT_TOOLTIPS = MiniMaxH3ChainPlanStudio.OUTPUT_TOOLTIPS[:5]
     FUNCTION = "check"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Model-free validation of Plan timing, Source Timeline, "
                    "references, runtime compatibility, and resume artifacts.")
 
@@ -17604,7 +17604,7 @@ class MiniMaxH3ProjectAssetManager:
     )
     FUNCTION = "build"
     OUTPUT_NODE = True
-    CATEGORY = "conditioning/minimax/contex_loop/project"
+    CATEGORY = "conditioning/minimax/context_loop/project"
     DESCRIPTION = (
         "Large project asset carousel for pictures, semantic anchors, video, "
         "motion, audio references, and one source track. Upload or import "
@@ -17869,7 +17869,7 @@ class MiniMaxH3ChainRunManager:
         "and final assembly.",
     )
     FUNCTION = "passthrough"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Browse output/h3_chains projects; restore a saved run's "
                    "Plan and loader-backed reference assets; optionally keep "
                    "content-addressed image, audio, and video fallbacks; and "
@@ -17964,7 +17964,7 @@ class MiniMaxH3ChainCheckpointManager:
         "scenes. This is the only Checkpoint Upscale Adapter input.",
     )
     FUNCTION = "passthrough"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = (
         "Browse checkpoint scenes and inferred revision branches across H3 "
         "runs; preview saved media, inspect exact video/audio context "
@@ -18019,7 +18019,7 @@ class MiniMaxH3ChainFirstSceneImage:
         "clip_index plus an upstream index switch for per-scene targets.",
     )
     FUNCTION = "select"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Use one opening image only for scene 1 of a recursive "
                    "I2VA chain, and optionally pass a selected last-frame "
                    "target into each loop scene for FL2VA/L2VA conditioning.")
@@ -18071,7 +18071,7 @@ class MiniMaxH3ChainFrameIndexSwitch:
         "Reports the scene index, selected target, and connected target count.",
     )
     FUNCTION = "select"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Select and wrap one last-frame target per loop scene. "
                    "Useful for alternating A/B endpoints in FL2VA chains.")
 
@@ -18171,7 +18171,7 @@ class MiniMaxH3ChainLoopStart:
         "Starting scene, total scene count, and resume/padding status.",
     )
     FUNCTION = "start"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Start or resume a contiguous range of a sequential H3 "
                    "chain. Ranges beginning above 1 load the preceding "
                    "checkpoint with safe Plan-history verification enabled "
@@ -18323,7 +18323,7 @@ class MiniMaxH3ChainCurrent:
         "internally. This output remains for older workflows and diagnostics.",
     )
     FUNCTION = "current"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Expose the current shot's prompt, seed, dimensions, valid "
                    "length, steps, and source-audio reference/target window.")
 
@@ -18574,7 +18574,7 @@ class MiniMaxH3ChainLoRAScheduler:
         "Selected Base/LoRA route and scene number.",
     )
     FUNCTION = "select"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = (
         "Route a pre-patched MODEL per scene without loading or applying any "
         "LoRA. Build Base and A-Z branches with ordinary ComfyUI model/LoRA "
@@ -18635,7 +18635,7 @@ class MiniMaxH3PatchPriority:
             "required": {
                 "conditioning": ("CONDITIONING", {
                     "tooltip": "Conditioning pass-through. Wire this directly "
-                               "between Ref2VA/I2V and Contex Loop Context so "
+                               "between Ref2VA/I2V and Context Loop Context so "
                                "the node executes before continuation guides "
                                "are added."}),
             },
@@ -18644,12 +18644,12 @@ class MiniMaxH3PatchPriority:
     RETURN_TYPES = ("CONDITIONING", "STRING")
     RETURN_NAMES = ("conditioning", "status")
     OUTPUT_TOOLTIPS = (
-        "The exact input conditioning, unchanged. Connect it to Contex Loop "
+        "The exact input conditioning, unchanged. Connect it to Context Loop "
         "Context.",
         "Core-owned native guide status, or the legacy patch ownership result.",
     )
     FUNCTION = "claim"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = (
         "Pass conditioning through unchanged. Updated ComfyUI remains "
         "core-owned and needs no patch. On the warned legacy fallback, this "
@@ -18770,7 +18770,7 @@ class MiniMaxH3ChainContext:
         "unless Existing Video Context seeds it; later scenes use their "
         "effective video and/or generated-audio context.",
         "Repeated leading frames to remove after decoding. Connect to "
-        "MiniMax H3 Contex Loop Trim.",
+        "MiniMax H3 Context Loop Trim.",
         "True when selected prior video or generated audio context is carried, including "
         "audio-only guide continuation; false for a fully independent scene.",
         "Sampler-ready target latent. With Lock source audio, its complete "
@@ -18785,7 +18785,7 @@ class MiniMaxH3ChainContext:
         "through its own Drift-Control Model Patch.",
     )
     FUNCTION = "apply"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Apply each scene's inherited or overridden RGB guide, "
                    "tone-carry RGB guide, latent guide, masked AV, full AV "
                    "latent taper, schedule-matched drift control, scene-one "
@@ -19136,7 +19136,7 @@ class MiniMaxH3DriftControlModelPatch:
         "Drift-Control scene; otherwise unchanged.",
     )
     FUNCTION = "patch"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = (
         "Lightweight inline patch for sigma-split workflows that switch H3 "
         "models. It also serves Color-Stable Drift AV. It stores the small "
@@ -19189,7 +19189,7 @@ class MiniMaxH3ChainSegmentSave:
                 "state": (STATE_TYPE, {
                     "tooltip": "Current state from H3 Chain Current Shot."}),
                 "images": ("IMAGE", {
-                    "tooltip": "Delivered images AFTER MiniMax H3 Contex "
+                    "tooltip": "Delivered images AFTER MiniMax H3 Context "
                                "Loop Trim. "
                                "The frame count must exactly match this scene's "
                                "planned delivered length."}),
@@ -19201,7 +19201,7 @@ class MiniMaxH3ChainSegmentSave:
             "optional": {
                 "audio": ("AUDIO", {
                     "tooltip": "Delivered decoded audio AFTER MiniMax H3 "
-                               "Contex Loop Trim with match_tail enabled. "
+                               "Context Loop Trim with match_tail enabled. "
                                "Connect Trim's audio output directly so its "
                                "private AV overlap can also be checkpointed. "
                                "Connect it in every audio mode to preserve "
@@ -19236,7 +19236,7 @@ class MiniMaxH3ChainSegmentSave:
     )
     FUNCTION = "save"
     OUTPUT_NODE = True
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Immediately save one delivered H3 clip as an H.264 segment "
                    "plus a safetensors resume checkpoint, exact prompt metadata, "
                    "generated-audio WAV, and workflow recovery sidecars.")
@@ -19264,7 +19264,7 @@ class MiniMaxH3ChainSegmentSave:
         if actual_frames != expected_frames:
             raise ValueError(
                 "H3 chain clip %d produced %d delivered frames; expected %d. "
-                "Wire decoded images through MiniMax H3 Contex Loop Trim before "
+                "Wire decoded images through MiniMax H3 Context Loop Trim before "
                 "Segment Save." % (index, actual_frames, expected_frames))
 
         repeated_frames = max(
@@ -19294,7 +19294,7 @@ class MiniMaxH3ChainSegmentSave:
         if _audio_policy_final(plan) == "generated" and audio is None:
             raise ValueError(
                 "H3 chain final_audio=generated requires decoded audio on "
-                "Segment Save. Wire it through MiniMax H3 Contex Loop Trim "
+                "Segment Save. Wire it through MiniMax H3 Context Loop Trim "
                 "first.")
         compact = _compact_latent(sampled_latent)
         continuation_mode = migrate_continuation_mode(shot.get(
@@ -20517,7 +20517,7 @@ class MiniMaxH3ChainReview:
             "optional": {
                 "audio": ("AUDIO", {
                     "tooltip": "Wire frame-exact delivered audio from H3 "
-                               "MiniMax H3 Contex Loop Trim for synchronized "
+                               "MiniMax H3 Context Loop Trim for synchronized "
                                "review."}),
                 "source_audio": ("AUDIO", {
                     "tooltip": "Fallback only for runs whose state predates "
@@ -20560,7 +20560,7 @@ class MiniMaxH3ChainReview:
     )
     FUNCTION = "review"
     OUTPUT_NODE = True
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Pause after a checkpointed H3 segment for synchronized "
                    "video/audio review. Approve, stop, retry an edited scene "
                    "prompt/seed/duration, or reroll its seed while applying "
@@ -21195,7 +21195,7 @@ class MiniMaxH3ChainLoopEnd:
         "Final sampled H3 AV latent for optional continuation outside this loop.",
     )
     FUNCTION = "end"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Finish one persisted clip, carry only its context tail and "
                    "AV latent, then recursively execute the next shot.")
 
@@ -21477,7 +21477,7 @@ class MiniMaxH3ChainManifestLoad:
         "Number of verified scenes and checkpoint directory used.",
     )
     FUNCTION = "load"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Validate the longest contiguous saved scene prefix and "
                    "rebuild a completed or partial chain manifest without "
                    "rerendering.")
@@ -23397,7 +23397,7 @@ class MiniMaxH3ChainExportPNG:
     )
     FUNCTION = "export"
     OUTPUT_NODE = True
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Re-decode every saved H3 video checkpoint with the selected "
                    "VAE, remove each scene's repeated context overlap, and write "
                    "a continuous lossless PNG sequence without retaining the "
@@ -23915,7 +23915,7 @@ class MiniMaxH3ChainLatentVideoAdapter:
         "Cache/decode mode, scene count, frame count, blends, and output path.",
     )
     FUNCTION = "adapt"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = (
         "Stream a selected checkpoint lineage from original H3 video latents "
         "into one lossless, audio-bearing, file-backed VIDEO. Scene overlap "
@@ -24309,7 +24309,7 @@ class MiniMaxH3ChainAssemble:
     )
     FUNCTION = "assemble"
     OUTPUT_NODE = True
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Assemble either source or upscaled H3 manifests into one "
                    "MP4 and mux the selected source or generated audio. "
                    "Upscale manifests publish under their child profile and "
@@ -27299,7 +27299,7 @@ CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3AdvancedPolicy": "MiniMax H3 Advanced Policy Override",
     "MiniMaxH3Legacy04PolicyAdapter": (
         "MiniMax H3 Legacy 0.4 Policy Adapter"),
-    "MiniMaxH3ChainPlan": "MiniMax H3 Contex Loop Plan",
+    "MiniMaxH3ChainPlan": "MiniMax H3 Context Loop Plan",
     "MiniMaxH3ChainPlanModern": "MiniMax H3 Plan (Modern)",
     "MiniMaxH3ChainScenePromptEditor": "MiniMax H3 Scene Prompt Editor",
     "MiniMaxH3ChainRichScenePromptEditor": (
@@ -27346,19 +27346,19 @@ CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
         "MiniMax H3 Current Tagged Ref2VA Scene"),
     "MiniMaxH3SceneDataExtract": "MiniMax H3 Scene Data Extract",
     "MiniMaxH3ChainExternalVideo": "MiniMax H3 Existing Video Context",
-    "MiniMaxH3ChainLoopStart": "MiniMax H3 Contex Loop Start",
-    "MiniMaxH3ChainCurrent": "MiniMax H3 Contex Loop Current Shot",
+    "MiniMaxH3ChainLoopStart": "MiniMax H3 Context Loop Start",
+    "MiniMaxH3ChainCurrent": "MiniMax H3 Context Loop Current Shot",
     "MiniMaxH3ChainLoRAScheduler": "MiniMax H3 Scene LoRA Scheduler",
     "MiniMaxH3PatchPriority": "MiniMax H3 Patch Priority",
-    "MiniMaxH3ChainContext": "MiniMax H3 Contex Loop Context",
+    "MiniMaxH3ChainContext": "MiniMax H3 Context Loop Context",
     "MiniMaxH3DriftControlModelPatch": (
         "MiniMax H3 Drift-Control Model Patch (Sigma Split)"),
-    "MiniMaxH3ChainSegmentSave": "MiniMax H3 Contex Loop Segment + Checkpoint",
-    "MiniMaxH3ChainReview": "MiniMax H3 Contex Loop Review Gate",
-    "MiniMaxH3ChainLoopEnd": "MiniMax H3 Contex Loop End",
-    "MiniMaxH3ChainManifestLoad": "MiniMax H3 Contex Loop Load Manifest",
-    "MiniMaxH3ChainExportPNG": "MiniMax H3 Contex Loop Export PNG Sequence",
+    "MiniMaxH3ChainSegmentSave": "MiniMax H3 Context Loop Segment + Checkpoint",
+    "MiniMaxH3ChainReview": "MiniMax H3 Context Loop Review Gate",
+    "MiniMaxH3ChainLoopEnd": "MiniMax H3 Context Loop End",
+    "MiniMaxH3ChainManifestLoad": "MiniMax H3 Context Loop Load Manifest",
+    "MiniMaxH3ChainExportPNG": "MiniMax H3 Context Loop Export PNG Sequence",
     "MiniMaxH3ChainLatentVideoAdapter": (
         "MiniMax H3 Full-Chain Latent Video Adapter"),
-    "MiniMaxH3ChainAssemble": "MiniMax H3 Contex Loop Assemble",
+    "MiniMaxH3ChainAssemble": "MiniMax H3 Context Loop Assemble",
 }

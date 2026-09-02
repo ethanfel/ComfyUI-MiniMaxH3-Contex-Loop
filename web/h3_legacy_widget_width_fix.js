@@ -9,6 +9,8 @@ const LEGACY_FIX_NODE = "LegacyWidgetWidthFix";
 const REPAIR_BUTTON = "Repair widget widths now";
 const HOST_LIFECYCLE_PATCH = "__h3_lwwf_host_lifecycle";
 const LEGACY_LIFECYCLE_PATCH = "__h3_lwwf_legacy_lifecycle";
+const LEGACY_DISPLAY_PREFIX = "MiniMax H3 Contex Loop";
+const CURRENT_DISPLAY_PREFIX = "MiniMax H3 Context Loop";
 
 const H3_NODE_TYPES = new Set([
     "MiniMaxH3LoopTrim",
@@ -50,6 +52,18 @@ function nodeType(node) {
 
 function isH3Host(node) {
     return H3_NODE_TYPES.has(nodeType(node));
+}
+
+function correctLegacyNodeTitle(node) {
+    if (!isH3Host(node) || typeof node?.title !== "string"
+            || !node.title.includes(LEGACY_DISPLAY_PREFIX)) return false;
+    node.title = node.title.replaceAll(
+        LEGACY_DISPLAY_PREFIX, CURRENT_DISPLAY_PREFIX);
+    return true;
+}
+
+function correctLegacyGraphTitles(graph) {
+    for (const node of graphNodes(graph)) correctLegacyNodeTitle(node);
 }
 
 function schedule(callback) {
@@ -124,7 +138,7 @@ app.registerExtension({
         controller.installHooks(globalThis.LGraphNode?.prototype);
         app.ui?.settings?.addSetting?.({
             id: SETTING_ID,
-            category: ["MiniMax H3 Contex Loop", "Compatibility", "Widget widths"],
+            category: ["MiniMax H3 Context Loop", "Compatibility", "Widget widths"],
             name: "Repair legacy widget widths while H3 nodes are present",
             tooltip: "Works around ComfyUI frontend issue #12443 across the whole canvas. Disable only if your frontend has fixed the LiteGraph widget-width regression.",
             type: "boolean",
@@ -147,11 +161,13 @@ app.registerExtension({
 
     nodeCreated(node) {
         controller.installHooks(globalThis.LGraphNode?.prototype);
+        correctLegacyNodeTitle(node);
         if (isH3Host(node)) controller.addHost(node);
         controller.nodeCreated(node);
     },
 
     afterConfigureGraph() {
+        correctLegacyGraphTitles(app.graph);
         controller.syncHosts(graphNodes(app.graph), isH3Host);
         controller.scheduleRepairAll();
     },
@@ -159,6 +175,7 @@ app.registerExtension({
     setup() {
         controller.installHooks(globalThis.LGraphNode?.prototype);
         controller.setAllowed(settingEnabled());
+        correctLegacyGraphTitles(app.graph);
         controller.syncHosts(graphNodes(app.graph), isH3Host);
         controller.scheduleRepairAll();
     },

@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Corrected the user-visible **Contex Loop** typo to **Context Loop** across
+  node titles, Add Node categories, settings, documentation, branding, and
+  bundled workflow titles. Serialized node IDs, settings keys, and the public
+  repository slug remain unchanged for compatibility.
+
 - Fixed Review candidate acceptance and rerolls leaving Plan Studio and
   prompt-editor companions on stale scene metadata. Selecting a 10x candidate
   now refreshes the complete Plan—including seed, length, steps, context, and
@@ -1026,7 +1031,7 @@ edited.
 
 ## v0.3.22 — Optional floating reroll control
 
-A ComfyUI setting under **MiniMax H3 Contex Loop → Interface → Cancel &
+A ComfyUI setting under **MiniMax H3 Context Loop → Interface → Cancel &
 reroll** can hide the floating in-progress action. Review Gate controls remain
 available.
 
@@ -1070,7 +1075,7 @@ single-image I2VA example plus First-Scene Image Gate.
 
 ## v0.3.11 — Invisible legacy widget-width repair
 
-While a Contex Loop node is on the canvas, the pack repairs the LiteGraph
+While a Context Loop node is on the canvas, the pack repairs the LiteGraph
 widget-width regression across all nodes. Regenerated scenes retain previous
 segment and checkpoint revisions instead of deleting the superseded take.
 
@@ -1142,7 +1147,7 @@ sequence without holding the complete production in RAM.
   colors, responsive layout, and collapsible raw JSON.
 - Added the recursive one-body chain, frame-locked audio trimming, per-scene
   checkpoints, interactive review/retry, and looping Ref2VA example.
-- Renamed the expanded project **MiniMax H3 Contex Loop** so it could coexist
+- Renamed the expanded project **MiniMax H3 Context Loop** so it could coexist
   clearly with NikoDemon80's manual Motion Context tools.
 
 ## Origins — Motion Context and Ref2VA continuation

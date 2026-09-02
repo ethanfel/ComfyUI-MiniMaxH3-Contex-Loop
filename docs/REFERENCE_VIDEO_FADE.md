@@ -86,7 +86,7 @@ For one sampler/model:
 H3 MODEL → other backend/model patches → Reference Video Fade → sampler
 ```
 
-In a Contex Loop Drift-Control graph, the faded MODEL may feed Chain Context's
+In a Context Loop Drift-Control graph, the faded MODEL may feed Chain Context's
 MODEL input; use Chain Context's MODEL output for sampling.
 
 For split-sigma sampling, connect the original **unsplit** schedule to

@@ -23,7 +23,7 @@ export function directOptimizerConfigurationError(config = {}) {
 
 export function makeDirectPromptOptimizeRequest({config, instruction, context, resources = []}) {
     const error = directOptimizerConfigurationError(config);
-    if (error) throw new Error(`${error} Open ComfyUI Settings → MiniMax H3 Contex Loop → Prompt optimizer.`);
+    if (error) throw new Error(`${error} Open ComfyUI Settings → MiniMax H3 Context Loop → Prompt optimizer.`);
     return {
         api_format: normalizePromptOptimizerApiFormat(config.api_format),
         api_url: String(config.api_url ?? "").trim(),

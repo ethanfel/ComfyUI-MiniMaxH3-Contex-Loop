@@ -1303,7 +1303,7 @@ class MiniMaxH3VisualContextLateRevealModelPatch:
         "Guide prefix, future suffix anchor, or all visual conditions.",
     )
     FUNCTION = "patch"
-    CATEGORY = "conditioning/minimax/contex_loop/experimental"
+    CATEGORY = "conditioning/minimax/context_loop/experimental"
     DESCRIPTION = (
         "Research patch for recursive visual-context drift. At each H3 model "
         "call it schedules either the predecessor Guide prefix, the separate "

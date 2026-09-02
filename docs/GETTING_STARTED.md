@@ -64,7 +64,7 @@ vertical scene-column editor but groups its smaller control set into Project,
 Canvas, Generation defaults, and Delivery. Its Generation Profile connection
 is required, and it has no legacy context, audio, or continuation fallbacks.
 
-The original **MiniMax H3 Contex Loop Plan** remains unchanged so old workflows
+The original **MiniMax H3 Context Loop Plan** remains unchanged so old workflows
 open safely. After connecting Generation Profile, right-click it and choose
 **Upgrade to Modern Plan…** to preserve its scenes, supported settings,
 position, and links.
