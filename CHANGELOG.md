@@ -4,6 +4,15 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Accelerated **Export PNG Sequence** with chunked batch conversion and up to
+  eight bounded parallel atomic PNG writers, inspired by JSON-Dynamic's Fast
+  Absolute Saver. New nodes default to lossless compression level 1; existing
+  saved compression values remain unchanged. The exporter now shows ComfyUI
+  progress, logs per-scene verify/load/GPU-decode/convert/save timings, updates
+  `export.partial.json` after every chunk, honors cancellation between chunks,
+  and caches successful checkpoint hashes by immutable hash, size, and mtime.
+  Strict verification remains available as an optional input.
+
 - Corrected the user-visible **Contex Loop** typo to **Context Loop** across
   node titles, Add Node categories, settings, documentation, branding, and
   bundled workflow titles. Serialized node IDs, settings keys, and the public

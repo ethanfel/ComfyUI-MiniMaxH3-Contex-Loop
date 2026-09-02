@@ -14,6 +14,7 @@ typed MiniMax chain state rather than arbitrary carry sockets.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import gc
 import hashlib
 import ipaddress
@@ -152,6 +153,10 @@ MAX_SHOTS = 128
 MAX_SEED = 0xFFFFFFFFFFFFFFFF
 MAX_REVIEW_CANDIDATES = 20
 MAX_H3_FRAMES = 3592  # largest 17k+5 value accepted by H3's 3600-frame socket
+PNG_EXPORT_AUTO_WORKERS_CAP = 8
+PNG_EXPORT_MIN_CHUNK_FRAMES = 8
+PNG_EXPORT_MAX_CHUNK_FRAMES = 64
+PNG_EXPORT_HASH_CACHE_FORMAT = "h3_png_checkpoint_hash_cache_v1"
 BOUNDARY_TONE_MATCH_MODES = ("off", "auto")
 BOUNDARY_TONE_MATCH_CONTEXT_FRAMES = 8
 BOUNDARY_TONE_MATCH_SEARCH_FRAMES = 4
@@ -23288,11 +23293,6 @@ def _checkpoint_export_segments(manifest: dict[str, Any]) -> list[dict[str, Any]
         if not os.path.isfile(checkpoint):
             raise FileNotFoundError(
                 "H3 PNG export checkpoint is missing: %s" % checkpoint)
-        expected_hash = str(segment.get("checkpoint_sha256") or "")
-        if expected_hash and _file_sha256(checkpoint) != expected_hash:
-            raise ValueError(
-                "H3 PNG export clip %d checkpoint failed its SHA-256 integrity "
-                "check." % expected_index)
         raw_frames = int(segment.get("raw_frames", 0))
         delivered_frames = int(segment.get("delivered_frames", 0))
         if raw_frames < 1 or delivered_frames < 1 or delivered_frames > raw_frames:
@@ -23306,6 +23306,76 @@ def _checkpoint_export_segments(manifest: dict[str, Any]) -> list[dict[str, Any]
             "H3 PNG export segment durations total %d frames; expected %d." %
             (delivered_total, expected_total))
     return segments
+
+
+def _png_export_hash_cache_path(manifest: dict[str, Any]) -> str:
+    run_name = _safe_name(manifest.get("run_name"), "h3_chain")
+    root = _output_root()
+    path = os.path.abspath(os.path.join(
+        root, "h3_chains", run_name, ".png_export_hash_cache.json"))
+    if os.path.commonpath([root, path]) != root:
+        raise ValueError("H3 PNG export hash-cache path escapes output.")
+    return path
+
+
+def _load_png_export_hash_cache(
+        manifest: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    path = _png_export_hash_cache_path(manifest)
+    value: Any = None
+    try:
+        value = _read_json(path)
+    except FileNotFoundError:
+        pass
+    except (OSError, ValueError, json.JSONDecodeError) as exc:
+        _LOG.warning("H3 PNG export ignored unreadable hash cache %s: %s",
+                     path, exc)
+    if (not isinstance(value, dict)
+            or value.get("format") != PNG_EXPORT_HASH_CACHE_FORMAT
+            or not isinstance(value.get("entries"), dict)):
+        value = {"format": PNG_EXPORT_HASH_CACHE_FORMAT, "entries": {}}
+    return path, value
+
+
+def _png_export_checkpoint_cache_key(checkpoint: str) -> str:
+    return os.path.relpath(
+        os.path.abspath(checkpoint), _output_root()).replace(os.sep, "/")
+
+
+def _verify_png_export_checkpoint(
+        checkpoint: str, expected_hash: str, verification: str,
+        cache: dict[str, Any]) -> tuple[str, bool]:
+    mode = str(verification or "cached").strip().lower()
+    if mode not in ("cached", "strict"):
+        raise ValueError(
+            "H3 PNG export checkpoint_verification must be cached or strict.")
+    expected = str(expected_hash or "").strip().lower()
+    if not expected:
+        return "no recorded hash", False
+    stat = os.stat(checkpoint)
+    key = _png_export_checkpoint_cache_key(checkpoint)
+    entry = (cache.get("entries") or {}).get(key)
+    cache_matches = False
+    if mode == "cached" and isinstance(entry, dict):
+        try:
+            cache_matches = (
+                str(entry.get("sha256") or "").lower() == expected
+                and int(entry.get("size", -1)) == int(stat.st_size)
+                and int(entry.get("mtime_ns", -1)) == int(stat.st_mtime_ns))
+        except (TypeError, ValueError):
+            cache_matches = False
+    if cache_matches:
+        return "cached SHA-256", False
+    actual = _file_sha256(checkpoint)
+    if actual.lower() != expected:
+        raise ValueError(
+            "H3 PNG export checkpoint failed its SHA-256 integrity check: %s" %
+            checkpoint)
+    cache.setdefault("entries", {})[key] = {
+        "sha256": actual.lower(),
+        "size": int(stat.st_size),
+        "mtime_ns": int(stat.st_mtime_ns),
+    }
+    return "verified SHA-256", True
 
 
 def _new_export_directory(manifest: dict[str, Any], export_name: str) -> str:
@@ -23326,16 +23396,28 @@ def _new_export_directory(manifest: dict[str, Any], export_name: str) -> str:
     raise RuntimeError("H3 PNG export could not allocate a unique output folder.")
 
 
-def _write_png(path: str, image: Any, compression: int,
-               metadata: dict[str, Any]) -> None:
-    if Image is None or PngImagePlugin is None or torch is None:
-        raise RuntimeError("H3 PNG export requires Pillow and torch.")
-    if not torch.is_tensor(image) or image.ndim != 3 or image.shape[-1] < 3:
+def _png_export_uint8(images: Any) -> Any:
+    if torch is None or np is None:
+        raise RuntimeError("H3 PNG export requires torch and NumPy.")
+    if (not torch.is_tensor(images) or images.ndim != 4
+            or images.shape[-1] < 3):
         raise ValueError(
-            "H3 PNG export expected one [height,width,channels] image; got %r." %
-            (getattr(image, "shape", None),))
-    pixels = (torch.clamp(image[..., :3], 0.0, 1.0) * 255.0)
-    pixels = pixels.round().to(device="cpu", dtype=torch.uint8).numpy()
+            "H3 PNG export expected [frames,height,width,channels] images; "
+            "got %r." % (getattr(images, "shape", None),))
+    return ((torch.clamp(images[..., :3], 0.0, 1.0) * 255.0).round()
+            .to(device="cpu", dtype=torch.uint8).contiguous().numpy())
+
+
+def _write_png(path: str, pixels: Any, compression: int,
+               metadata: dict[str, Any]) -> None:
+    if Image is None or PngImagePlugin is None or np is None:
+        raise RuntimeError("H3 PNG export requires Pillow and NumPy.")
+    if (not isinstance(pixels, np.ndarray) or pixels.ndim != 3
+            or pixels.shape[-1] < 3 or pixels.dtype != np.uint8):
+        raise ValueError(
+            "H3 PNG export expected one uint8 [height,width,channels] image; "
+            "got %r/%r." % (getattr(pixels, "shape", None),
+                             getattr(pixels, "dtype", None)))
     pnginfo = PngImagePlugin.PngInfo()
     for key, value in metadata.items():
         if value is not None:
@@ -23348,6 +23430,37 @@ def _write_png(path: str, image: Any, compression: int,
         os.replace(temporary, path)
     finally:
         _safe_unlink(temporary)
+
+
+def _png_export_worker_count(value: Any) -> int:
+    requested = max(0, int(value or 0))
+    if requested:
+        return min(requested, 64)
+    return max(1, min(PNG_EXPORT_AUTO_WORKERS_CAP, os.cpu_count() or 4))
+
+
+def _png_export_progress(total: int) -> Any:
+    try:
+        import comfy.utils as comfy_utils
+        return comfy_utils.ProgressBar(max(1, int(total)))
+    except (ImportError, AttributeError):
+        return None
+
+
+def _png_export_update_progress(progress: Any, value: int, total: int) -> None:
+    if progress is not None:
+        progress.update_absolute(int(value), int(total))
+
+
+def _png_export_check_interrupted() -> None:
+    try:
+        import comfy.model_management as model_management
+        check = getattr(
+            model_management, "throw_exception_if_processing_interrupted", None)
+        if callable(check):
+            check()
+    except ImportError:
+        pass
 
 
 class MiniMaxH3ChainExportPNG:
@@ -23375,7 +23488,7 @@ class MiniMaxH3ChainExportPNG:
                                "then continue across scene boundaries without "
                                "resetting."}),
                 "png_compression": ("INT", {
-                    "default": 4, "min": 0, "max": 9,
+                    "default": 1, "min": 0, "max": 9,
                     "tooltip": "Lossless PNG compression effort. 0 is fastest "
                                "and largest; 9 is slowest and smallest. It does "
                                "not change pixels."}),
@@ -23385,6 +23498,18 @@ class MiniMaxH3ChainExportPNG:
                                "effective plan, and chain manifest in the first "
                                "PNG. Scene prompt metadata is embedded in the "
                                "first frame of every scene."}),
+            },
+            "optional": {
+                "save_workers": ("INT", {
+                    "default": 0, "min": 0, "max": 64,
+                    "tooltip": "Parallel PNG writers. 0 selects up to 8 CPU "
+                               "workers automatically; 1 forces serial saving."}),
+                "checkpoint_verification": (["cached", "strict"], {
+                    "default": "cached",
+                    "tooltip": "Cached verifies each immutable checkpoint with "
+                               "SHA-256 once, then trusts matching size and "
+                               "modification time on later exports. Strict "
+                               "re-hashes every checkpoint on every export."}),
             },
         }
 
@@ -23400,18 +23525,19 @@ class MiniMaxH3ChainExportPNG:
     CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Re-decode every saved H3 video checkpoint with the selected "
                    "VAE, remove each scene's repeated context overlap, and write "
-                   "a continuous lossless PNG sequence without retaining the "
-                   "whole production in memory.")
+                   "a continuous lossless PNG sequence with bounded parallel "
+                   "saving, progress, and partial-export recovery.")
 
     @classmethod
     def IS_CHANGED(cls, *args, **kwargs):
         return float("NaN")
 
     def export(self, manifest, video_vae, export_name, first_frame_number,
-               png_compression, embed_workflow):
-        if _st_load is None or torch is None:
+               png_compression, embed_workflow, save_workers=0,
+               checkpoint_verification="cached"):
+        if _st_load is None or torch is None or np is None:
             raise RuntimeError(
-                "H3 PNG export requires safetensors and torch.")
+                "H3 PNG export requires safetensors, torch, and NumPy.")
         segments = _checkpoint_export_segments(manifest)
         editorial = _load_run_editorial(manifest.get("run_name"))
         editorial_segments = [
@@ -23427,6 +23553,23 @@ class MiniMaxH3ChainExportPNG:
             for segment in _editorial_presentation_segments(
                 manifest.get("run_name"), segments, editorial)
         ]
+        compression = max(0, min(9, int(png_compression)))
+        workers = _png_export_worker_count(save_workers)
+        verification = str(
+            checkpoint_verification or "cached").strip().lower()
+        if verification not in ("cached", "strict"):
+            raise ValueError(
+                "H3 PNG export checkpoint_verification must be cached or strict.")
+        total_frames = sum(
+            _editorial_segment_delivered_frames(segment)
+            for segment in editorial_segments)
+        progress_total = max(1, total_frames * 3)
+        progress_bar = _png_export_progress(progress_total)
+        progress_done = 0
+        chunk_frames = min(
+            PNG_EXPORT_MAX_CHUNK_FRAMES,
+            max(PNG_EXPORT_MIN_CHUNK_FRAMES, workers * 4))
+        cache_path, hash_cache = _load_png_export_hash_cache(manifest)
         output_dir = _new_export_directory(manifest, export_name)
         partial_path = os.path.join(output_dir, "export.partial.json")
         final_path = os.path.join(output_dir, "export.json")
@@ -23434,108 +23577,233 @@ class MiniMaxH3ChainExportPNG:
         first_number = frame_number
         written = 0
         clip_records = []
+        clip_timings = []
         archive_metadata = (_archive_media_metadata(manifest.get("archives"))
                             if bool(embed_workflow) else {})
         manifest_metadata = json.dumps(
             manifest, ensure_ascii=False, separators=(",", ":"))
+        started = time.perf_counter()
 
-        for editorial_segment in editorial_segments:
-            segment = editorial_segment
-            index = int(segment["index"])
-            checkpoint = _absolute_output_path(segment["checkpoint"])
-            tensors = _st_load(checkpoint)
-            video = tensors.get("video")
-            if video is None:
-                raise ValueError(
-                    "H3 PNG export checkpoint for clip %d has no video latent." %
-                    index)
-            images = video_vae.decode(video)
-            if not torch.is_tensor(images):
-                raise ValueError(
-                    "H3 PNG export VAE returned %r instead of an image tensor." %
-                    type(images))
-            if images.ndim == 5:
-                images = images.reshape(
-                    -1, images.shape[-3], images.shape[-2], images.shape[-1])
-            if images.ndim != 4:
-                raise ValueError(
-                    "H3 PNG export VAE returned image shape %s; expected "
-                    "[frames,height,width,channels]." % (tuple(images.shape),))
-
-            raw_frames = int(segment["raw_frames"])
-            delivered_frames = _editorial_segment_delivered_frames(
-                editorial_segment)
-            trim_frames = raw_frames - delivered_frames
-            technical_trim_frames = (
-                raw_frames - int(segment["delivered_frames"]))
-            if int(images.shape[0]) != raw_frames:
-                raise ValueError(
-                    "H3 PNG export decoded %d frames for clip %d; its manifest "
-                    "requires %d raw frames before trimming %d overlap frames." %
-                    (int(images.shape[0]), index, raw_frames, trim_frames))
-            images = images[
-                technical_trim_frames:
-                technical_trim_frames + delivered_frames]
-            clip_first = frame_number
-            prompt = str(segment.get("prompt") or "")
-            scene_metadata = json.dumps({
-                "index": index,
-                "id": str(segment.get("id") or "clip_%04d" % index),
-                "prompt_prefix": str(segment.get("prompt_prefix") or ""),
-                "scene_prompt": str(segment.get("scene_prompt") or ""),
-                "prompt": prompt,
-                "prompt_hash": str(segment.get("prompt_hash") or ""),
-                "seed": str(segment.get("seed") or ""),
-                "raw_frames": raw_frames,
-                "delivered_frames": delivered_frames,
-                "trim_frames": trim_frames,
-            }, ensure_ascii=False, separators=(",", ":"))
-
-            for scene_frame, image in enumerate(images):
-                filename = "frame_%08d.png" % frame_number
-                png_metadata = {
-                    "h3_run_name": str(manifest.get("run_name") or ""),
-                    "h3_clip_index": str(index),
-                    "h3_clip_frame": str(scene_frame + 1),
-                    "h3_frame_number": str(frame_number),
-                    "h3_prompt_hash": str(segment.get("prompt_hash") or ""),
-                }
-                if scene_frame == 0:
-                    png_metadata["h3_scene"] = scene_metadata
-                    png_metadata["h3_prompt"] = prompt
-                if written == 0 and bool(embed_workflow):
-                    png_metadata.update(archive_metadata)
-                    png_metadata["h3_manifest"] = manifest_metadata
-                _write_png(
-                    os.path.join(output_dir, filename), image,
-                    int(png_compression), png_metadata)
-                frame_number += 1
-                written += 1
-
-            clip_records.append({
-                "index": index,
-                "id": str(segment.get("id") or "clip_%04d" % index),
-                "checkpoint": segment["checkpoint"],
-                "prompt": prompt,
-                "prompt_hash": str(segment.get("prompt_hash") or ""),
-                "seed": segment.get("seed"),
-                "trim_frames": trim_frames,
-                "delivered_frames": delivered_frames,
-                "first_frame_number": clip_first,
-                "last_frame_number": frame_number - 1,
-            })
-            progress = {
+        def save_partial(phase: str, current_clip: int | None = None,
+                         current_clip_frames: int = 0) -> None:
+            partial = {
                 "format": "h3_chain_png_export_v1",
                 "complete": False,
                 "run_name": manifest.get("run_name"),
                 "source_manifest_format": manifest.get("format"),
                 "first_frame_number": first_number,
                 "frame_count": written,
-                "clips": clip_records,
+                "phase": phase,
+                "current_clip": current_clip,
+                "current_clip_frames": int(current_clip_frames),
+                "clips": list(clip_records),
+                "timings": list(clip_timings),
+                "settings": {
+                    "png_compression": compression,
+                    "save_workers": workers,
+                    "checkpoint_verification": verification,
+                    "conversion_chunk_frames": chunk_frames,
+                },
                 "archives": manifest.get("archives", {}),
             }
-            _atomic_json(partial_path, progress)
-            del images, video, tensors
+            _atomic_json(partial_path, partial)
+
+        _LOG.info(
+            "H3 PNG export starting: %d clips, %d frames, compression=%d, "
+            "workers=%d, verification=%s, output=%s",
+            len(editorial_segments), total_frames, compression, workers,
+            verification, output_dir)
+        save_partial("starting")
+
+        with concurrent.futures.ThreadPoolExecutor(
+                max_workers=workers,
+                thread_name_prefix="h3-png-export") as executor:
+            for clip_position, editorial_segment in enumerate(
+                    editorial_segments, start=1):
+                _png_export_check_interrupted()
+                segment = editorial_segment
+                index = int(segment["index"])
+                checkpoint = _absolute_output_path(segment["checkpoint"])
+                raw_frames = int(segment["raw_frames"])
+                delivered_frames = _editorial_segment_delivered_frames(
+                    editorial_segment)
+                trim_frames = raw_frames - delivered_frames
+                technical_trim_frames = (
+                    raw_frames - int(segment["delivered_frames"]))
+                checkpoint_mib = os.path.getsize(checkpoint) / (1024 * 1024)
+
+                save_partial("verifying checkpoint", index)
+                phase_started = time.perf_counter()
+                _LOG.info(
+                    "H3 PNG export clip %d/%d (scene %d): verifying %.1f MiB "
+                    "checkpoint (%s)", clip_position, len(editorial_segments),
+                    index, checkpoint_mib, verification)
+                verification_result, cache_changed = (
+                    _verify_png_export_checkpoint(
+                        checkpoint, segment.get("checkpoint_sha256", ""),
+                        verification, hash_cache))
+                verification_seconds = time.perf_counter() - phase_started
+                if cache_changed:
+                    _atomic_json(cache_path, hash_cache)
+                progress_done += delivered_frames
+                _png_export_update_progress(
+                    progress_bar, progress_done, progress_total)
+                _LOG.info(
+                    "H3 PNG export scene %d: %s in %.2fs",
+                    index, verification_result, verification_seconds)
+
+                save_partial("loading checkpoint", index)
+                phase_started = time.perf_counter()
+                tensors = _st_load(checkpoint)
+                load_seconds = time.perf_counter() - phase_started
+                video = tensors.get("video")
+                if video is None:
+                    raise ValueError(
+                        "H3 PNG export checkpoint for clip %d has no video "
+                        "latent." % index)
+
+                save_partial("decoding VAE on GPU", index)
+                _LOG.info(
+                    "H3 PNG export scene %d: loaded checkpoint in %.2fs; "
+                    "decoding %d raw frames with the video VAE",
+                    index, load_seconds, raw_frames)
+                phase_started = time.perf_counter()
+                images = video_vae.decode(video)
+                decode_seconds = time.perf_counter() - phase_started
+                if not torch.is_tensor(images):
+                    raise ValueError(
+                        "H3 PNG export VAE returned %r instead of an image "
+                        "tensor." % type(images))
+                if images.ndim == 5:
+                    images = images.reshape(
+                        -1, images.shape[-3], images.shape[-2], images.shape[-1])
+                if images.ndim != 4:
+                    raise ValueError(
+                        "H3 PNG export VAE returned image shape %s; expected "
+                        "[frames,height,width,channels]." %
+                        (tuple(images.shape),))
+                if int(images.shape[0]) != raw_frames:
+                    raise ValueError(
+                        "H3 PNG export decoded %d frames for clip %d; its "
+                        "manifest requires %d raw frames before trimming %d "
+                        "overlap frames." %
+                        (int(images.shape[0]), index, raw_frames, trim_frames))
+                images = images[
+                    technical_trim_frames:
+                    technical_trim_frames + delivered_frames]
+                progress_done += delivered_frames
+                _png_export_update_progress(
+                    progress_bar, progress_done, progress_total)
+                _LOG.info(
+                    "H3 PNG export scene %d: GPU VAE decode completed in %.2fs; "
+                    "saving %d delivered frames with %d workers",
+                    index, decode_seconds, delivered_frames, workers)
+
+                clip_first = frame_number
+                prompt = str(segment.get("prompt") or "")
+                scene_metadata = json.dumps({
+                    "index": index,
+                    "id": str(segment.get("id") or "clip_%04d" % index),
+                    "prompt_prefix": str(segment.get("prompt_prefix") or ""),
+                    "scene_prompt": str(segment.get("scene_prompt") or ""),
+                    "prompt": prompt,
+                    "prompt_hash": str(segment.get("prompt_hash") or ""),
+                    "seed": str(segment.get("seed") or ""),
+                    "raw_frames": raw_frames,
+                    "delivered_frames": delivered_frames,
+                    "trim_frames": trim_frames,
+                }, ensure_ascii=False, separators=(",", ":"))
+                conversion_seconds = 0.0
+                save_seconds = 0.0
+                scene_written = 0
+
+                for chunk_start in range(0, delivered_frames, chunk_frames):
+                    _png_export_check_interrupted()
+                    chunk_end = min(
+                        delivered_frames, chunk_start + chunk_frames)
+                    chunk_count = chunk_end - chunk_start
+                    phase_started = time.perf_counter()
+                    pixels = _png_export_uint8(images[chunk_start:chunk_end])
+                    conversion_seconds += time.perf_counter() - phase_started
+                    phase_started = time.perf_counter()
+                    futures = []
+                    for offset, pixels_frame in enumerate(pixels):
+                        scene_frame = chunk_start + offset
+                        numbered_frame = frame_number + offset
+                        filename = "frame_%08d.png" % numbered_frame
+                        png_metadata = {
+                            "h3_run_name": str(
+                                manifest.get("run_name") or ""),
+                            "h3_clip_index": str(index),
+                            "h3_clip_frame": str(scene_frame + 1),
+                            "h3_frame_number": str(numbered_frame),
+                            "h3_prompt_hash": str(
+                                segment.get("prompt_hash") or ""),
+                        }
+                        if scene_frame == 0:
+                            png_metadata["h3_scene"] = scene_metadata
+                            png_metadata["h3_prompt"] = prompt
+                        if written == 0 and offset == 0 and bool(embed_workflow):
+                            png_metadata.update(archive_metadata)
+                            png_metadata["h3_manifest"] = manifest_metadata
+                        futures.append(executor.submit(
+                            _write_png, os.path.join(output_dir, filename),
+                            pixels_frame, compression, png_metadata))
+
+                    completed = 0
+                    for future in concurrent.futures.as_completed(futures):
+                        future.result()
+                        completed += 1
+                        _png_export_update_progress(
+                            progress_bar,
+                            progress_done + scene_written + completed,
+                            progress_total)
+                    save_seconds += time.perf_counter() - phase_started
+                    frame_number += chunk_count
+                    written += chunk_count
+                    scene_written += chunk_count
+                    save_partial("saving PNG frames", index, scene_written)
+                    del pixels
+
+                progress_done += delivered_frames
+                clip_elapsed = (verification_seconds + load_seconds
+                                + decode_seconds + conversion_seconds
+                                + save_seconds)
+                clip_timings.append({
+                    "index": index,
+                    "verification": verification_result,
+                    "verification_seconds": round(verification_seconds, 3),
+                    "checkpoint_load_seconds": round(load_seconds, 3),
+                    "vae_decode_seconds": round(decode_seconds, 3),
+                    "conversion_seconds": round(conversion_seconds, 3),
+                    "png_save_seconds": round(save_seconds, 3),
+                    "total_seconds": round(clip_elapsed, 3),
+                })
+                clip_records.append({
+                    "index": index,
+                    "id": str(segment.get("id") or "clip_%04d" % index),
+                    "checkpoint": segment["checkpoint"],
+                    "prompt": prompt,
+                    "prompt_hash": str(segment.get("prompt_hash") or ""),
+                    "seed": segment.get("seed"),
+                    "trim_frames": trim_frames,
+                    "delivered_frames": delivered_frames,
+                    "first_frame_number": clip_first,
+                    "last_frame_number": frame_number - 1,
+                })
+                save_partial("scene complete", index, delivered_frames)
+                _LOG.info(
+                    "H3 PNG export scene %d complete in %.2fs: verify %.2fs, "
+                    "load %.2fs, decode %.2fs, convert %.2fs, save %.2fs "
+                    "(%.2f PNG/s)", index, clip_elapsed,
+                    verification_seconds, load_seconds, decode_seconds,
+                    conversion_seconds, save_seconds,
+                    delivered_frames / max(save_seconds, 1e-9))
+                del images, video, tensors
+
+        _png_export_update_progress(
+            progress_bar, progress_total, progress_total)
+        elapsed = time.perf_counter() - started
 
         export_record = {
             "format": "h3_chain_png_export_v1",
@@ -23547,13 +23815,23 @@ class MiniMaxH3ChainExportPNG:
             "last_frame_number": frame_number - 1,
             "frame_count": written,
             "clips": clip_records,
+            "timings": clip_timings,
+            "elapsed_seconds": round(elapsed, 3),
+            "settings": {
+                "png_compression": compression,
+                "save_workers": workers,
+                "checkpoint_verification": verification,
+                "conversion_chunk_frames": chunk_frames,
+            },
             "archives": manifest.get("archives", {}),
         }
         _atomic_json(final_path, export_record)
         _safe_unlink(partial_path)
-        status = ("exported %d clips / %d PNG frames (%d..%d) -> %s" %
-                  (len(segments), written, first_number, frame_number - 1,
-                   output_dir))
+        status = ("exported %d clips / %d PNG frames (%d..%d) in %.1fs "
+                  "(%.2f frames/s) -> %s" %
+                  (len(editorial_segments), written, first_number,
+                   frame_number - 1, elapsed,
+                   written / max(elapsed, 1e-9), output_dir))
         _LOG.info("H3 Chain %s", status)
         return {"ui": {"text": [status]},
                 "result": (output_dir, written, status)}

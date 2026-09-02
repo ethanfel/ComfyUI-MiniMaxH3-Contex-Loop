@@ -606,8 +606,11 @@ and may be empty to place the copy directly in `output/`. The existing
 
 Connect a manifest and the original H3 video VAE to **Export PNG Sequence**. It
 verifies each safetensors checkpoint, decodes one scene at a time, removes the
-repeated overlap, and writes a continuous 8-bit RGB PNG sequence plus
-`export.json` under:
+repeated overlap, converts small frame chunks to 8-bit RGB in one operation,
+and writes each chunk through bounded parallel atomic PNG workers. ComfyUI's
+progress bar covers verification, GPU decode, and saving. The server log reports
+the verify, checkpoint-load, decode, conversion, and save time for every scene.
+The final sequence and `export.json` are written under:
 
 ```text
 output/h3_chains/<run_name>/frames/<export_name>/
@@ -616,4 +619,15 @@ output/h3_chains/<run_name>/frames/<export_name>/
 PNG compression is lossless. Use the same VAE, ComfyUI version, precision, and
 decode settings for the closest reconstruction. The checkpointed latent is
 exact, but a new VAE decode is not guaranteed to be bit-identical to an older
-decode made under different settings.
+decode made under different settings. New nodes use compression level 1 and
+`save_workers = 0`, which automatically selects at most eight workers. Set the
+worker count to 1 for serial saving or raise it explicitly only when the output
+storage can sustain more concurrent writes.
+
+`checkpoint_verification = cached` still performs a complete SHA-256 check the
+first time. Later exports skip re-hashing only while the checkpoint's recorded
+hash, byte size, and nanosecond modification time all match. Select `strict` to
+re-hash every checkpoint on every export. During execution,
+`export.partial.json` is updated after every converted chunk and retained if the
+export fails or is interrupted; a successful export replaces it with
+`export.json`, including the effective settings and per-scene timings.

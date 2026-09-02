@@ -110,7 +110,7 @@ workflows](ADVANCED_WORKFLOWS.md).
 | **Run Manager** | Plan, archive controls, optional loader assets/Source Timeline/tagged refs → Plan, Source Timeline | Browse runs, restore a saved Plan and loader bindings, and archive recovery assets. |
 | **Checkpoint Manager** | Saved UI selection; optional Plan → selected manifest | Preview branches and nested final-cut alternates, activate a take, remove safe leaves, or emit a lineage for deferred upscaling. |
 | **Load Manifest** | Plan; optional source media/context → manifest, manifest JSON, status | Verify and load saved segments without executing the generation loop. Usually muted in generation examples. |
-| **Export PNG Sequence** | Manifest + video VAE → output path/status | Re-decode saved H3 latents into frames. |
+| **Export PNG Sequence** | Manifest + video VAE; optional save workers and cached/strict verification → output path/status | Re-decode saved H3 latents scene by scene, then batch-convert and save lossless PNGs concurrently with live progress and recovery records. |
 | **Full-Chain Latent Video Adapter** | Generated manifest + video VAE → cached continuous video | Build a low-RAM, disk-backed whole-run input for SeedVR2. |
 | **Assemble** | Manifest + audio/output choices → MP4 path | Join a complete or partial source/upscale manifest. |
 
