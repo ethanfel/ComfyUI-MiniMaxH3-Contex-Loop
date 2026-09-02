@@ -182,7 +182,7 @@
       "id": 1906,
       "type": "Note",
       "pos": [
-        -3936,
+        -3008,
         -1088
       ],
       "size": [
@@ -1610,7 +1610,7 @@
       "type": "Note",
       "pos": [
         3136,
-        1312
+        512
       ],
       "size": [
         576,
@@ -2029,7 +2029,7 @@
       "type": "MiniMaxH3ChainPlanStudio",
       "pos": [
         384,
-        1344
+        544
       ],
       "size": [
         1536,
@@ -2222,7 +2222,7 @@
       "type": "MiniMaxH3ChainRichScenePromptEditor",
       "pos": [
         1984,
-        1344
+        544
       ],
       "size": [
         1088,
@@ -2264,7 +2264,7 @@
       "type": "MiniMaxH3ChainPlan",
       "pos": [
         -640,
-        1344
+        544
       ],
       "size": [
         992,
@@ -2371,7 +2371,7 @@
       "type": "MiniMaxH3ChainPolicy",
       "pos": [
         -1060,
-        1504
+        704
       ],
       "size": [
         340,
@@ -2975,9 +2975,9 @@
       "title": "H3 MODEL STACK",
       "bounding": [
         -2112,
-        -1536,
+        -1024,
         2200,
-        1162
+        650
       ],
       "color": "#3f789e",
       "flags": {}
@@ -2989,7 +2989,7 @@
         -448,
         -352,
         5792,
-        1568
+        800
       ],
       "color": "#744c8c",
       "flags": {}
@@ -3022,10 +3022,10 @@
       "id": 6,
       "title": "REF2V — PLAN STUDIO + RICH PROMPT EDITOR",
       "bounding": [
-        -1152,
-        1280,
-        4244,
-        1472
+        -672,
+        480,
+        3764,
+        1392
       ],
       "color": "#3f789e",
       "flags": {}
@@ -3049,21 +3049,9 @@
         -1088,
         -352,
         608,
-        720
+        688
       ],
       "color": "#432f66",
-      "flags": {}
-    },
-    {
-      "id": 9,
-      "title": "WORKFLOW GUIDE",
-      "bounding": [
-        -4000,
-        -1152,
-        864,
-        1280
-      ],
-      "color": "#2f596b",
       "flags": {}
     }
   ],

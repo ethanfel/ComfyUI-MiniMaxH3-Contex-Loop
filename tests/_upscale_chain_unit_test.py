@@ -755,6 +755,7 @@ def main():
                 "_visual_context_source": 1,
                 "_visual_context_lead_source": 0,
                 "_visual_context_lead_frames": 0,
+                "_visual_context_signature": ((1, 39, -1, False),),
                 "previous_latent": {
                     "samples": [selected_video, context_audio]},
             },

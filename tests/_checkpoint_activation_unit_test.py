@@ -60,6 +60,64 @@ async def check():
                 if item["active"]] == [first, second]
         assert graph["branches"][0]["active"] is True
 
+        # One builder scene can depend on several saved picture revisions,
+        # including repeated windows from the same source. Checkpoint Manager
+        # must protect every distinct source, not only the nearest block.
+        builder_run = pathlib.Path(temporary) / "h3_chains" / "builder_graph"
+        builder_one = "8" * 32
+        builder_two = "9" * 32
+        builder_three = "c" * 32
+        builder_four = "d" * 32
+        builder_one_meta, _ = helpers.write_revision(
+            builder_run, 1, builder_one, 3001, active=True,
+            run_name="builder_graph")
+        builder_two_meta, _ = helpers.write_revision(
+            builder_run, 2, builder_two, 3002, active=True,
+            predecessor=builder_one_meta, run_name="builder_graph")
+        builder_three_meta, _ = helpers.write_revision(
+            builder_run, 3, builder_three, 3003, active=True,
+            predecessor=builder_two_meta, run_name="builder_graph")
+        builder_four_meta, _ = helpers.write_revision(
+            builder_run, 4, builder_four, 3004, active=True,
+            predecessor=builder_three_meta, run_name="builder_graph",
+            generated_continuity="off")
+        builder_four_meta["segment"]["visual_context_blocks"] = [
+            {
+                "source_scene": 1, "source_revision": builder_one,
+                "source_checkpoint_sha256": builder_one_meta["segment"][
+                    "checkpoint_sha256"], "frames": 5,
+            },
+            {
+                "source_scene": 2, "source_revision": builder_two,
+                "source_checkpoint_sha256": builder_two_meta["segment"][
+                    "checkpoint_sha256"], "frames": 12,
+            },
+            {
+                "source_scene": 1, "source_revision": builder_one,
+                "source_checkpoint_sha256": builder_one_meta["segment"][
+                    "checkpoint_sha256"], "frames": 22,
+            },
+        ]
+        builder_metadata = builder_run / "checkpoints" / (
+            "clip_0004.%s.json" % builder_four)
+        builder_metadata.write_text(
+            json.dumps(builder_four_meta), encoding="utf-8")
+        (builder_run / "checkpoints" / "clip_0004.json").write_text(
+            json.dumps(builder_four_meta), encoding="utf-8")
+        builder_graph = helpers.chain.CheckpointGraphManager(
+            temporary).graph("builder_graph")
+        builder_record = next(
+            item for item in builder_graph["revisions"]
+            if item["scene"] == 4 and item["revision"] == builder_four)
+        assert builder_record["dependencies"] == [
+            {"scene": 1, "revision": builder_one},
+            {"scene": 2, "revision": builder_two},
+            {"scene": 3, "revision": builder_three},
+        ]
+        assert not helpers.chain.CheckpointGraphManager(
+            temporary).deletion_preview(
+                "builder_graph", 1, builder_one)["allowed"]
+
         # Editorial chapters are independent activation scopes. A Chapter 2
         # branch may retain provenance to an inactive Chapter 1 revision, but
         # promoting it must not rewrite Chapter 1's active pointers.

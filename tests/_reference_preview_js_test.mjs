@@ -20,12 +20,15 @@ import {
 } from "../web/h3_reference_preview_core.mjs";
 
 assert.equal(taggedPictureReferenceToken("@hero", "native"), "@hero");
+assert.equal(taggedPictureReferenceToken("hero", "semantic"), "#hero");
 assert.equal(
     taggedPictureReferenceToken("hero", "semantic", 2.5),
     "#hero[2.50s]",
 );
 assert.equal(taggedPictureReferenceMode("Use @hero.", "hero"), "native");
 assert.equal(taggedPictureReferenceMode("Use @Hero.", "hero"), "unused");
+assert.equal(taggedPictureReferenceMode("Use #hero.", "hero"), "semantic");
+assert.equal(taggedPictureReferenceMode("Use #Hero.", "hero"), "unused");
 assert.equal(
     taggedPictureReferenceMode("Use #hero[2.50s].", "hero"),
     "semantic",
@@ -42,16 +45,18 @@ assert.equal(
     "Use #hero[1.25s], but keep @heroine and mail x@hero.",
 );
 assert.equal(
-    convertTaggedPictureReference(
-        "Keep @Hero unchanged.", "hero", "semantic", 1.25,
-    ),
+    convertTaggedPictureReference("Use @hero.", "hero", "semantic"),
+    "Use #hero.",
+);
+assert.equal(
+    convertTaggedPictureReference("Keep @Hero unchanged.", "hero", "semantic"),
     "Keep @Hero unchanged.",
 );
 assert.equal(
     convertTaggedPictureReference(
-        "Use #hero[0.00s], then #hero[2.5].", "hero", "native",
+        "Use #hero, #hero[0.00s], then #hero[2.5].", "hero", "native",
     ),
-    "Use @hero, then @hero.",
+    "Use @hero, @hero, then @hero.",
 );
 const heroRecord = {
     kind: "picture", tag: "hero", token: "@hero", nativeToken: "@hero",
@@ -387,10 +392,16 @@ const semanticHero = semanticPromptRefs.find(
 assert.equal(semanticHero.active, true);
 assert.equal(semanticHero.nativeActive, false);
 assert.equal(semanticHero.semanticActive, true);
-assert.equal(semanticHero.label, null);
+assert.equal(semanticHero.label, "<Video 1>");
 assert.equal(semanticHero.nativeToken, "@connected_face");
-assert.equal(semanticHero.semanticToken, "#connected_face[0.00s]");
+assert.equal(semanticHero.semanticToken, "#connected_face");
 assert.equal(semanticHero.supportsSemantic, true);
+const bareSemanticHero = taggedReferenceRecords(
+    taggedEditor, "Use #connected_face as an untimed visual.",
+).records.find(({tag}) => tag === "connected_face");
+assert.equal(bareSemanticHero.active, true);
+assert.equal(bareSemanticHero.label, "<Picture 1>");
+assert.equal(bareSemanticHero.semanticLabel, "<Picture 1>");
 assert.equal(referencePreviewRecords(
     taggedEditor, 2, {prompt: "Use @hero_look."}).mode, "tagged");
 assert.deepEqual(
@@ -458,9 +469,9 @@ assert.deepEqual(
     [
         {tag: "native", token: "@native", label: "<Picture 1>",
             active: true, semanticOnly: false, supportsSemantic: true},
-        {tag: "beat_a", token: "#beat_a[0.00s]", label: null,
+        {tag: "beat_a", token: "#beat_a", label: null,
             active: false, semanticOnly: true, supportsSemantic: false},
-        {tag: "beat_b", token: "#beat_b[0.00s]", label: "<Picture 2>",
+        {tag: "beat_b", token: "#beat_b", label: "<Picture 2>",
             active: true, semanticOnly: true, supportsSemantic: false},
     ],
 );
@@ -720,5 +731,21 @@ assert.deepEqual(
 );
 assert.ok(projectRecords.every((record) => record.previewUrl?.includes(
     "project=episode_1")));
+
+const compactEditor = add(makeNode(273, "MiniMaxH3ChainScenePromptEditor"));
+const compactLoopStart = add(makeNode(274, "MiniMaxH3ChainLoopStart"));
+const compactRef2va = add(makeNode(
+    275, "MiniMaxH3CurrentTaggedReferenceScene",
+));
+connect(compactEditor, compactLoopStart, "plan");
+connect(compactLoopStart, compactRef2va, "state");
+connect(projectManager, compactRef2va, "references", 1);
+assert.equal(findTaggedRef2VA(compactEditor), compactRef2va);
+assert.deepEqual(
+    availableReferenceRecords(compactEditor, 1, {
+        prompt: "Use @hero with #door[2.00s].",
+    }).records.map(({tag}) => tag),
+    ["hero", "door"],
+);
 
 console.log("H3 reference preview: tagged/scheduled Ref2VA, core Ref2VA, and core I2V/FL2V discovery pass");

@@ -220,12 +220,8 @@ The primary graph displays only generation-bearing connections. Status,
 manifest JSON, booleans used only for inspection, legacy passthroughs, and
 conditional audio sockets are Advanced. Conditional inputs appear when their
 policy needs them. Superseded Plan policy and layout widgets are also hidden;
-the node menu can reveal them for diagnosis. Experimental transition recipes
-and source-audio grid alignment follow the same explicit disclosure. Plan and
-Plan Studio keep raw per-scene implementations, context overrides, spatial
-proxies, and experimental timing diagnostics inside their existing Advanced
-controls. Hiding a socket or widget must not change its backend index or
-serialized position.
+the node menu can reveal them for diagnosis. Hiding a socket or widget must not
+change its backend index or serialized position.
 
 ## Delivery order
 

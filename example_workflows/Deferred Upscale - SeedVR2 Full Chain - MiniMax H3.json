@@ -1,551 +1,181 @@
 {
   "id": "8f724112-a6d7-44df-8854-b9964169c07e",
   "revision": 0,
-  "last_node_id": 12,
-  "last_link_id": 10,
+  "last_node_id": 9,
+  "last_link_id": 6,
   "nodes": [
     {
       "id": 2,
       "type": "MiniMaxH3ChainCheckpointManager",
-      "pos": [
-        -2432,
-        320
-      ],
-      "size": [
-        1376,
-        1088
-      ],
+      "pos": [-1920, 64],
+      "size": [1376, 1088],
       "flags": {},
       "order": 0,
       "mode": 0,
-      "inputs": [
-        {
-          "name": "plan",
-          "shape": 7,
-          "type": "H3_CHAIN_PLAN",
-          "link": null
-        }
-      ],
+      "inputs": [],
       "outputs": [
-        {
-          "name": "selected_manifest",
-          "type": "H3_CHAIN_MANIFEST",
-          "links": [
-            1
-          ]
-        }
+        {"name": "selected_manifest", "type": "H3_CHAIN_MANIFEST", "links": [1]}
       ],
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
-        "ver": "1a6987003a9903381eef5be97463cbe8783caf06",
-        "Node name for S&R": "MiniMaxH3ChainCheckpointManager",
-        "h3_checkpoint_manager_run": "ref2v_tagged_demo",
-        "h3_checkpoint_manager_scene": null,
-        "h3_checkpoint_manager_revision": ""
+        "Node name for S&R": "MiniMaxH3ChainCheckpointManager"
       },
-      "widgets_values": [
-        ""
-      ],
-      "widgets_values_named": {
-        "selection_json": ""
-      }
+      "widgets_values": [""]
     },
     {
       "id": 3,
       "type": "VAELoader",
-      "pos": [
-        -2336,
-        64
-      ],
-      "size": [
-        416,
-        96
-      ],
+      "pos": [-1824, -192],
+      "size": [416, 96],
       "flags": {},
       "order": 1,
       "mode": 0,
       "inputs": [],
       "outputs": [
-        {
-          "name": "VAE",
-          "type": "VAE",
-          "links": [
-            2
-          ]
-        }
+        {"name": "VAE", "type": "VAE", "links": [2]}
       ],
       "properties": {
         "cnr_id": "comfy-core",
-        "ver": "0.33.0",
         "Node name for S&R": "VAELoader"
       },
-      "widgets_values": [
-        "MiniMaw-H3/minimax_h3_video_vae_fp16.safetensors"
-      ],
-      "widgets_values_named": {
-        "vae_name": "MiniMaw-H3/minimax_h3_video_vae_fp16.safetensors"
-      }
+      "widgets_values": ["MiniMaw-H3/minimax_h3_video_vae_fp16.safetensors"]
     },
     {
       "id": 4,
       "type": "MiniMaxH3ChainLatentVideoAdapter",
-      "pos": [
-        -960,
-        320
-      ],
-      "size": [
-        544,
-        448
-      ],
-      "flags": {},
-      "order": 5,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "manifest",
-          "type": "H3_CHAIN_MANIFEST",
-          "link": 1
-        },
-        {
-          "name": "video_vae",
-          "type": "VAE",
-          "link": 2
-        },
-        {
-          "name": "source_audio",
-          "shape": 7,
-          "type": "AUDIO",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "video",
-          "type": "VIDEO",
-          "links": [
-            7
-          ]
-        },
-        {
-          "name": "video_path",
-          "type": "STRING",
-          "links": null
-        },
-        {
-          "name": "status",
-          "type": "STRING",
-          "links": null
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfyui-minimaxh3-contex-loop",
-        "ver": "1a6987003a9903381eef5be97463cbe8783caf06",
-        "Node name for S&R": "MiniMaxH3ChainLatentVideoAdapter"
-      },
-      "widgets_values": [
-        "plan",
-        "plan",
-        "disk-backed",
-        true,
-        256
-      ],
-      "widgets_values_named": {
-        "audio_source": "plan",
-        "blend_schedule": "plan",
-        "decode_buffer": "disk-backed",
-        "reuse_cache": true,
-        "audio_bitrate": 256
-      }
-    },
-    {
-      "id": 8,
-      "type": "SaveVideo",
-      "pos": [
-        1440,
-        96
-      ],
-      "size": [
-        448,
-        128
-      ],
-      "flags": {},
-      "order": 7,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "video",
-          "type": "VIDEO",
-          "link": 10
-        }
-      ],
-      "outputs": [
-        {
-          "name": "video",
-          "type": "VIDEO",
-          "links": null
-        }
-      ],
-      "properties": {
-        "cnr_id": "comfy-core",
-        "ver": "0.33.0",
-        "Node name for S&R": "SaveVideo"
-      },
-      "widgets_values": [
-        "video/h3_seedvr2_%date:yyyy-MM-dd%",
-        "auto",
-        "auto"
-      ],
-      "widgets_values_named": {
-        "filename_prefix": "video/h3_seedvr2_%date:yyyy-MM-dd%",
-        "format": "auto",
-        "codec": "auto"
-      }
-    },
-    {
-      "id": 9,
-      "type": "Note",
-      "pos": [
-        1472,
-        288
-      ],
-      "size": [
-        1376,
-        864
-      ],
-      "flags": {},
-      "order": 2,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "properties": {},
-      "widgets_values": [
-        "WHOLE-CHAIN SEEDVR2 FINISH\n\n1. In Checkpoint Manager select the final scene of a COMPLETE branch.\n2. Use the original H3 VIDEO VAE. Do not select minimax_h3_audio_vae: it has 32 latent channels and cannot decode the 24-channel video latent.\n3. Keep decode_buffer=disk-backed. MiniMax's temporal VAE writes the active scene to a temporary mmap; only boundary frames stay in ordinary RAM.\n4. The adapter trims saved context, resolves the Plan's boundary blends, embeds the saved final audio policy, and caches one continuous lossless movie under output/h3_chains/<run>/upscaled/seedvr2/source/.\n5. SeedVR2 Direct reads that movie in chunk_size batches. chunk_size=21 and overlap=2 are conservative defaults; its batching is independent of H3 scene boundaries.\n6. The ethanfel SeedVR2 fork preserves input audio in its returned VIDEO, so it connects directly to core Save Video.\n\nNo Plan, Source Timeline, source media, per-scene upscale loop, IMAGE batch, or manual intermediate path is required. Legacy source-audio runs without a saved Source Timeline are the only case that may need source_audio on the adapter.\n\n\nRequired:\nhttps://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler\nSeedVR2 Addon: https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler (SeedVR2 has 20 PR and no activity in 8 months I had to make a second repo addon)"
-      ],
-      "widgets_values_named": {
-        "text": "WHOLE-CHAIN SEEDVR2 FINISH\n\n1. In Checkpoint Manager select the final scene of a COMPLETE branch.\n2. Use the original H3 VIDEO VAE. Do not select minimax_h3_audio_vae: it has 32 latent channels and cannot decode the 24-channel video latent.\n3. Keep decode_buffer=disk-backed. MiniMax's temporal VAE writes the active scene to a temporary mmap; only boundary frames stay in ordinary RAM.\n4. The adapter trims saved context, resolves the Plan's boundary blends, embeds the saved final audio policy, and caches one continuous lossless movie under output/h3_chains/<run>/upscaled/seedvr2/source/.\n5. SeedVR2 Direct reads that movie in chunk_size batches. chunk_size=21 and overlap=2 are conservative defaults; its batching is independent of H3 scene boundaries.\n6. The ethanfel SeedVR2 fork preserves input audio in its returned VIDEO, so it connects directly to core Save Video.\n\nNo Plan, Source Timeline, source media, per-scene upscale loop, IMAGE batch, or manual intermediate path is required. Legacy source-audio runs without a saved Source Timeline are the only case that may need source_audio on the adapter.\n\n\nRequired:\nhttps://github.com/numz/ComfyUI-SeedVR2_VideoUpscaler\nSeedVR2 Addon: https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler (SeedVR2 has 20 PR and no activity in 8 months I had to make a second repo addon)"
-      },
-      "color": "#432",
-      "bgcolor": "#653"
-    },
-    {
-      "id": 12,
-      "type": "SeedVR2VideoPathUpscaler",
-      "pos": [
-        608,
-        96
-      ],
-      "size": [
-        704,
-        1024
-      ],
-      "flags": {},
-      "order": 6,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "video",
-          "type": "VIDEO",
-          "link": 7
-        },
-        {
-          "name": "dit",
-          "type": "SEEDVR2_DIT",
-          "link": 8
-        },
-        {
-          "name": "vae",
-          "type": "SEEDVR2_VAE",
-          "link": 9
-        },
-        {
-          "name": "auto_settings",
-          "shape": 7,
-          "type": "SEEDVR2_AUTO_SETTINGS",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "video",
-          "type": "VIDEO",
-          "links": [
-            10
-          ]
-        },
-        {
-          "name": "audio",
-          "type": "AUDIO",
-          "links": null
-        }
-      ],
-      "properties": {
-        "cnr_id": "seedvr2_video_path_upscaler",
-        "ver": "1385415318e34baa1bbf1be4f7e3af1a93e39bb2",
-        "Node name for S&R": "SeedVR2VideoPathUpscaler"
-      },
-      "widgets_values": [
-        42,
-        "fixed",
-        1080,
-        0,
-        5,
-        21,
-        "lab",
-        2,
-        false,
-        0,
-        0,
-        0,
-        0,
-        "cpu",
-        10,
-        false
-      ],
-      "widgets_values_named": {
-        "seed": 42,
-        "control_after_generate": "fixed",
-        "resolution": 1080,
-        "max_resolution": 0,
-        "batch_size": 5,
-        "chunk_size": 21,
-        "color_correction": "lab",
-        "chunk_overlap": 2,
-        "uniform_batch_size": false,
-        "temporal_overlap": 0,
-        "prepend_frames": 0,
-        "input_noise_scale": 0,
-        "latent_noise_scale": 0,
-        "offload_device": "cpu",
-        "temporary_video_crf": 10,
-        "enable_debug": false
-      }
-    },
-    {
-      "id": 5,
-      "type": "SeedVR2LoadDiTModel",
-      "pos": [
-        -160,
-        160
-      ],
-      "size": [
-        448,
-        352
-      ],
-      "flags": {},
-      "order": 3,
-      "mode": 0,
-      "inputs": [
-        {
-          "name": "torch_compile_args",
-          "shape": 7,
-          "type": "TORCH_COMPILE_ARGS",
-          "link": null
-        }
-      ],
-      "outputs": [
-        {
-          "name": "SEEDVR2_DIT",
-          "type": "SEEDVR2_DIT",
-          "links": [
-            8
-          ]
-        }
-      ],
-      "properties": {
-        "cnr_id": "seedvr2_videoupscaler",
-        "ver": "cdbe196addbed3f3d868b45963088f8a03f41cd0",
-        "Node name for S&R": "SeedVR2LoadDiTModel",
-        "aux_id": "ainvfx/ComfyUI-SeedVR2_VideoUpscaler"
-      },
-      "widgets_values": [
-        "seedvr2_ema_7b_fp8_e4m3fn_mixed_block35_fp16.safetensors",
-        "cuda:0",
-        32,
-        false,
-        "cpu",
-        false,
-        "sageattn_2"
-      ],
-      "widgets_values_named": {
-        "model": "seedvr2_ema_7b_fp8_e4m3fn_mixed_block35_fp16.safetensors",
-        "device": "cuda:0",
-        "blocks_to_swap": 32,
-        "swap_io_components": false,
-        "offload_device": "cpu",
-        "cache_model": false,
-        "attention_mode": "sageattn_2"
-      }
-    },
-    {
-      "id": 6,
-      "type": "SeedVR2LoadVAEModel",
-      "pos": [
-        -128,
-        736
-      ],
-      "size": [
-        448,
-        448
-      ],
+      "pos": [-448, 64],
+      "size": [544, 448],
       "flags": {},
       "order": 4,
       "mode": 0,
       "inputs": [
-        {
-          "name": "torch_compile_args",
-          "shape": 7,
-          "type": "TORCH_COMPILE_ARGS",
-          "link": null
-        }
+        {"name": "manifest", "type": "H3_CHAIN_MANIFEST", "link": 1},
+        {"name": "video_vae", "type": "VAE", "link": 2},
+        {"name": "source_audio", "type": "AUDIO", "shape": 7, "link": null}
       ],
       "outputs": [
-        {
-          "name": "SEEDVR2_VAE",
-          "type": "SEEDVR2_VAE",
-          "links": [
-            9
-          ]
-        }
+        {"name": "video", "type": "VIDEO", "links": [3]},
+        {"name": "video_path", "type": "STRING", "links": null},
+        {"name": "status", "type": "STRING", "links": null}
       ],
       "properties": {
-        "cnr_id": "seedvr2_videoupscaler",
-        "ver": "cdbe196addbed3f3d868b45963088f8a03f41cd0",
-        "Node name for S&R": "SeedVR2LoadVAEModel",
-        "aux_id": "ainvfx/ComfyUI-SeedVR2_VideoUpscaler"
+        "cnr_id": "comfyui-minimaxh3-contex-loop",
+        "Node name for S&R": "MiniMaxH3ChainLatentVideoAdapter"
       },
-      "widgets_values": [
-        "ema_vae_fp16.safetensors",
-        "cuda:0",
-        true,
-        1024,
-        128,
-        true,
-        768,
-        128,
-        "false",
-        "cpu",
-        false
+      "widgets_values": ["plan", "plan", "disk-backed", true, 256]
+    },
+    {
+      "id": 5,
+      "type": "SeedVR2LoadDiTModel",
+      "pos": [-448, -960],
+      "size": [448, 352],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [
+        {"name": "torch_compile_args", "shape": 7, "type": "TORCH_COMPILE_ARGS", "link": null}
       ],
-      "widgets_values_named": {
-        "model": "ema_vae_fp16.safetensors",
-        "device": "cuda:0",
-        "encode_tiled": true,
-        "encode_tile_size": 1024,
-        "encode_tile_overlap": 128,
-        "decode_tiled": true,
-        "decode_tile_size": 768,
-        "decode_tile_overlap": 128,
-        "tile_debug": "false",
-        "offload_device": "cpu",
-        "cache_model": false
-      }
+      "outputs": [
+        {"name": "SEEDVR2_DIT", "type": "SEEDVR2_DIT", "links": [4]}
+      ],
+      "properties": {
+        "aux_id": "ainvfx/ComfyUI-SeedVR2_VideoUpscaler",
+        "Node name for S&R": "SeedVR2LoadDiTModel"
+      },
+      "widgets_values": ["seedvr2_ema_3b_fp16.safetensors", "cuda:0", 32, false, "cpu", false, "sdpa"]
+    },
+    {
+      "id": 6,
+      "type": "SeedVR2LoadVAEModel",
+      "pos": [64, -960],
+      "size": [448, 448],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [
+        {"name": "torch_compile_args", "shape": 7, "type": "TORCH_COMPILE_ARGS", "link": null}
+      ],
+      "outputs": [
+        {"name": "SEEDVR2_VAE", "type": "SEEDVR2_VAE", "links": [5]}
+      ],
+      "properties": {
+        "aux_id": "ainvfx/ComfyUI-SeedVR2_VideoUpscaler",
+        "Node name for S&R": "SeedVR2LoadVAEModel"
+      },
+      "widgets_values": ["ema_vae_fp16.safetensors", "cuda:0", true, 1024, 128, true, 768, 128, "false", "cpu", false]
+    },
+    {
+      "id": 7,
+      "type": "SeedVR2DirectVideoUpscaler",
+      "pos": [640, 64],
+      "size": [640, 768],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [
+        {"name": "video", "type": "VIDEO", "link": 3},
+        {"name": "dit", "type": "SEEDVR2_DIT", "link": 4},
+        {"name": "vae", "type": "SEEDVR2_VAE", "link": 5}
+      ],
+      "outputs": [
+        {"name": "video", "type": "VIDEO", "links": [6]},
+        {"name": "audio", "type": "AUDIO", "links": null}
+      ],
+      "properties": {
+        "aux_id": "ethanfel/ComfyUI-SeedVR2_VideoUpscaler",
+        "Node name for S&R": "SeedVR2DirectVideoUpscaler"
+      },
+      "widgets_values": [42, "fixed", 1080, 0, 5, 21, 2, false, 0, 0, "lab", 0.0, 0.0, "cpu", 18, false]
+    },
+    {
+      "id": 8,
+      "type": "SaveVideo",
+      "pos": [1408, 64],
+      "size": [448, 320],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [
+        {"name": "video", "type": "VIDEO", "link": 6}
+      ],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "SaveVideo"
+      },
+      "widgets_values": ["video/h3_seedvr2_%date:yyyy-MM-dd%", "auto", "auto"]
+    },
+    {
+      "id": 9,
+      "type": "Note",
+      "pos": [1408, 480],
+      "size": [896, 640],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {},
+      "widgets_values": ["WHOLE-CHAIN SEEDVR2 FINISH\n\n1. In Checkpoint Manager select the final scene of a COMPLETE branch.\n2. Use the original H3 VIDEO VAE. Do not select minimax_h3_audio_vae: it has 32 latent channels and cannot decode the 24-channel video latent.\n3. Keep decode_buffer=disk-backed. MiniMax's temporal VAE writes the active scene to a temporary mmap; only boundary frames stay in ordinary RAM.\n4. The adapter trims saved context, resolves the Plan's boundary blends, embeds the saved final audio policy, and caches one continuous lossless movie under output/h3_chains/<run>/upscaled/seedvr2/source/.\n5. SeedVR2 Direct reads that movie in chunk_size batches. chunk_size=21 and overlap=2 are conservative defaults; its batching is independent of H3 scene boundaries.\n6. The ethanfel SeedVR2 fork preserves input audio in its returned VIDEO, so it connects directly to core Save Video.\n\nNo Plan, Source Timeline, source media, per-scene upscale loop, IMAGE batch, or manual intermediate path is required. Legacy source-audio runs without a saved Source Timeline are the only case that may need source_audio on the adapter.\n\nRequired SeedVR2 fork: https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler"]
     }
   ],
   "links": [
-    [
-      1,
-      2,
-      0,
-      4,
-      0,
-      "H3_CHAIN_MANIFEST"
-    ],
-    [
-      2,
-      3,
-      0,
-      4,
-      1,
-      "VAE"
-    ],
-    [
-      7,
-      4,
-      0,
-      12,
-      0,
-      "VIDEO"
-    ],
-    [
-      8,
-      5,
-      0,
-      12,
-      1,
-      "SEEDVR2_DIT"
-    ],
-    [
-      9,
-      6,
-      0,
-      12,
-      2,
-      "SEEDVR2_VAE"
-    ],
-    [
-      10,
-      12,
-      0,
-      8,
-      0,
-      "VIDEO"
-    ]
+    [1, 2, 0, 4, 0, "H3_CHAIN_MANIFEST"],
+    [2, 3, 0, 4, 1, "VAE"],
+    [3, 4, 0, 7, 0, "VIDEO"],
+    [4, 5, 0, 7, 1, "SEEDVR2_DIT"],
+    [5, 6, 0, 7, 2, "SEEDVR2_VAE"],
+    [6, 7, 0, 8, 0, "VIDEO"]
   ],
   "groups": [
-    {
-      "id": 1,
-      "title": "SELECT + DECODE ONE CONTINUOUS H3 BRANCH",
-      "bounding": [
-        -2496,
-        0,
-        2144,
-        1472
-      ],
-      "color": "#3f789e",
-      "flags": {}
-    },
-    {
-      "id": 2,
-      "title": "SEEDVR2 MODELS",
-      "bounding": [
-        -288,
-        0,
-        768,
-        1248
-      ],
-      "color": "#8a6f3d",
-      "flags": {}
-    },
-    {
-      "id": 3,
-      "title": "WHOLE-VIDEO UPSCALE + FINAL SAVE",
-      "bounding": [
-        576,
-        0,
-        2336,
-        1184
-      ],
-      "color": "#557a55",
-      "flags": {}
-    }
+    {"id": 1, "title": "SELECT + DECODE ONE CONTINUOUS H3 BRANCH", "bounding": [-1984, -256, 2144, 1472], "color": "#3f789e", "font_size": 22, "flags": {}},
+    {"id": 2, "title": "SEEDVR2 MODELS", "bounding": [-512, -1024, 1088, 576], "color": "#8a6f3d", "font_size": 22, "flags": {}},
+    {"id": 3, "title": "WHOLE-VIDEO UPSCALE + FINAL SAVE", "bounding": [576, 0, 1792, 1184], "color": "#557a55", "font_size": 22, "flags": {}}
   ],
   "config": {},
   "extra": {
-    "ds": {
-      "scale": 0.36639627343257053,
-      "offset": [
-        4107.8654263776025,
-        1210.8014661955826
-      ]
-    },
-    "comfyui_mcp": {
-      "workflow_uuid": "7a446282-40e6-4e09-83f6-1dc320e2a618"
-    },
-    "frontendVersion": "1.49.6",
-    "VHS_latentpreview": true,
-    "VHS_latentpreviewrate": 0,
-    "VHS_MetadataImage": true,
-    "VHS_KeepIntermediate": true
+    "ds": {"scale": 0.32, "offset": [2100, 1100]},
+    "comfyui_mcp": {"workflow_uuid": "8f724112-a6d7-44df-8854-b9964169c07e"}
   },
   "version": 0.4
 }

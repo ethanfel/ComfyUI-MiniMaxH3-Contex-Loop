@@ -238,13 +238,17 @@ def _derope_future_visual_consumers(state: dict[str, Any],
             shot = plan["shots"][target - 1]
             if chain._shot_context_length(shot, default_context) <= 0:
                 continue
-            sources = {
-                chain._shot_visual_context_source(plan, target),
-            }
-            lead_source = getattr(
-                chain, "_shot_visual_context_lead_source", None)
-            if callable(lead_source):
-                sources.add(lead_source(plan, target))
+            if "visual_context_blocks" in shot:
+                sources = {int(block["source"]) for block in
+                           chain._shot_visual_context_blocks(
+                               plan, target,
+                               chain._shot_context_length(
+                                   shot, default_context))}
+            else:
+                sources = {
+                    chain._shot_visual_context_source(plan, target),
+                    chain._shot_visual_context_lead_source(plan, target),
+                }
             if int(scene) in sources:
                 consumers.append(target)
         return consumers
@@ -257,10 +261,13 @@ def _derope_future_visual_consumers(state: dict[str, Any],
             candidate.get("delivered_frames", 0))
         if trim <= 0:
             continue
-        explicit = {
-            candidate.get("visual_context_source_scene"),
-            candidate.get("visual_context_lead_source_scene"),
-        }
+        visual_blocks = candidate.get("visual_context_blocks")
+        explicit = ({block.get("source_scene") for block in visual_blocks
+                     if isinstance(block, dict)}
+                    if isinstance(visual_blocks, list) else {
+                        candidate.get("visual_context_source_scene"),
+                        candidate.get("visual_context_lead_source_scene"),
+                    })
         sources = set()
         for value in explicit:
             try:

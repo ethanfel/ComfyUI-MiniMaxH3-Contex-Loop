@@ -74,6 +74,7 @@ def main():
     assert contracts.AUDIO_POLICY_VERSION == "h3_audio_policy_v1"
     assert contracts.TRANSITION_POLICY_VERSION == "h3_transition_policy_v1"
     assert contracts.CHAIN_POLICY_VERSION == "h3_chain_policy_v1"
+    assert contracts.LIP_SYNC_OPTIONS_VERSION == "h3_lip_sync_options_v1"
     assert contracts.SCENE_DEPENDENCY_VERSION == "h3_scene_dependency_v1"
     assert contracts.PREFLIGHT_VERSION == "h3_preflight_v1"
     assert contracts.ADVANCED_TRANSITION_PRESETS == (
@@ -142,6 +143,30 @@ def main():
         "generated_continuity": "off",
         "source_audio_target": "locked",
     }
+    song_options = contracts.masked_song_options()
+    assert song_options == {
+        "version": contracts.LIP_SYNC_OPTIONS_VERSION,
+        "preroll_seconds": 1.0,
+        "lookahead_seconds": 0.2,
+        "audio_denoise": 0.0,
+        "gap_denoise": 0.15,
+        "gate_hold_seconds": 0.2,
+    }
+    vocal_hash = "ab" * 32
+    vocal_options = contracts.masked_song_options(
+        {**song_options, "voice_fingerprint": vocal_hash})
+    assert vocal_options["voice_fingerprint"] == vocal_hash
+    contextual_audio = contracts.audio_policy(
+        "source", "on", "on", "locked", vocal_options)
+    assert contextual_audio["lip_sync_options"] == vocal_options
+    assert "lip_sync_options" not in contracts.audio_policy(
+        "generated", "off", "on", "off", vocal_options)
+    try:
+        contracts.masked_song_options({**song_options, "gap_denoise": 1.1})
+    except ValueError as exc:
+        assert "gap denoise" in str(exc)
+    else:
+        raise AssertionError("out-of-range lip-sync denoise was accepted")
     assert contracts.paired_audio_policy(True) == "embedded"
     assert contracts.paired_audio_policy(False) == "off"
     assert contracts.paired_audio_policy("embedded") == "embedded"
@@ -251,12 +276,29 @@ def main():
         continuation_mode="feathered_av_rgb", context_length=39)
     assert migrated_expert["continuation_mode"] == "feathered_av"
     assert migrated_expert["context_length"] == 39
+    video_only_five = contracts.transition_policy(
+        "soft_av", expert_override=True,
+        continuation_mode="audio_feathered_av", context_length=5)
+    assert video_only_five["context_length"] == 5
+    source_audio_policy = contracts.audio_policy("source", "on", "off")
+    video_only_policy = contracts.compose_chain_policy(
+        source_audio_policy, video_only_five, audio_context_length=5)
+    assert video_only_policy["transition_policy"]["context_length"] == 5
+    try:
+        contracts.compose_chain_policy(
+            contracts.audio_policy("generated", "off", "on"),
+            video_only_five, audio_context_length=5)
+    except ValueError as exc:
+        assert "exact shared" in str(exc)
+    else:
+        raise AssertionError(
+            "five-frame AV accepted generated predecessor audio carry")
     try:
         contracts.transition_policy(
             "guide", expert_override=True,
             continuation_mode="masked_av", context_length=1)
     except ValueError as exc:
-        assert "exact shared" in str(exc)
+        assert "at least 5" in str(exc)
     else:
         raise AssertionError("one-frame AV transition was accepted")
     try:
@@ -264,7 +306,7 @@ def main():
             "guide", expert_override=True,
             continuation_mode="audio_feathered_av", context_length=1)
     except ValueError as exc:
-        assert "exact shared" in str(exc)
+        assert "at least 5" in str(exc)
     else:
         raise AssertionError("one-frame audio-feather AV transition was accepted")
     try:

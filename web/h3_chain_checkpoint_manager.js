@@ -10,28 +10,40 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.5.68";
+} from "./h3_checkpoint_manager_core.mjs?v=0.6.0";
 import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.5.68";
-import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.5.68";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.68";
+} from "./h3_chain_plan_core.mjs?v=0.6.0";
+import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.6.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.0";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.5.68";
+} from "./h3_plan_restore_core.mjs?v=0.6.0";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const PLAN_NAMES = new Set([PLAN_NAME, "MiniMaxH3ChainPlanModern"]);
 const START_NAME = "MiniMaxH3ChainLoopStart";
 const RUN_PROPERTY = "h3_checkpoint_manager_run";
 const SCENE_PROPERTY = "h3_checkpoint_manager_scene";
 const REVISION_PROPERTY = "h3_checkpoint_manager_revision";
 const CHAPTER_PROPERTY = "h3_checkpoint_manager_chapter";
 const COLLAPSED_CHAPTERS_PROPERTY = "h3_checkpoint_manager_collapsed_chapters";
+const PREVIEW_HEIGHT_PROPERTY = "h3_checkpoint_manager_preview_height";
+const DEFAULT_PREVIEW_HEIGHT = 280;
+const MIN_PREVIEW_HEIGHT = 120;
+const MAX_PREVIEW_HEIGHT = 720;
 const SHARED_COLORS = ["#6ea8ff", "#58c99d", "#bd8cff", "#e8a84f", "#f07f8c", "#55bfd0"];
+
+function previewHeight(value) {
+    const number = Number(value);
+    return Number.isFinite(number)
+        ? Math.max(MIN_PREVIEW_HEIGHT, Math.min(MAX_PREVIEW_HEIGHT, Math.round(number)))
+        : DEFAULT_PREVIEW_HEIGHT;
+}
 
 function nodeType(node) {
     return node?.comfyClass ?? node?.type ?? "";
@@ -44,7 +56,7 @@ function upstreamPlanNode(start) {
         const current = queue.shift();
         if (!current || seen.has(current)) continue;
         seen.add(current);
-        if (current !== start && nodeType(current) === PLAN_NAME) return current;
+        if (current !== start && PLAN_NAMES.has(nodeType(current))) return current;
         for (const input of current.inputs ?? []) {
             if (input.link == null) continue;
             const link = graphLink(current.graph, input.link);
@@ -206,6 +218,12 @@ function injectStyles() {
       .h3cm-arrow { align-self:center; color:var(--h3cm-muted); }
       .h3cm-revision { position:relative; min-width:112px; text-align:left; white-space:nowrap; }
       .h3cm-revision small { display:block; color:var(--h3cm-muted); font-size:10px; }
+      .h3cm-alternates { display:flex; flex-direction:column; gap:3px; min-width:104px;
+        padding-left:7px; border-left:2px solid #8264bd; }
+      .h3cm-alternate { min-width:100px; min-height:24px !important; padding:3px 6px !important;
+        border-color:#7259a8 !important; color:#d9c9f7 !important; font-size:10px !important; }
+      .h3cm-alternate-used { background:color-mix(in srgb,var(--h3cm-panel) 68%,#56358b) !important;
+        box-shadow:inset 3px 0 0 #b493f0; }
       .h3cm-revision-empty { border-style:dashed !important; color:var(--h3cm-muted) !important;
         background:color-mix(in srgb,var(--h3cm-panel) 72%,transparent) !important; }
       .h3cm-revision-empty-selected { border-color:var(--h3cm-accent) !important;
@@ -216,7 +234,17 @@ function injectStyles() {
         border-radius:999px; background:color-mix(in srgb,var(--h3cm-shared-color) 23%,transparent);
         color:color-mix(in srgb,var(--h3cm-shared-color) 72%,var(--h3cm-text)); font-size:9px; font-weight:750; }
       .h3cm-detail { display:flex; flex-direction:column; gap:8px; }
-      .h3cm-preview { width:100%; max-height:280px; min-height:150px; object-fit:contain; border-radius:6px; background:#08090c; }
+      .h3cm-preview-frame { width:100%; height:280px; min-height:120px; max-height:720px;
+        flex:0 0 auto; display:flex; flex-direction:column; overflow:hidden; border-radius:6px;
+        background:#08090c; }
+      .h3cm-preview { width:100%; min-height:0; flex:1 1 auto; object-fit:contain; background:#08090c; }
+      .h3cm-preview-resizer { position:relative; flex:0 0 12px; min-height:12px;
+        cursor:ns-resize; touch-action:none; background:color-mix(in srgb,var(--h3cm-panel) 88%,#000); }
+      .h3cm-preview-resizer::after { content:""; position:absolute; top:5px; left:calc(50% - 28px);
+        width:56px; height:2px; border-radius:2px; background:var(--h3cm-border); }
+      .h3cm-preview-resizer:hover::after,.h3cm-preview-resizer:focus-visible::after {
+        background:var(--h3cm-accent); }
+      .h3cm-preview-resizer:focus-visible { outline:1px solid var(--h3cm-accent); outline-offset:-1px; }
       .h3cm-audio { width:100%; height:36px; }
       .h3cm-inspector { display:grid; grid-template-columns:auto minmax(0,1fr); gap:3px 9px; }
       .h3cm-inspector dt { color:var(--h3cm-muted); }
@@ -265,6 +293,7 @@ function mount(node) {
             Array.isArray(node.properties[COLLAPSED_CHAPTERS_PROPERTY])
                 ? node.properties[COLLAPSED_CHAPTERS_PROPERTY].map(String) : [],
         ),
+        previewHeight:previewHeight(node.properties[PREVIEW_HEIGHT_PROPERTY]),
         selected:null, deletion:null, busy:false, requestToken:0,
         initialRefresh:true, attribution:null, attributionButton:null,
     };
@@ -294,9 +323,17 @@ function mount(node) {
     const branches = element("div", "h3cm-branches");
     branchesPanel.append(branchesTitle, branches);
     const detail = element("section", "h3cm-panel h3cm-detail");
+    const previewFrame = element("div", "h3cm-preview-frame");
     const preview = element("video", "h3cm-preview");
     preview.controls = true;
     preview.preload = "metadata";
+    const previewResizer = element("div", "h3cm-preview-resizer");
+    previewResizer.tabIndex = 0;
+    previewResizer.setAttribute("role", "separator");
+    previewResizer.setAttribute("aria-orientation", "horizontal");
+    previewResizer.setAttribute("aria-label", "Resize clip preview height");
+    previewResizer.title = "Drag to resize the clip preview. Double-click to reset.";
+    previewFrame.append(preview, previewResizer);
     const audio = element("audio", "h3cm-audio");
     audio.controls = true;
     audio.preload = "metadata";
@@ -305,7 +342,7 @@ function mount(node) {
     const attributionPanel = element("div", "h3cm-attribution");
     attributionPanel.hidden = true;
     const prompt = element("div", "h3cm-prompt");
-    detail.append(preview, audio, attributionPanel, inspector, prompt);
+    detail.append(previewFrame, audio, attributionPanel, inspector, prompt);
     main.append(branchesPanel, detail);
     const deletion = element("section", "h3cm-delete");
     const deletionTitle = element("div", "h3cm-delete-title", "Select a checkpoint revision.");
@@ -321,6 +358,64 @@ function mount(node) {
     deletionActions.append(load, activate, status, remove);
     deletion.append(deletionTitle, deletionBody, deletionActions);
     root.append(head, runRow, chapterTabs, scenes, main, deletion);
+
+    function setPreviewHeight(value, persist = false) {
+        state.previewHeight = previewHeight(value);
+        previewFrame.style.height = `${state.previewHeight}px`;
+        previewResizer.setAttribute("aria-valuemin", String(MIN_PREVIEW_HEIGHT));
+        previewResizer.setAttribute("aria-valuemax", String(MAX_PREVIEW_HEIGHT));
+        previewResizer.setAttribute("aria-valuenow", String(state.previewHeight));
+        if (!persist) return;
+        node.properties[PREVIEW_HEIGHT_PROPERTY] = state.previewHeight;
+        node.graph?.setDirtyCanvas?.(true, true);
+        app.graph?.setDirtyCanvas?.(true, true);
+    }
+
+    setPreviewHeight(state.previewHeight);
+    previewResizer.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        event.preventDefault();
+        event.stopPropagation();
+        const pointerId = event.pointerId;
+        const startY = event.clientY;
+        const startHeight = state.previewHeight;
+        previewResizer.setPointerCapture?.(pointerId);
+        const move = (moveEvent) => {
+            if (moveEvent.pointerId !== pointerId) return;
+            moveEvent.preventDefault();
+            setPreviewHeight(startHeight + moveEvent.clientY - startY);
+        };
+        const finish = (finishEvent) => {
+            if (finishEvent.pointerId !== pointerId) return;
+            previewResizer.removeEventListener("pointermove", move);
+            previewResizer.removeEventListener("pointerup", finish);
+            previewResizer.removeEventListener("pointercancel", finish);
+            if (previewResizer.hasPointerCapture?.(pointerId)) {
+                previewResizer.releasePointerCapture(pointerId);
+            }
+            setPreviewHeight(state.previewHeight, true);
+        };
+        previewResizer.addEventListener("pointermove", move);
+        previewResizer.addEventListener("pointerup", finish);
+        previewResizer.addEventListener("pointercancel", finish);
+    });
+    previewResizer.addEventListener("keydown", (event) => {
+        let next = state.previewHeight;
+        const step = event.shiftKey ? 48 : 16;
+        if (event.key === "ArrowUp") next -= step;
+        else if (event.key === "ArrowDown") next += step;
+        else if (event.key === "Home") next = MIN_PREVIEW_HEIGHT;
+        else if (event.key === "End") next = MAX_PREVIEW_HEIGHT;
+        else return;
+        event.preventDefault();
+        event.stopPropagation();
+        setPreviewHeight(next, true);
+    });
+    previewResizer.addEventListener("dblclick", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        setPreviewHeight(DEFAULT_PREVIEW_HEIGHT, true);
+    });
 
     function activePlanRun() {
         const plan = upstreamPlanNode(node);
@@ -375,6 +470,7 @@ function mount(node) {
         const lineage = selectedLineage();
         const scope = selectedChapterRange();
         return Boolean(state.selected?.ready &&
+            state.selected?.take_kind !== "editorial_alternate" &&
             lineage.length === Number(state.selected.scene) - scope.start + 1);
     }
 
@@ -593,6 +689,33 @@ function mount(node) {
                     card.classList.add("h3cm-revision-selected");
                 }
                 path.append(card);
+                const alternates = (revision.alternates ?? []).filter(
+                    (alternate) => alternate.ready,
+                );
+                if (alternates.length) {
+                    const group = element("span", "h3cm-alternates");
+                    for (const alternate of alternates) {
+                        const alt = button(
+                            `ALT · ${String(alternate.revision).slice(0, 8)}`,
+                            alternate.prompt_preview || alternate.prompt ||
+                                "Prompt-only editorial alternate",
+                            () => selectRevision(alternate),
+                            "h3cm-alternate",
+                        );
+                        if (alternate.used_in_final_cut) {
+                            alt.classList.add("h3cm-alternate-used");
+                            alt.append(element("small", "", "used in final cut"));
+                        } else {
+                            alt.append(element("small", "", "available take"));
+                        }
+                        if (state.selected?.scene === alternate.scene
+                                && state.selected?.revision === alternate.revision) {
+                            alt.classList.add("h3cm-revision-selected");
+                        }
+                        group.append(alt);
+                    }
+                    path.append(group);
+                }
             });
             const slot = branch.attribution_slot;
             if (slot?.candidates?.length && tip && sceneVisible(slot.scene)) {
@@ -745,7 +868,14 @@ function mount(node) {
             delete audio.dataset.source;
         }
         addInspector("Identity", `${state.attribution ? "Candidate " : ""}Scene ${record.scene} · ${record.scene_id} · ${record.revision}`);
-        addInspector("State", `${record.active ? "Active" : "Inactive"} · ${record.ready ? "Ready" : "Broken"}`);
+        addInspector("State", record.take_kind === "editorial_alternate"
+            ? `Editorial alternate · ${record.used_in_final_cut ? "used in final cut" : "available"} · ${record.ready ? "Ready" : "Broken"}`
+            : `${record.active ? "Active generation checkpoint" : "Inactive generation checkpoint"} · ${record.ready ? "Ready" : "Broken"}`);
+        if (record.take_kind === "editorial_alternate") {
+            addInspector("Original base", `Scene ${record.scene} · ${String(record.alternate_of_revision).slice(0, 8)}`);
+            addInspector("Media", "Picture only · original audio and downstream lineage stay unchanged");
+            addInspector("Use", "Select Original or ALT for this scene in Plan Studio; ALT cannot be loaded or activated as generation lineage");
+        }
         addInspector("Branches", (record.branches ?? []).map((item) => item.label).join(", ") || "Unresolved lineage");
         addInspector("Created", localTime(record.created_at));
         addInspector("Frames", `${record.raw_frames} raw · ${record.delivered_frames} delivered`);
@@ -1174,9 +1304,10 @@ function mount(node) {
             const runBody = await jsonRequest(
                 `/minimax_h3_context_loop/run?${runQuery.toString()}`,
             );
-            const savedPlan = parsePlanJson(String(
-                runBody.plan_inputs?.plan_json ?? "",
-            ));
+            const sameConnectedRun = activePlanRun() === state.runName;
+            const savedPlan = parsePlanJson(String(sameConnectedRun
+                ? widget(planNode, "plan_json")?.value ?? ""
+                : runBody.plan_inputs?.plan_json ?? ""));
             const chapters = state.payload?.editorial?.chapters ?? [];
             if (chapters.length) {
                 savedPlan.chapters = chapters.map((chapter) => ({
@@ -1207,10 +1338,11 @@ function mount(node) {
                         scope_end_scene:scope.end,
                     }),
                 });
-            const activePlan = restoreSavedPlanInputs(
-                {...runBody.plan_inputs, plan_json:planToJson(savedPlan)},
-                restored.policy_inputs ?? runBody.policy_inputs,
-            );
+            const activePlan = sameConnectedRun ? planNode
+                : restoreSavedPlanInputs(
+                    {...runBody.plan_inputs, plan_json:planToJson(savedPlan)},
+                    restored.policy_inputs ?? runBody.policy_inputs,
+                );
             const plan = applyLoadedRevisions(activePlan, restored.restored ?? []);
             const canResume = resumeScene <= plan.shots.length &&
                 resumeScene <= scope.end;

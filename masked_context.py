@@ -23,6 +23,7 @@ from .nodes import (
     AV_RUN_GRID,
     AUDIO_HZ,
     FPS,
+    VIDEO_RUN_GRID,
     _audio_tail_from_latent,
     _pixel_frames,
     _resize,
@@ -152,22 +153,32 @@ def _require_h3_mask_support():
     return require_h3_mask_support("masked AV continuation")
 
 
-def _snap_prefix_length(requested, available, target_frames):
-    """Resolve a context window to a shared H3 video/audio boundary."""
+def _snap_prefix_length(
+        requested, available, target_frames, preserve_audio_prefix=True):
+    """Resolve an AV prefix on the grid required by its active streams."""
     cap = min(int(requested), int(available), int(target_frames) - 1)
-    run = next((value for value in AV_RUN_GRID if value <= cap), 0)
-    if run < 39:
+    preserve_audio_prefix = bool(preserve_audio_prefix)
+    grid = AV_RUN_GRID if preserve_audio_prefix else VIDEO_RUN_GRID
+    minimum = 39 if preserve_audio_prefix else 5
+    run = next((value for value in grid if value <= cap), 0)
+    if run < minimum:
+        requirement = (
+            "at least 39 previous frames and an exact shared video/audio "
+            "boundary" if preserve_audio_prefix else
+            "at least 5 previous frames on H3's video latent grid"
+        )
         raise ValueError(
-            "h3_masked_prefix: masked continuation needs at least 39 previous "
-            "frames, a target longer than the prefix, and an exact shared "
-            "video/audio boundary."
+            "h3_masked_prefix: masked continuation needs %s and a target "
+            "longer than the prefix." % requirement
         )
     if run != int(requested):
+        if preserve_audio_prefix:
+            detail = "exact shared AV runs are 39, 90, 141, 192, and 243"
+        else:
+            detail = "video-only prefix snapped to H3's video latent grid"
         _LOG.warning(
-            "h3_masked_prefix: context_length %d -> exact H3 prefix %d "
-            "(exact shared AV runs are 39, 90, 141, 192, and 243)",
-            int(requested), run,
-        )
+            "h3_masked_prefix: context_length %d -> exact H3 prefix %d (%s)",
+            int(requested), run, detail)
     return run
 
 
@@ -387,7 +398,11 @@ def _existing_mask_streams(latent, video, audio):
     return video_mask.float(), audio_mask.float()
 
 
-def apply_locked_source_audio_target(latent, audio_vae, source_audio):
+def apply_locked_source_audio_target(
+        latent, audio_vae, source_audio, *, lip_sync_options=None,
+        voice=None, clip_start_seconds=0.0,
+        voice_clip_start_seconds=None,
+        force_active_voice_prefix_seconds=0.0):
     """Place exact scene-local source audio in H3's protected target stream.
 
     Reuse the standalone master-audio implementation so Chain Policy receives
@@ -405,13 +420,26 @@ def apply_locked_source_audio_target(latent, audio_vae, source_audio):
             "target window. Keep Current Shot state connected to Chain Context.")
     from .master_audio_context import MiniMaxH3ContexMasterAudioMaskedAV
 
+    option_kwargs = {}
+    if lip_sync_options is not None:
+        option_kwargs = {
+            key: lip_sync_options[key]
+            for key in (
+                "preroll_seconds", "lookahead_seconds", "audio_denoise",
+                "gap_denoise", "gate_hold_seconds")
+        }
     out, prefix_frames, _clip_audio = (
         MiniMaxH3ContexMasterAudioMaskedAV().prepare(
             latent=latent,
             audio_vae=audio_vae,
             master_audio=source_audio,
-            clip_start_seconds=0.0,
+            clip_start_seconds=clip_start_seconds,
             context_length=0,
+            voice=voice,
+            voice_clip_start_seconds=voice_clip_start_seconds,
+            force_active_voice_prefix_seconds=(
+                force_active_voice_prefix_seconds),
+            **option_kwargs,
         ))
     if int(prefix_frames) != 0:
         raise RuntimeError(
@@ -545,7 +573,8 @@ def apply_masked_prefix(
             )
         available = _pixel_frames(int(source_video.shape[2]))
         frames = _snap_prefix_length(
-            context_length, available, target_frames)
+            context_length, available, target_frames,
+            preserve_audio_prefix=preserve_audio_prefix)
         video_prefix, video_steps = _generated_video_tail(
             previous_latent, frames, target_video)
         video_source = "previous sampled latent"
@@ -557,7 +586,8 @@ def apply_masked_prefix(
             )
         available = int(previous_frames.shape[0])
         frames = _snap_prefix_length(
-            context_length, available, target_frames)
+            context_length, available, target_frames,
+            preserve_audio_prefix=preserve_audio_prefix)
         video_prefix, video_steps = _encoded_video_tail(
             vae, previous_frames, frames, target_video, crop)
         video_source = "imported decoded frames via video VAE"

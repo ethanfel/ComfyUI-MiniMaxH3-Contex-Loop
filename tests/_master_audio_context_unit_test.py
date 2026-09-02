@@ -127,6 +127,11 @@ def main():
     assert "source_latent" in (
         audio_context.MiniMaxH3ContexMasterAudioMaskedAV.INPUT_TYPES()[
             "optional"])
+    assert "voice" in (
+        audio_context.MiniMaxH3ContexMasterAudioMaskedAV.INPUT_TYPES()[
+            "optional"])
+    assert audio_context.MiniMaxH3ContexMasterAudioMaskedAV.INPUT_TYPES()[
+        "required"]["preroll_seconds"][1]["default"] == 0.0
 
     # Chain Context may already own the protected visual prefix. Replacing
     # the audio target must retain that video mask while making the complete
@@ -253,6 +258,76 @@ def main():
     assert torch.allclose(
         retried_audio, torch.full_like(retried_audio, 0.75))
 
+    class IndexedAudioVAE:
+        audio_sample_rate = 32_000
+
+        def __init__(self):
+            self.encoded_samples = []
+
+        def encode(self, waveform):
+            samples = int(waveform.shape[1])
+            self.encoded_samples.append(samples)
+            steps = round(samples / self.audio_sample_rate * 40)
+            ticks = torch.arange(steps, dtype=torch.float32).reshape(
+                1, 1, 1, steps)
+            return ticks.expand(1, 32, 2, steps).clone()
+
+    indexed_vae = IndexedAudioVAE()
+    contextual, _, contextual_clip = (
+        audio_context.MiniMaxH3ContexMasterAudioMaskedAV().prepare(
+            rounding_latent,
+            indexed_vae,
+            master_audio,
+            clip_start_seconds=2.0,
+            context_length=0,
+            preroll_seconds=1.0,
+            lookahead_seconds=0.2,
+        ))
+    _, contextual_audio = contextual["samples"].unbind()
+    _, contextual_mask = contextual["noise_mask"].unbind()
+    expected_context_steps = 40 + rounding_audio_steps + 8
+    assert indexed_vae.encoded_samples == [
+        int(expected_context_steps / 40 * 32_000)]
+    assert torch.equal(
+        contextual_audio[0, 0, 0],
+        torch.arange(40, 40 + rounding_audio_steps, dtype=torch.float32))
+    assert not torch.count_nonzero(contextual_mask)
+    assert int(contextual_clip["waveform"].shape[-1]) == picture_samples
+
+    voice = {
+        "waveform": torch.zeros((1, 1, 32_000 * 30)),
+        "sample_rate": 32_000,
+    }
+    voice["waveform"][..., 32_000:64_000] = 1.0
+    gated, _, _ = (
+        audio_context.MiniMaxH3ContexMasterAudioMaskedAV().prepare(
+            latent,
+            AudioVAE(),
+            master_audio,
+            clip_start_seconds=0.0,
+            context_length=0,
+            audio_denoise=0.0,
+            gap_denoise=0.3,
+            gate_hold_seconds=0.0,
+            voice=voice,
+        ))
+    _, gated_mask = gated["noise_mask"].unbind()
+    assert torch.all(gated_mask[..., 10] == 0.3)
+    assert not torch.count_nonzero(gated_mask[..., 50])
+    assert torch.all(gated_mask[..., 100] == 0.3)
+
+    softened, _, _ = (
+        audio_context.MiniMaxH3ContexMasterAudioMaskedAV().prepare(
+            latent,
+            AudioVAE(),
+            master_audio,
+            clip_start_seconds=0.0,
+            context_length=0,
+            audio_denoise=0.25,
+        ))
+    _, softened_mask = softened["noise_mask"].unbind()
+    assert torch.all(softened_mask == 0.25)
+
     assert (
         "MiniMaxH3ContexMasterAudioMaskedAV"
         in audio_context.NODE_CLASS_MAPPINGS)
@@ -264,7 +339,8 @@ def main():
         not in audio_context.NODE_CLASS_MAPPINGS)
     print(
         "master-audio masking: absolute-endpoint timeline slice, complete protected audio, "
-        "40 Hz target-grid lookahead, decoded and direct-latent 39-frame "
+        "40 Hz target-grid lookahead, contextual tick crop, vocal gate, "
+        "fractional song denoise, decoded and direct-latent 39-frame "
         "protected video continuation, "
         "and clip-1 video generation pass")
 

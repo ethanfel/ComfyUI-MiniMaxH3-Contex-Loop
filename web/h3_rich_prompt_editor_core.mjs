@@ -1,4 +1,4 @@
-import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.5.68";
+import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.6.0";
 
 export const RICH_PROMPT_GUIDES = Object.freeze([
     {id: "auto", label: "Auto · H3 mode"},
@@ -39,7 +39,7 @@ export function richGuideInstruction(guide, generationMode) {
     const selected = normalizeRichGuide(guide);
     const mode = String(generationMode || "H3 chain scene");
     const schema = mode === "Ref2VA"
-        ? "If the source already uses the Ref2VA six-section format, preserve its order: subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music. Introduce that complete format only when the user explicitly asks for a full H3 rewrite. Keep every reference label, @alias, and #picture[timestamp] semantic anchor stable."
+        ? "If the source already uses the Ref2VA six-section format, preserve its order: subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, non_diegetic_music. Introduce that complete format only when the user explicitly asks for a full H3 rewrite. Keep every reference label, @alias, bare #picture semantic visual, and #picture[timestamp] semantic anchor stable."
         : "If the source already uses the base H3 format, preserve integrated_multimodal_description, overall_soundscape, and non_diegetic_music. Introduce the complete format or keyframe-alignment sentence only when the user explicitly asks for a full H3 rewrite; do not force headings onto a compact prompt.";
     return [
         `Return a complete replacement string for the current MiniMax H3 ${mode} scene, but change only what the request requires.`,
@@ -79,7 +79,7 @@ export function referenceRecordMap(records) {
 const RICH_SECTION_ALTERNATION = H3_ALL_SECTIONS.join("|");
 const RICH_TOKEN_PATTERN = new RegExp(
     `^(${RICH_SECTION_ALTERNATION}):|`
-    + "((?<![A-Za-z0-9_])#[A-Za-z][A-Za-z0-9_-]{0,63}\\[[0-9]+(?:\\.[0-9]+)?s?\\]"
+    + "((?<![A-Za-z0-9_])#[A-Za-z][A-Za-z0-9_-]{0,63}(?:\\[[0-9]+(?:\\.[0-9]+)?s?\\]|(?!\\[))(?![A-Za-z0-9_-])"
     + "|(?<![A-Za-z0-9_])@[A-Za-z][A-Za-z0-9_-]{0,63}(?![A-Za-z0-9_-])"
     + "|<(?:Picture|Video|Audio|Subject)\\s+\\d+>|<\\/?d>|<scenetrans>|<cutoff>"
     + "|(?<![A-Za-z0-9_])\\(S\\d+(?:,S\\d+)*\\))",
@@ -98,9 +98,9 @@ export function tokenizeRichPrompt(text, records = []) {
         const lower = token.toLowerCase();
         const section = lower.endsWith(":")
             ? H3_ALL_SECTIONS.find((item) => `${item}:` === lower) : null;
-        const semanticMatch = /^#([a-z][a-z0-9_-]{0,63})\[([0-9]+(?:\.[0-9]+)?)s?\]$/i.exec(token);
-        // A semantic-only asset has no native @tag token. Resolve #tag[time]
-        // through the timestamp-independent semantic key registered above.
+        const semanticMatch = /^#([a-z][a-z0-9_-]{0,63})(?:\[([0-9]+(?:\.[0-9]+)?)s?\])?$/i.exec(token);
+        // A semantic-only asset has no native @tag token. Resolve bare #tag
+        // and #tag[time] through the timestamp-independent registered key.
         const recordKey = semanticMatch ? `#${semanticMatch[1]}` : token;
         const record = recordMap.get(recordKey) ?? null;
         if (section) {
@@ -117,7 +117,8 @@ export function tokenizeRichPrompt(text, records = []) {
                 record,
                 unresolved: !record || !semanticValid,
                 semantic: Boolean(semanticMatch),
-                timestamp: semanticMatch ? Number(semanticMatch[2]) : null,
+                timestamp: semanticMatch?.[2] !== undefined
+                    ? Number(semanticMatch[2]) : null,
             });
         } else if (lower.startsWith("<subject")) {
             parts.push({type: "subject", text: token});

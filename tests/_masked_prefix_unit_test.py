@@ -472,6 +472,46 @@ def main():
         source_video_mask[:, :, :prefix_video_steps])
     assert torch.all(source_audio_mask == 1.0)
 
+    # A source-driven/video-only AV test may use H3's five-frame video run.
+    # The two copied video steps are protected while the entire audio target
+    # remains open; enabling predecessor-audio carry keeps the 39f minimum.
+    _, five_frame_av, five_frame_trim = masked.apply_masked_prefix(
+        conditioning=conditioning,
+        vae=UnexpectedVideoVAE(),
+        latent=target,
+        previous_frames=frames,
+        context_length=5,
+        crop="disabled",
+        previous_latent=previous,
+        preserve_audio_prefix=False,
+    )
+    five_video, five_audio = five_frame_av["samples"].unbind()
+    five_video_mask, five_audio_mask = (
+        five_frame_av["noise_mask"].unbind())
+    assert five_frame_trim == 5
+    assert nodes._pixel_frames(2) == 5
+    assert torch.equal(five_video[:, :, :2], previous_video[:, :, -2:])
+    assert not torch.count_nonzero(five_video_mask[:, :, :2])
+    assert torch.all(five_video_mask[:, :, 2:] == 1.0)
+    assert not torch.count_nonzero(five_audio)
+    assert torch.all(five_audio_mask == 1.0)
+    try:
+        masked.apply_masked_prefix(
+            conditioning=conditioning,
+            vae=UnexpectedVideoVAE(),
+            latent=target,
+            previous_frames=frames,
+            context_length=5,
+            crop="disabled",
+            previous_latent=previous,
+            preserve_audio_prefix=True,
+        )
+    except ValueError as exc:
+        assert "at least 39" in str(exc)
+    else:
+        raise AssertionError(
+            "five-frame masked AV accepted predecessor-audio carry")
+
     _, locked_av, locked_av_trim = masked.apply_masked_prefix(
         conditioning=conditioning,
         vae=UnexpectedVideoVAE(),
@@ -1030,6 +1070,31 @@ def main():
     assert not torch.count_nonzero(
         no_carry_video_mask[:, :, :prefix_video_steps])
     assert torch.all(no_carry_audio_mask == 1.0)
+    five_frame_transition = chain._contract_transition_policy(
+        "soft_av", expert_override=True,
+        continuation_mode="audio_feathered_av", context_length=5)
+    five_frame_policy = chain._contract_compose_chain_policy(
+        chain._contract_audio_policy("source", "on", "off"),
+        five_frame_transition, audio_context_length=5)
+    five_frame_plan = chain._normalize_plan(
+        json.dumps({"shots": [
+            {"id": "one", "prompt": "first", "length": 192},
+            {"id": "video_only_five", "prompt": "second", "length": 192},
+        ]}),
+        "masked_video_only_five_test", 64, 32, 5, "video", "head",
+        "disabled", "source_track", 5, 8.0, 8, 1, 18,
+        "model-stack-v1", 0, "audio_feathered_av", five_frame_policy,
+    )
+    five_frame_result = chain.MiniMaxH3ChainContext().apply(
+        {"plan": five_frame_plan, "index": 2, "previous_frames": frames,
+         "previous_latent": previous},
+        conditioning, VideoVAE(), target)
+    five_chain_video_mask, five_chain_audio_mask = (
+        five_frame_result[3]["noise_mask"].unbind())
+    assert five_frame_result[1:3] == (5, True)
+    assert not torch.count_nonzero(five_chain_video_mask[:, :, :2])
+    assert torch.all(five_chain_video_mask[:, :, 2:] == 1.0)
+    assert torch.all(five_chain_audio_mask == 1.0)
     locked_policy = chain._contract_compose_chain_policy(
         chain._contract_audio_policy("source", "on", "on", "locked"),
         chain._contract_transition_policy("soft_av"),
@@ -1063,6 +1128,55 @@ def main():
     assert not torch.count_nonzero(
         locked_chain_video_mask[:, :, :prefix_video_steps])
     assert not torch.count_nonzero(locked_chain_audio_mask)
+    lip_voice = {
+        "waveform": torch.zeros((1, 1, 16 * 32000)),
+        "sample_rate": 32000,
+    }
+    lip_voice["waveform"][..., 7 * 32000:8 * 32000] = 1.0
+    lip_options = chain._contract_masked_song_options(
+        preroll_seconds=0.0,
+        lookahead_seconds=0.0,
+        audio_denoise=0.0,
+        gap_denoise=0.3,
+        gate_hold_seconds=0.0,
+        voice_fingerprint=chain._audio_fingerprint(lip_voice),
+    )
+    contextual_locked_policy = chain._contract_compose_chain_policy(
+        chain._contract_audio_policy(
+            "source", "off", "off", "locked", lip_options),
+        chain._contract_transition_policy("soft_av"),
+        audio_context_length=39)
+    contextual_locked_plan = chain._normalize_plan(
+        json.dumps({"shots": [
+            {"id": "one", "prompt": "first", "length": 192},
+            {"id": "voice_locked", "prompt": "second", "length": 192},
+        ]}),
+        "contextual_locked_source_audio_test", 64, 32, 39, "video", "head",
+        "disabled", "source_track", 39, 8.0, 8, 1, 18,
+        "model-stack-v1", 0, "audio_feathered_av",
+        contextual_locked_policy,
+    )
+    contextual_locked_state = {
+        **locked_state,
+        "plan": contextual_locked_plan,
+        "current_source_audio_target_clip_start_seconds": 0.0,
+    }
+    try:
+        chain.MiniMaxH3ChainContext().apply(
+            contextual_locked_state, conditioning, VideoVAE(), target,
+            LockedAudioVAE())
+    except ValueError as exc:
+        assert "lip_sync_voice input is disconnected" in str(exc)
+    else:
+        raise AssertionError("fingerprinted vocal stem was not required")
+    contextual_locked_result = chain.MiniMaxH3ChainContext().apply(
+        contextual_locked_state, conditioning, VideoVAE(), target,
+        LockedAudioVAE(), lip_sync_voice=lip_voice)
+    contextual_locked_audio_mask = contextual_locked_result[3][
+        "noise_mask"].unbind()[1]
+    assert torch.all(contextual_locked_audio_mask[..., 10] == 0.3)
+    assert not torch.count_nonzero(contextual_locked_audio_mask[..., 50])
+    assert torch.all(contextual_locked_audio_mask[..., 100] == 0.3)
     scene_locked_plan = chain._normalize_plan(
         json.dumps({"shots": [
             {"id": "one", "prompt": "first", "length": 192},

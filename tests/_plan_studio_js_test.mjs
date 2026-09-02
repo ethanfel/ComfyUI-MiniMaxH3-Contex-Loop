@@ -11,11 +11,17 @@ import {
     matchingStudioSourceScene,
     parseStudioTimecode,
     parseTimedLyrics,
+    remapStudioEditorialSceneId,
+    restoreStudioCheckpointCache,
     studioCheckpointSignature,
+    studioCheckpointCacheSnapshot,
     studioContextWindowLayout,
     studioContextWindowStartAtRatio,
     studioEditorialSceneStartSeconds,
+    studioLatentSafeOutFrames,
+    studioNearestLatentSafeOutFrame,
     studioNearestH3FrameLength,
+    studioPlayerSegmentClock,
     studioRulerTicks,
     studioSceneStartSeconds,
     studioSourceAudioSecond,
@@ -48,6 +54,30 @@ const rows = [
     {id:"two", deliveredFrames:340, deliveredSeconds:340 / 24},
     {id:"three", deliveredFrames:340, deliveredSeconds:340 / 24},
 ];
+assert.ok(studioLatentSafeOutFrames(362, 340).includes(72));
+assert.equal(studioNearestLatentSafeOutFrame(362, 340, 71), 72);
+assert.equal(studioNearestLatentSafeOutFrame(362, 340, 339), 340);
+const trimmedTimeline = studioTimelineSegments([
+    {id:"one", rawFrames:362, deliveredFrames:340},
+    {id:"two", rawFrames:362, deliveredFrames:340},
+], [], null, [{scene_id:"one", out_frame:72}]);
+assert.deepEqual(trimmedTimeline.filter(
+    (segment) => segment.kind === "scene",
+).map((segment) => segment.durationFrames), [72, 340]);
+assert.equal(trimmedTimeline.at(-1).endFrame, 412);
+const beforeTrimEnd = studioPlayerSegmentClock(
+    trimmedTimeline, "scene:0", 2.99,
+);
+assert.equal(beforeTrimEnd.boundaryReached, false);
+const trimEnd = studioPlayerSegmentClock(
+    trimmedTimeline, "scene:0", 3,
+);
+assert.equal(trimEnd.boundaryReached, true);
+assert.equal(trimEnd.timelineSeconds, 3);
+assert.equal(
+    studioPlayerSegmentClock(trimmedTimeline, "scene:0", 99).timelineSeconds,
+    3,
+);
 assert.equal(studioSceneStartSeconds(rows, 1), 362 / 24);
 assert.equal(locateStudioTimelineSecond(rows, 0).index, 0);
 assert.equal(locateStudioTimelineSecond(rows, 362 / 24).index, 1);
@@ -209,6 +239,26 @@ assert.notEqual(
     studioCheckpointSignature("run-a", [...checkpoints.values()]),
     studioCheckpointSignature("run-b", [...checkpoints.values()]),
 );
+const cache = studioCheckpointCacheSnapshot(
+    "run-a", [...checkpoints.values()], {
+        run_name:"run-a", placements:[], trims:[{scene_id:"one", out_frame:72}],
+    },
+);
+assert.equal(restoreStudioCheckpointCache(cache, "run-a").checkpoints.length, 1);
+assert.equal(restoreStudioCheckpointCache(cache, "run-b"), null);
+const editorialRename = {
+    placements:[{scene_id:"one", start_frame:2}],
+    trims:[{scene_id:"one", out_frame:72}],
+    locked_scene_ids:["one"],
+    alternate_draft:{scene_id:"one"},
+    replacements:[{scene_id:"one"}],
+};
+remapStudioEditorialSceneId(editorialRename, "one", "opening");
+assert.equal(editorialRename.placements[0].scene_id, "opening");
+assert.equal(editorialRename.trims[0].scene_id, "opening");
+assert.deepEqual(editorialRename.locked_scene_ids, ["opening"]);
+assert.equal(editorialRename.alternate_draft.scene_id, "opening");
+assert.equal(editorialRename.replacements[0].scene_id, "opening");
 assert.notEqual(
     studioCheckpointSignature("run-a", [...checkpoints.values()]),
     studioCheckpointSignature("run-a", [{
@@ -275,6 +325,13 @@ const fractionalGrid = h3StudioGridMarkers(362, 22, "feathered_av");
 assert.equal(fractionalGrid.raw.onGrid, true);
 assert.equal(fractionalGrid.av.exact, false);
 assert.equal(fractionalGrid.av.label, "22f AV = 36.667 audio ticks");
+const fiveFrameVideoOnlyGrid = h3StudioGridMarkers(
+    345, 5, "masked_av", false,
+);
+assert.equal(fiveFrameVideoOnlyGrid.av.exact, true);
+assert.equal(fiveFrameVideoOnlyGrid.av.audioAligned, false);
+assert.equal(fiveFrameVideoOnlyGrid.av.audioPreserved, false);
+assert.equal(fiveFrameVideoOnlyGrid.av.label, "5f video-only AV");
 const audioFeatherGrid = h3StudioGridMarkers(345, 39, "audio_feathered_av");
 assert.equal(audioFeatherGrid.av.exact, true);
 assert.equal(audioFeatherGrid.av.audioTicks, 65);
@@ -304,6 +361,9 @@ assert.match(source, /zero-duration editorial note/);
 assert.match(source, /Editorial context, lyrics, LLM notes/);
 assert.match(source, /minimax_h3_context_loop\/editorial/);
 assert.match(source, /scheduleEditorialSave/);
+assert.match(source, /scheduleEditorialSave\(0\)/);
+assert.match(source, /Choosing presentation media is never a generation command/);
+assert.match(source, /Always synchronize the hidden one-shot queue widget on load/);
 assert.match(source, /TIMELINE_ZOOM_PROPERTY/);
 assert.match(source, /studioTimelineLayout/);
 assert.match(source, /Fit timeline/);
@@ -320,14 +380,31 @@ assert.match(source, /h3studio-context-window/);
 assert.match(source, /studioContextWindowStartAtRatio/);
 assert.match(source, /nativeContextWindowStarts/);
 assert.match(source, /native latent crop/);
+assert.match(source, /h3studio-context-phase-tail/);
+assert.match(source, /phaseTailFrames = Math\.max\(0, latest - defaultStart\)/);
+assert.match(source, /final \$\{phaseTailFrames\}f use another phase/);
+assert.match(source, /change the composed split to use that physical tail without RGB\/VAE re-encoding/);
 assert.match(source, /visual_context_start_frame/);
 assert.match(source, /visual_context_lead_start_frame/);
-assert.match(source, /Context block 1 source/);
-assert.match(source, /same scene, separate window/);
-assert.match(source, /Composed total \/ split/);
-assert.match(source, /visualContextCompositions/);
+assert.match(source, /field\("Picture context total", visualTotal\)/);
+assert.match(source, /field\("Picture blocks", blockCount\)/);
+assert.match(source, /field\(`Division \$\{cutOffset \+ 1\}`, select\)/);
+assert.match(source, /Ordered repartition:/);
+assert.match(source, /visualContextDefaultPartition/);
+assert.match(source, /visualContextPartitionFromBoundaries/);
+assert.match(source, /Multiple blocks may select the same scene/);
+assert.match(source, /Unlock audio context/);
+assert.match(source, /Lock audio context/);
+assert.match(source, /renderAudioContextPanel/);
+assert.match(source, /audio_context_unlocked/);
+assert.match(source, /audio_context_lead_source/);
+assert.match(source, /audioContextWindowStarts/);
 assert.match(source, /Standalone mode · this node owns, validates, and outputs/);
-assert.match(source, /Connected mode · changes are written to the H3 Chain Plan and mirrored into Studio/);
+assert.match(source, /MODERN_PLAN_NAME = "MiniMaxH3ChainPlanModern"/);
+assert.match(source, /changes are written to the.*Modern Plan.*H3 Chain Plan/);
+assert.match(source, /modernPlan = owner\?\.type === MODERN_PLAN_NAME/);
+assert.match(source, /Visual transition, context length, audio behavior, and continuation are owned by the connected Generation Profile/);
+assert.match(source, /if \(modernPlan\).*panel\.append\(grid\);/s);
 assert.match(source, /const planOwner = planNode \?\? node/);
 assert.match(source, /mirrorConnectedPlan\(planNode\)/);
 assert.match(source, /state\.planOwner = planOwner/);
@@ -361,6 +438,9 @@ assert.match(source, /SOURCE_AUDIO_MUTES_PROPERTY/);
 assert.match(source, /studioSourceAudioSecond/);
 assert.match(source, /studioWaveformIntervalSamples/);
 assert.match(source, /Editorial start/);
+assert.match(source, /Latent-safe used end/);
+assert.match(source, /studioNearestLatentSafeOutFrame/);
+assert.match(source, /full sampled checkpoint retained/);
 assert.match(source, /Black editorial gap/);
 assert.match(source, /OPEN TIMELINE/);
 assert.match(source, /extendTimelineWorkspace/);
@@ -401,6 +481,15 @@ assert.match(source, /GENERATED_VOLUME_PROPERTY/);
 assert.match(source, /h3studio-audio-volume/);
 assert.match(source, /primeNextSegment/);
 assert.match(source, /h3studio-handoff-frame/);
+assert.match(source, /let standbyVideo = preloadVideo/);
+assert.match(source, /stage\.insertBefore\(preloadVideo, handoffFrame\)/);
+assert.match(source, /const promotePrimedSegment = \(index\) =>/);
+assert.match(source, /standbyVideo\.readyState >= HTMLMediaElement\.HAVE_CURRENT_DATA/);
+assert.match(source, /video\.ended && upcoming\?\.kind === "scene"/);
+assert.match(source, /state\.playerPreloadVideo = standbyVideo/);
+assert.match(source, /onActiveVideo\("ended"/);
+assert.match(source, /upcomingSegment\?\.kind === "scene"/);
+assert.match(source, /upcomingSegment\.sceneIndex/);
 assert.match(source, /event\.code !== "Space"/);
 assert.match(source, /const pausePlayerMonitors = \(\) =>/);
 assert.match(source, /state\.togglePlayerPlayback/);
@@ -411,6 +500,7 @@ assert.match(source, /state\.sourceAudioPlayer/);
 assert.doesNotMatch(source, /const handingOff = video\.ended/);
 assert.match(source, /document\.removeEventListener\("keydown", onPlayerKeydown/);
 assert.match(source, /Generated and Source Track can play together/);
+assert.match(source, /Adjacent saved scenes are pre-decoded/);
 assert.doesNotMatch(source, /h3studio-audio-choice/);
 assert.match(source, /h3_plan_studio_source_timeline/);
 assert.match(source, /\/minimax_h3_context_loop\/checkpoints/);
@@ -445,7 +535,7 @@ assert.match(source, /preserveDelegatedPrompts\(\)/);
 assert.match(source, /convertTaggedPictureReference/);
 assert.match(source, /taggedPictureReferenceMode/);
 assert.match(source, /h3studio-ref-mode/);
-assert.match(source, /Use semantic #tag\[time\]/);
+assert.match(source, /Use untimed Qwen-only #tag/);
 assert.match(source, /publishCompanionScene/);
 assert.match(source, /Append a new scene and select it/);
 assert.match(source, /state\.plan\.shots\.push\(makeShot\(state\.plan\.shots\)\)/);
@@ -463,26 +553,25 @@ assert.match(source, /field\("Lock source audio", lockSourceAudio\)/);
 assert.match(source, /applySceneAudioOverride/);
 assert.match(source, /field\("LoRA route", loraRoute\)/);
 assert.match(source, /MiniMax H3 Scene LoRA Scheduler/);
+assert.match(source, /availableLoRARoutes/);
+assert.match(source, /h3-lora-routes-changed/);
 assert.match(source, /row\.loraRoute/);
-assert.match(source, /Advanced boundary controls/);
-assert.match(source, /experimentalCutMarker\.hidden = !advanced\.open/);
-assert.match(source, /advanced\.addEventListener\("toggle", refreshExperimentalMarkers\)/);
-assert.match(source, /advanced\.open = state\.advancedBoundaryOpen/);
-assert.match(source, /ADVANCED_BOUNDARY_OPEN_PROPERTY/);
-assert.match(source, /field\("Implementation", continuation\)/);
+assert.doesNotMatch(source, /Advanced boundary controls/);
+assert.doesNotMatch(source, /ADVANCED_BOUNDARY_OPEN_PROPERTY/);
+assert.match(source, /field\("Boundary implementation", implementation\)/);
 assert.match(source, /applySceneTransitionPreset/);
-assert.match(source, /field\("Boundary spatial proxy", spatialProxy\)/);
+assert.match(source, /field\("Boundary spatial proxy", spatialProxyControl\)/);
 assert.match(source, /Low-grid 5\/6 proxy · Guide/);
 assert.match(source, /Latent 5\/6 proxy · AV/);
 assert.match(source, /context_spatial_proxy/);
-assert.match(source, /field\("Visual \/ audio context", contextPair\)/);
+assert.match(source, /field\("Audio context total", audioTotal\)/);
 assert.match(source, /audio_context_length/);
 assert.match(source, /video_blend_frames/);
-assert.match(source, /Guide · new shot/);
-assert.match(source, /Latent Guide · direct generated latent/);
-assert.match(source, /Detail Guide · color injection/);
-assert.match(source, /Masked AV · same shot/);
-assert.match(source, /Feathered AV · experimental dual-stream feather/);
+assert.match(source, /\["guide", "Guide"\]/);
+assert.match(source, /\["latent_guide", "Latent Guide"\]/);
+assert.match(source, /\["tapered_guide", "Detail Guide"\]/);
+assert.match(source, /\["masked_av", "Masked AV"\]/);
+assert.match(source, /\["feathered_av", "Feathered AV"\]/);
 assert.doesNotMatch(source, /Feathered AV \+ RGB/);
 assert.match(source, /17n\+5 temporal latent grid/);
 assert.match(source, /Exact aligned choices are 39, 90, 141, 192/);

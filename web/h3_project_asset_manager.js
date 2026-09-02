@@ -5,14 +5,16 @@ import {
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.5.68";
+} from "./h3_project_asset_editor_core.mjs?v=0.6.0";
 import {
     publishProjectAssetCatalogChanged,
-} from "./h3_project_asset_sync_core.mjs?v=0.5.68";
+    serializedProjectAssetCatalog,
+} from "./h3_project_asset_sync_core.mjs?v=0.6.0";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
-    "MiniMaxH3ChainPlan", "MiniMaxH3ChainPlanStudio",
+    "MiniMaxH3ChainPlan", "MiniMaxH3ChainPlanModern",
+    "MiniMaxH3ChainPlanStudio",
 ]);
 const ROLES = {
     image: ["picture", "semantic_anchor"],
@@ -302,8 +304,14 @@ function mount(node) {
     const top = el("div", "h3pa-row");
     const runNameInput = el("input", "h3pa-project");
     runNameInput.placeholder = "Run name";
-    runNameInput.title = "Authoritative H3 chain Run name. When this node is connected to Plan, the Plan run_name is synchronized automatically; enter it here only.";
+    runNameInput.title = "Type a new Run name or choose an existing Asset Carousel project. Choosing one switches this Carousel and its connected Plan.";
     runNameInput.setAttribute("aria-label", "Run name");
+    const projectSuggestions = el("datalist");
+    const projectSuggestionId = `h3pa-projects-${String(
+        node.id ?? "node",
+    ).replace(/[^A-Za-z0-9_-]/g, "_")}`;
+    projectSuggestions.id = projectSuggestionId;
+    runNameInput.setAttribute("list", projectSuggestionId);
     const savedRunName = String(runNameWidget?.value ?? "").trim();
     const connectedRunName = downstreamPlanRunName(node);
     runNameInput.value = (
@@ -317,13 +325,13 @@ function mount(node) {
     }
     const sourceSelect = el("select");
     for (const [value, label] of [
-        ["input", "ComfyUI input"],
+        ["input", "ComfyUI input"], ["project", "Other Run"],
         ["chains", "H3 backups"],
     ]) {
         const option = el("option", "", label); option.value = value;
         sourceSelect.append(option);
     }
-    sourceSelect.title = "Choose where Import browses for media to copy into this project.";
+    sourceSelect.title = "Choose where Import browses for media to copy into this Run. Other Run reads the live Asset Carousel; H3 backups reads recovery snapshots.";
     const previewSelect = el("select");
     for (const [value, label] of [
         ["light", "Light previews"],
@@ -346,7 +354,9 @@ function mount(node) {
             fileInput.click();
         }, "Choose a local media file, or drop files directly onto the Carousel. A selected Unassigned slot is bound; otherwise a new asset is created."),
         button("Import", () => browseSource(selectedUnassignedSlot()),
-            "Create a project asset from the selected source. ComfyUI input is the default; a selected Unassigned slot is bound instead."),
+            "Create a project asset from the selected source: ComfyUI input, another Run, or an H3 backup. A selected Unassigned slot is bound instead."),
+        button("Duplicate project…", () => duplicateAssetProject(),
+            "Create a new Run containing this asset catalog, folders, lyrics, and project-owned media. Generated clips, checkpoints, and assembled renders are not copied. This Carousel stays on the current Run."),
         button("Refresh", () => refresh()), fileInput,
     );
     const status = el("div", "h3pa-status", "Loading project assets…");
@@ -357,17 +367,21 @@ function mount(node) {
     stage.append(preview, editor);
     const carousel = el("div", "h3pa-carousel");
     carousel.title = "Drop one or more image, video, or audio files here to create project assets immediately.";
-    root.append(top, status, tabs, stage, carousel);
+    root.append(top, status, tabs, stage, carousel, projectSuggestions);
     const dom = node.addDOMWidget("project_asset_carousel", "div", root, {
         serialize: false, hideOnZoom: false, getMinHeight: () => 560,
     });
     dom.serialize = false;
     node.setSize?.([Math.max(node.size?.[0] ?? 680, 760), Math.max(node.size?.[1] ?? 650, 700)]);
 
+    const savedCatalog = serializedProjectAssetCatalog(
+        catalogWidget?.value, runNameInput.value,
+    );
     const state = {
-        catalog: {assets: [], reference_slots: [], folders: []}, selected: "",
+        catalog:savedCatalog ?? {assets: [], reference_slots: [], folders: []}, selected: "",
         filter: "all", folder: "", media: null, bindingSlot: null,
-        dragging: "", uploading: false,
+        dragging: "", uploading: false, duplicatingProject: false,
+        projects: [], projectNames: new Set(),
         expandedFolders: new Set(Array.isArray(
             node.properties?.h3_project_asset_expanded_folders,
         ) ? node.properties.h3_project_asset_expanded_folders.map(String) : []),
@@ -385,6 +399,31 @@ function mount(node) {
         state.media = null;
         preview.classList.remove("h3pa-audio-preview");
         preview.replaceChildren();
+    }
+    async function refreshProjectSuggestions() {
+        try {
+            const payload = await jsonRequest(
+                "/minimax_h3_context_loop/project-assets/projects");
+            const projects = Array.isArray(payload.items) ? payload.items : [];
+            state.projects = projects;
+            state.projectNames = new Set(projects.map(
+                (item) => String(item.project ?? ""),
+            ).filter(Boolean));
+            projectSuggestions.replaceChildren();
+            for (const item of projects) {
+                const option = el("option");
+                option.value = String(item.project ?? "");
+                option.label = (
+                    `${Number(item.asset_count ?? 0)} asset${Number(item.asset_count ?? 0) === 1 ? "" : "s"}` +
+                    ` · ${Number(item.unassigned_count ?? 0)} unassigned`
+                );
+                projectSuggestions.append(option);
+            }
+        } catch {
+            state.projects = [];
+            state.projectNames = new Set();
+            projectSuggestions.replaceChildren();
+        }
     }
     function persistCatalog(catalog) {
         state.catalog = catalog ?? {assets: [], reference_slots: [], folders: []};
@@ -703,6 +742,49 @@ function mount(node) {
             persistCatalog(result.catalog); state.selected = result.asset.id; render();
             setStatus(`Duplicated ${promptTag(asset)} as ${promptTag(result.asset)} without copying media bytes.`);
         } catch (error) { setStatus(error.message, true); }
+    }
+    async function duplicateAssetProject() {
+        const sourceProject = project();
+        if (!sourceProject) {
+            setStatus("Enter a Run name before duplicating its asset project.", true);
+            return;
+        }
+        if (state.duplicatingProject) {
+            setStatus("This asset project is already being duplicated.");
+            return;
+        }
+        const requested = window.prompt(
+            `New Run name for a copy of ${sourceProject}\n\n` +
+            "Only Carousel assets, folders, lyrics, and their recovery mirror are copied. Generated clips, checkpoints, and rendered outputs are not copied.",
+            `${sourceProject}_copy`,
+        );
+        if (requested === null) return;
+        const newProject = String(requested).trim();
+        if (!newProject) {
+            setStatus("The duplicated asset project needs a new Run name.", true);
+            return;
+        }
+        state.duplicatingProject = true;
+        try {
+            setStatus(`Duplicating ${sourceProject} assets into ${newProject}…`);
+            const result = await jsonRequest(
+                "/minimax_h3_context_loop/project-assets/duplicate-project", {
+                    method: "POST", headers: {"Content-Type": "application/json"},
+                    body: JSON.stringify({
+                        project: sourceProject, new_project: newProject,
+                    }),
+                });
+            setStatus(
+                `Created ${result.target_project} with ${result.asset_count} asset${result.asset_count === 1 ? "" : "s"} ` +
+                `and ${result.media_file_count} copied media file${result.media_file_count === 1 ? "" : "s"}. ` +
+                "No generated clips, checkpoints, or renders were copied; the current Run remains selected.",
+            );
+            await refreshProjectSuggestions();
+        } catch (error) {
+            setStatus(error.message, true);
+        } finally {
+            state.duplicatingProject = false;
+        }
     }
     function openImageEditor(asset) {
         const modal = el("div", "h3pa-modal h3pa-crop-modal");
@@ -1633,10 +1715,33 @@ function mount(node) {
         const selected = allItems().find((asset) => asset.id === state.selected);
         renderPreview(selected); renderEditor(selected);
     }
+    function hydrateSerializedCatalog() {
+        const catalog = serializedProjectAssetCatalog(
+            catalogWidget?.value, project(),
+        );
+        if (!catalog) return false;
+        const currentSignature = `${String(state.catalog?.project ?? "")}\u0000${String(
+            state.catalog?.revision ?? "",
+        )}`;
+        const cachedSignature = `${String(catalog.project ?? "")}\u0000${String(
+            catalog.revision ?? "",
+        )}`;
+        if (currentSignature === cachedSignature
+                && (state.catalog?.assets?.length ?? 0) === catalog.assets.length
+                && (state.catalog?.reference_slots?.length ?? 0) ===
+                    catalog.reference_slots.length) return false;
+        state.catalog = catalog;
+        render();
+        setStatus(
+            `${catalog.assets.length} cached project assets · checking for changes…`,
+        );
+        return true;
+    }
     async function refresh() {
         const requestedProject = project();
         const sequence = ++refreshSequence;
         if (!requestedProject) {
+            void refreshProjectSuggestions();
             setStatus("Enter a Run name, or connect this node to a named Plan.");
             return;
         }
@@ -1647,6 +1752,7 @@ function mount(node) {
             );
             if (sequence !== refreshSequence || project() !== requestedProject) return;
             persistCatalog(catalog); render();
+            void refreshProjectSuggestions();
             setStatus(`${catalog.assets.length} project assets · ${(catalog.reference_slots ?? []).length} unassigned · revision ${(catalog.revision || "empty").slice(0, 12)}`);
         } catch (error) { setStatus(error.message, true); }
     }
@@ -1758,28 +1864,46 @@ function mount(node) {
         const modal = el("div", "h3pa-modal");
         const row = el("div", "h3pa-row");
         const search = el("input", "h3pa-project"); search.placeholder = "Filter assets";
-        row.append(el("strong", "", source === "input" ? "ComfyUI input" : "H3 chain backups"), search,
+        const sourceTitle = source === "input"
+            ? "ComfyUI input"
+            : (source === "project" ? "Other Run assets" : "H3 chain backups");
+        row.append(el("strong", "", sourceTitle), search,
             button("Close", () => modal.remove()));
         const list = el("div", "h3pa-source-list"); modal.append(row, list); document.body.append(modal);
         async function load() {
             list.textContent = "Loading…";
             try {
                 const payload = await jsonRequest(
-                    `/minimax_h3_context_loop/project-assets/sources?source=${source}&q=${encodeURIComponent(search.value)}`,
+                    `/minimax_h3_context_loop/project-assets/sources?source=${source}&q=${encodeURIComponent(search.value)}&project=${encodeURIComponent(project())}`,
                 );
                 list.replaceChildren();
                 const items = source === "chains"
                     ? payload.items.flatMap((run) => run.assets.map((asset) => ({...asset, run_name: run.run_name})))
-                    : payload.items;
+                    : (source === "project"
+                        ? payload.items.flatMap((run) => run.assets.map((asset) => ({...asset, source_project: run.project})))
+                        : payload.items);
+                if (!items.length) {
+                    list.append(el("div", "h3pa-empty", source === "project"
+                        ? "No matching assets were found in another Run."
+                        : "No matching media was found."));
+                }
                 for (const item of items) {
                     const rowItem = el("div", "h3pa-source-item");
-                    rowItem.append(el("span", "", source === "chains"
-                        ? `${item.run_name} · ${promptTag(item)}` : item.path),
+                    const sourceLabel = source === "chains"
+                        ? `${item.run_name} · ${promptTag(item)}`
+                        : (source === "project"
+                            ? `${item.source_project} · ${promptTag(item)} · ${item.original_name || "asset"}`
+                            : item.path);
+                    rowItem.append(el("span", "", sourceLabel),
                     el("span", "", item.kind ?? ""), button(slot ? "Bind" : "Import", async () => {
                         try {
                             if (source === "chains") await importAsset({
                                 source, run_name: item.run_name, asset_id: item.id,
                                 slot_id: slot?.id ?? "",
+                            });
+                            else if (source === "project") await importAsset({
+                                source, source_project: item.source_project,
+                                asset_id: item.id, slot_id: slot?.id ?? "",
                             });
                             else await importAsset({
                                 source, path: item.path, slot_id: slot?.id ?? "",
@@ -1845,6 +1969,22 @@ function mount(node) {
         }
         clearTimeout(projectTimer); projectTimer = setTimeout(refresh, 400);
     });
+    runNameInput.addEventListener("change", () => {
+        const selectedProject = project();
+        if (!state.projectNames.has(selectedProject)) return;
+        clearTimeout(projectTimer);
+        refreshSequence += 1;
+        state.selected = "";
+        state.folder = "";
+        stopMedia();
+        if (runNameWidget) {
+            runNameWidget.value = selectedProject;
+            runNameWidget.callback?.(selectedProject);
+        }
+        syncDownstreamPlan(node, selectedProject);
+        node.graph?.setDirtyCanvas?.(true, true);
+        void refresh();
+    });
     previewSelect.addEventListener("change", () => {
         state.previewMode = previewSelect.value === "full" ? "full" : "light";
         node.properties ??= {};
@@ -1876,9 +2016,11 @@ function mount(node) {
         return result;
     };
     node._h3ProjectAssetRefresh = () => {
+        hydrateSerializedCatalog();
         if (!adoptConnectedRunName()) void refresh();
         scheduleGraphRunNameSync();
     };
+    if (savedCatalog) render();
     node._h3ProjectAssetRefresh();
 }
 

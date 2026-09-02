@@ -209,7 +209,7 @@
       "id": 1906,
       "type": "Note",
       "pos": [
-        -3936,
+        -3008,
         -1088
       ],
       "size": [
@@ -1543,7 +1543,7 @@
       "type": "MiniMaxH3ChainRichScenePromptEditor",
       "pos": [
         1984,
-        1344
+        544
       ],
       "size": [
         1088,
@@ -1583,7 +1583,7 @@
       "type": "MiniMaxH3ChainPlan",
       "pos": [
         -672,
-        1344
+        544
       ],
       "size": [
         992,
@@ -1669,7 +1669,7 @@
       "type": "MiniMaxH3ChainPlanStudio",
       "pos": [
         384,
-        1344
+        544
       ],
       "size": [
         1536,
@@ -2024,7 +2024,7 @@
       "type": "Note",
       "pos": [
         3136,
-        1312
+        512
       ],
       "size": [
         576,
@@ -2138,7 +2138,7 @@
       "id": 1951,
       "type": "MiniMaxH3ContexLoopSourceAVTarget",
       "pos": [
-        1344,
+        1568,
         96
       ],
       "size": [
@@ -2225,8 +2225,8 @@
       "id": 1952,
       "type": "MiniMaxH3ContexMaskedTarget",
       "pos": [
-        1904,
-        480
+        2112,
+        96
       ],
       "size": [
         400,
@@ -2311,8 +2311,8 @@
       "id": 1954,
       "type": "MiniMaxH3ContexMaskGridPreview",
       "pos": [
-        1216,
-        592
+        1568,
+        576
       ],
       "size": [
         370,
@@ -2372,8 +2372,8 @@
       "id": 1955,
       "type": "PreviewImage",
       "pos": [
-        2400,
-        480
+        2112,
+        576
       ],
       "size": [
         380,
@@ -2406,8 +2406,8 @@
       "id": 1956,
       "type": "PreviewAny",
       "pos": [
-        2400,
-        842
+        2112,
+        816
       ],
       "size": [
         380,
@@ -2440,7 +2440,7 @@
       "id": 1957,
       "type": "MiniMaxH3ContexLoopMaskSlice",
       "pos": [
-        704,
+        1056,
         576
       ],
       "size": [
@@ -2546,7 +2546,7 @@
       "type": "MiniMaxH3ChainPolicy",
       "pos": [
         -1092,
-        1504
+        704
       ],
       "size": [
         340,
@@ -3190,9 +3190,9 @@
       "title": "H3 MODEL STACK",
       "bounding": [
         -2112,
-        -1536,
+        -1024,
         2200,
-        1162
+        650
       ],
       "color": "#3f789e",
       "flags": {}
@@ -3204,7 +3204,7 @@
         -704,
         -352,
         5792,
-        1568
+        800
       ],
       "color": "#744c8c",
       "flags": {}
@@ -3237,10 +3237,10 @@
       "id": 6,
       "title": "REF2V MASKED INPAINT — PLAN STUDIO AUTHORING",
       "bounding": [
-        -1152,
-        1280,
-        4244,
-        1472
+        -672,
+        480,
+        3764,
+        1392
       ],
       "color": "#3f789e",
       "flags": {}
@@ -3255,18 +3255,6 @@
         1536
       ],
       "color": "#3f789e",
-      "flags": {}
-    },
-    {
-      "id": 8,
-      "title": "WORKFLOW GUIDE",
-      "bounding": [
-        -4000,
-        -1152,
-        864,
-        1280
-      ],
-      "color": "#2f596b",
       "flags": {}
     }
   ],

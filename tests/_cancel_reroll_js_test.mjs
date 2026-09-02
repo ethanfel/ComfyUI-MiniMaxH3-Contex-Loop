@@ -60,6 +60,8 @@ const source = fs.readFileSync(
     new URL("../web/h3_chain_cancel_reroll.js", import.meta.url),
     "utf8",
 );
+assert.match(source, /refreshRestoredPlanEditors\(planNode\)/,
+    "reroll seed changes refresh every Plan companion");
 assert.match(source, /\/api\/jobs\/\$\{encodeURIComponent\(record\.promptId\)\}\/cancel/);
 assert.match(source, /execution_interrupted/);
 assert.match(source, /await waiter\.promise/);

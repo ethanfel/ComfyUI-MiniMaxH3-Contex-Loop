@@ -189,18 +189,26 @@ assert "Feathered AV" in migrated_status
 try:
     build_transition("guide", True, "masked_av", 1)
 except ValueError as exc:
-    assert "exact shared" in str(exc)
+    assert "at least 5" in str(exc)
 else:
     raise AssertionError("one-frame hard AV expert override was accepted")
 
 for off_grid in (5, 22, 56, 73):
+    transition = build_transition(
+        "soft_av", True, "audio_feathered_av", off_grid)[0]
+    source_driven = chain._contract_compose_chain_policy(
+        chain.migrate_legacy_audio_mode("source_track"), transition,
+        audio_context_length=off_grid)
+    assert source_driven["transition_policy"]["context_length"] == off_grid
     try:
-        build_transition("soft_av", True, "audio_feathered_av", off_grid)
+        chain._contract_compose_chain_policy(
+            chain.migrate_legacy_audio_mode("generated_audio"), transition,
+            audio_context_length=off_grid)
     except ValueError as exc:
-        assert "39, 90, 141, 192, or 243" in str(exc)
+        assert "exact shared" in str(exc)
     else:
         raise AssertionError(
-            "off-grid AV expert override %d was accepted" % off_grid)
+            "off-grid AV generated-audio carry %d was accepted" % off_grid)
 
 try:
     build_transition("detail_av", True, "tapered_av", 90)

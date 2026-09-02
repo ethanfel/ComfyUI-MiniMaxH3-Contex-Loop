@@ -229,6 +229,81 @@ async def check():
         assert timeline_records[1]["frame_count"] == 160
         assert editorial_frames == 840
 
+        latent_editorial = chain._save_run_editorial_document({
+            "run_name": "studio",
+            "scene_order": [{"scene": 1, "scene_id": "intro"}],
+            "chapters": [],
+            "placements": [],
+            "trims": [{
+                "scene": 1, "scene_id": "intro", "out_frame": 72,
+            }],
+        })
+        assert latent_editorial["trims"][0]["out_frame"] == 72
+        _, trimmed_records, trimmed_frames = (
+            chain._editorial_timeline_records("studio", [{
+                "index": 1, "id": "intro", "raw_frames": 362,
+                "delivered_frames": 340,
+            }]))
+        assert trimmed_records[0]["frame_count"] == 72
+        assert trimmed_records[0]["source_frame_count"] == 340
+        assert trimmed_frames == 72
+        transient = chain._editorial_trimmed_segment({
+            "index": 1, "id": "intro", "raw_frames": 362,
+            "delivered_frames": 340,
+        }, latent_editorial)
+        assert transient["_editorial_raw_out_frames"] == 94
+        assert transient["_editorial_video_steps"] == 28
+        chain._streams_from_latent = lambda latent: latent["samples"]
+        trimmed_latent = chain._editorial_trim_latent({"samples": [
+            chain.torch.zeros(1, 4, 107, 2, 2),
+            chain.torch.zeros(1, 4, 2, 603),
+        ]}, transient)
+        assert trimmed_latent["samples"][0].shape[2] == 28
+        assert trimmed_latent["samples"][1].shape[-1] == 157
+        saved_tail = chain.torch.arange(100).reshape(100, 1, 1, 1)
+        assert chain._editorial_context_tail(
+            saved_tail, transient, 100).shape[0] == 0
+        source_view = dict(transient)
+        current = {
+            "index": 2, "resolved_context_length": 22,
+            "resolved_audio_context_length": 0,
+            "delivered_frames": 340,
+        }
+        assert chain._editorial_dependency_mismatches(
+            current, 2, {1: source_view, 2: current},
+        ) == ["previous scene endpoint changed from 340f to 72f"]
+        downstream = {
+            "index": 3, "resolved_context_length": 22,
+            "resolved_audio_context_length": 0,
+            "predecessor_editorial_out_frames": 340,
+            "delivered_frames": 340,
+        }
+        stale = chain._editorial_stale_dependencies({
+            1: source_view, 2: current, 3: downstream,
+        })
+        assert list(stale) == [2, 3]
+        assert stale[3] == ["depends on stale scene 2"]
+        current["predecessor_editorial_out_frames"] = 72
+        assert not chain._editorial_dependency_mismatches(
+            current, 2, {1: source_view, 2: current},
+        )
+        assembly_records = chain._apply_editorial_timeline_records([{
+            "kind": "segment", "scene_index": 1, "path": str(segment),
+            "input_frames": 340, "delivered_frames": 340,
+            "blend_frames": 0, "skip_frames": 0,
+        }], trimmed_records, [{
+            "index": 1, "id": "intro", "segment": str(
+                segment.relative_to(temporary)),
+            "delivered_frames": 340,
+        }], {"width": 64, "height": 64})
+        assert assembly_records[0]["input_frames"] == 72
+        assert assembly_records[0]["delivered_frames"] == 72
+        trimmed_audio = chain._audio_with_editorial_timeline({
+            "waveform": chain.torch.ones(1, 2, 3400),
+            "sample_rate": 240,
+        }, trimmed_records, 340, 72, "trimmed editorial unit audio")
+        assert trimmed_audio["waveform"].shape[-1] == 720
+
         lrc = chain._parse_timed_lyrics(
             "[00:01.5]First line\n[00:03.25]Second line")
         assert lrc[0] == {"start": 1.5, "end": 3.25,

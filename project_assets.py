@@ -7,6 +7,7 @@ is retained below the matching H3 chain output directory for recovery.
 
 from __future__ import annotations
 
+import copy
 import hashlib
 import json
 import mimetypes
@@ -461,6 +462,118 @@ class ProjectAssetStore:
                 dict(item) for item in catalog.get("reference_slots", [])],
             "folders": [dict(item) for item in catalog.get("folders", [])],
         }
+
+    def duplicate_project(
+            self, project: Any, new_project: Any) -> dict[str, Any]:
+        """Clone one complete asset project without copying generated output.
+
+        Only catalog-referenced media below ``input/h3_projects`` and its
+        ``project_assets`` recovery mirror are copied.  The source run's
+        checkpoints, generated clips, assembled videos, and other output
+        files are never traversed.
+        """
+        source_directory, source_name = self._project_dir(project)
+        target_directory, target_name = self._project_dir(new_project)
+        if source_name == target_name:
+            raise ValueError(
+                "The duplicated asset project needs a different Run name.")
+        source_catalog_path = os.path.join(source_directory, "catalog.json")
+        if not os.path.isfile(source_catalog_path):
+            raise FileNotFoundError(
+                "Asset project %s does not exist." % source_name)
+
+        source_catalog = self.load(source_name)
+        media: dict[str, tuple[str, str, int]] = {}
+        for entry in source_catalog.get("assets", []):
+            source_path = self._asset_path(source_name, entry)
+            relative = str(entry.get("relative_path") or "").replace(
+                "/", os.sep)
+            normalized = os.path.normpath(relative)
+            if (not relative or normalized in ("", ".")
+                    or os.path.isabs(normalized)
+                    or normalized == os.pardir
+                    or normalized.startswith(os.pardir + os.sep)):
+                raise ValueError(
+                    "Project asset media path escapes its store: %s" %
+                    relative)
+            digest = _file_sha256(source_path)
+            expected = str(entry.get("sha256") or "")
+            if expected and digest != expected:
+                raise ValueError(
+                    "Project asset %s no longer matches its catalog SHA-256."
+                    % entry.get("tag", entry.get("id", "asset")))
+            existing = media.get(normalized)
+            if existing is not None and existing[1] != digest:
+                raise ValueError(
+                    "Project asset catalog maps one media path to different "
+                    "content.")
+            media[normalized] = (
+                source_path, digest, int(os.path.getsize(source_path)))
+
+        target_backup, _name = self._backup_dir(target_name)
+        target_run_directory = os.path.dirname(target_backup)
+        if os.path.exists(target_directory):
+            raise FileExistsError(
+                "An asset project named %s already exists. Choose a new Run "
+                "name." % target_name)
+        if os.path.exists(target_run_directory):
+            raise FileExistsError(
+                "An H3 output Run named %s already exists. Choose a new Run "
+                "name so its renders and checkpoints remain separate." %
+                target_name)
+
+        os.makedirs(self.projects_root, exist_ok=True)
+        os.makedirs(self.chains_root, exist_ok=True)
+        created_project = False
+        created_run = False
+        try:
+            os.mkdir(target_directory)
+            created_project = True
+            os.mkdir(target_run_directory)
+            created_run = True
+            os.makedirs(target_backup)
+            for group in ("images", "videos", "audio", "previews", ".uploads"):
+                os.makedirs(os.path.join(target_directory, group))
+            for group in ("images", "videos", "audio"):
+                os.makedirs(os.path.join(target_backup, group))
+
+            for relative, (source_path, digest, _size) in media.items():
+                for root in (target_directory, target_backup):
+                    destination = os.path.realpath(os.path.join(root, relative))
+                    if not _inside(root, destination):
+                        raise ValueError(
+                            "Project asset media path escapes its duplicate.")
+                    os.makedirs(os.path.dirname(destination), exist_ok=True)
+                    shutil.copy2(source_path, destination)
+                    if _file_sha256(destination) != digest:
+                        raise ValueError(
+                            "Duplicated project asset failed its SHA-256 check.")
+
+            now = _utc_now()
+            cloned_catalog = copy.deepcopy(source_catalog)
+            cloned_catalog["project"] = target_name
+            cloned_catalog["updated_at"] = now
+            for entry in cloned_catalog.get("assets", []):
+                relative = str(entry.get("relative_path") or "")
+                entry["input_path"] = os.path.join(
+                    "h3_projects", target_name, relative).replace(os.sep, "/")
+                entry["updated_at"] = now
+            saved = self._save_catalog(cloned_catalog)
+            return {
+                "catalog": saved,
+                "source_project": source_name,
+                "target_project": target_name,
+                "asset_count": len(saved.get("assets", [])),
+                "media_file_count": len(media),
+                "copied_bytes": sum(item[2] for item in media.values()),
+                "render_outputs_copied": False,
+            }
+        except Exception:
+            if created_run:
+                shutil.rmtree(target_run_directory, ignore_errors=True)
+            if created_project:
+                shutil.rmtree(target_directory, ignore_errors=True)
+            raise
 
     def _asset_path(self, project: Any, entry: dict[str, Any]) -> str:
         directory, _name = self._project_dir(project)
@@ -1072,6 +1185,122 @@ class ProjectAssetStore:
         if not value or not _inside(self.input_root, path) or not os.path.isfile(path):
             raise FileNotFoundError("ComfyUI input asset was not found: %s" % value)
         return path
+
+    def project_catalogs(self, query: Any = "") -> list[dict[str, Any]]:
+        """List existing live Carousel projects, including empty catalogs."""
+        needle = str(query or "").strip().lower()
+        result = []
+        if not os.path.isdir(self.projects_root):
+            return result
+        with os.scandir(self.projects_root) as projects:
+            for project in projects:
+                if (not project.is_dir(follow_symlinks=False)
+                        or needle and needle not in project.name.lower()
+                        or not os.path.isfile(os.path.join(
+                            project.path, "catalog.json"))):
+                    continue
+                try:
+                    catalog = self.load(project.name)
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                result.append({
+                    "project": project.name,
+                    "asset_count": len(catalog.get("assets", [])),
+                    "unassigned_count": len(
+                        catalog.get("reference_slots", [])),
+                    "folder_count": len(catalog.get("folders", [])),
+                    "updated_at": str(catalog.get("updated_at") or ""),
+                    "revision": str(catalog.get("revision") or ""),
+                })
+        result.sort(key=lambda item: item["project"].lower())
+        result.sort(key=lambda item: item["updated_at"], reverse=True)
+        return result[:MAX_INPUT_RESULTS]
+
+    def projects(self, query: Any = "", *, exclude_project: Any = "") -> list[dict[str, Any]]:
+        """List live Carousel catalogs without exposing arbitrary input files."""
+        needle = str(query or "").strip().lower()
+        excluded = (_safe_project(exclude_project)
+                    if str(exclude_project or "").strip() else "")
+        result = []
+        remaining = MAX_INPUT_RESULTS
+        if not os.path.isdir(self.projects_root):
+            return result
+        with os.scandir(self.projects_root) as projects:
+            for project in projects:
+                if remaining <= 0:
+                    break
+                if (not project.is_dir(follow_symlinks=False)
+                        or project.name == excluded):
+                    continue
+                try:
+                    catalog = self.load(project.name)
+                except (OSError, TypeError, ValueError, json.JSONDecodeError):
+                    continue
+                assets = []
+                for raw in catalog.get("assets", []):
+                    if not isinstance(raw, dict):
+                        continue
+                    searchable = " ".join((
+                        project.name,
+                        str(raw.get("tag") or ""),
+                        str(raw.get("original_name") or ""),
+                        str(raw.get("role") or ""),
+                    )).lower()
+                    if needle and needle not in searchable:
+                        continue
+                    try:
+                        self._asset_path(project.name, raw)
+                    except (OSError, TypeError, ValueError):
+                        continue
+                    assets.append(dict(raw))
+                    remaining -= 1
+                    if remaining <= 0:
+                        break
+                if assets:
+                    result.append({
+                        "project": project.name,
+                        "revision": str(catalog.get("revision") or ""),
+                        "assets": assets,
+                    })
+        return sorted(result, key=lambda item: item["project"].lower())
+
+    def import_project_asset(
+            self, project: Any, source_project: Any, asset_id: Any, *,
+            slot_id: Any = "") -> dict[str, Any]:
+        """Copy one asset from another live Carousel into this project."""
+        target_name = _safe_project(project)
+        source_name = _safe_project(source_project)
+        if target_name == source_name:
+            raise ValueError(
+                "Choose another Run. Use Duplicate for an asset already in "
+                "this Carousel.")
+        source_entry, source_path = self.asset(source_name, asset_id)
+        wanted_slot = str(slot_id or "")
+        if wanted_slot:
+            result = self.bind_reference_slot(
+                target_name, wanted_slot, source_path,
+                original_name=source_entry.get("original_name", ""),
+                source_kind="project")
+        else:
+            result = self.import_file(
+                target_name, source_path,
+                role=source_entry.get("role", ""),
+                tag=source_entry.get("tag", ""),
+                original_name=source_entry.get("original_name", ""),
+                source_kind="project",
+                options=(dict(source_entry.get("options") or {})
+                         if isinstance(source_entry.get("options"), dict)
+                         else None))
+        lyrics = str(source_entry.get("lyrics") or "")
+        if lyrics and result.get("asset", {}).get("kind") == "audio":
+            bound_slot_id = result.get("bound_slot_id")
+            result = self.update(
+                target_name, result["asset"]["id"], {"lyrics": lyrics})
+            if bound_slot_id:
+                result["bound_slot_id"] = bound_slot_id
+        result["source_project"] = source_name
+        result["source_asset_id"] = str(source_entry.get("id") or "")
+        return result
 
     def backups(self) -> list[dict[str, Any]]:
         result = []

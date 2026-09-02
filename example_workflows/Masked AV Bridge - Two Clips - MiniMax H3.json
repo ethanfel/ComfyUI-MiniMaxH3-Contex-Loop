@@ -1532,9 +1532,9 @@
       "id": 3,
       "title": "Final 39-frame linear overlaps + original audio around generated middle",
       "bounding": [
-        2144,
+        2100,
         -950,
-        2006,
+        2050,
         850
       ],
       "color": "#9e743f",

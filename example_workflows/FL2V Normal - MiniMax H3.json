@@ -181,7 +181,7 @@
       "id": 1906,
       "type": "Note",
       "pos": [
-        -3936,
+        -3008,
         -1088
       ],
       "size": [
@@ -1486,7 +1486,7 @@
       "type": "Note",
       "pos": [
         1568,
-        1312
+        544
       ],
       "size": [
         896,
@@ -1512,7 +1512,7 @@
       "type": "MiniMaxH3ChainPlan",
       "pos": [
         -672,
-        1344
+        544
       ],
       "size": [
         1024,
@@ -2122,7 +2122,7 @@
       "type": "MiniMaxH3ChainScenePromptEditor",
       "pos": [
         416,
-        1344
+        544
       ],
       "size": [
         1120,
@@ -2167,7 +2167,7 @@
       "type": "MiniMaxH3ChainPreflight",
       "pos": [
         -1024,
-        256
+        32
       ],
       "size": [
         384,
@@ -2251,7 +2251,7 @@
       "type": "MiniMaxH3ChainPolicy",
       "pos": [
         -1092,
-        1504
+        704
       ],
       "size": [
         340,
@@ -2823,9 +2823,9 @@
       "title": "H3 MODEL STACK",
       "bounding": [
         -2112,
-        -1536,
+        -1024,
         2200,
-        1162
+        650
       ],
       "color": "#3f789e",
       "flags": {}
@@ -2837,7 +2837,7 @@
         -1600,
         -352,
         6624,
-        1568
+        800
       ],
       "color": "#744c8c",
       "flags": {}
@@ -2870,24 +2870,12 @@
       "id": 6,
       "title": "FL2V — PLAN + STANDARD PROMPT EDITOR",
       "bounding": [
-        -1152,
-        1280,
-        3664,
-        1728
-      ],
-      "color": "#3f789e",
-      "flags": {}
-    },
-    {
-      "id": 7,
-      "title": "WORKFLOW GUIDE",
-      "bounding": [
-        -4000,
-        -1152,
-        864,
+        -704,
+        480,
+        3216,
         1280
       ],
-      "color": "#2f596b",
+      "color": "#3f789e",
       "flags": {}
     }
   ],

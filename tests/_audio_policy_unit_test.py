@@ -152,6 +152,48 @@ assert tuple(locked_current[0]["current_source_audio_target"][
     "waveform"].shape) == (1, 1, 22000)
 assert "target-locked" in locked_current[13]
 
+lip_options = chain._contract_masked_song_options()
+contextual_policy = chain._contract_audio_policy(
+    "source", "off", "off", "locked", lip_options)
+contextual_chain_policy = chain._contract_compose_chain_policy(
+    contextual_policy, chain._contract_transition_policy("cut"),
+    audio_context_length=0)
+contextual_plan = chain._normalize_plan(
+    json.dumps({"shots": [
+        {"id": "first", "prompt": "First song scene.", "length": 73},
+        {"id": "second", "prompt": "Second song scene.", "length": 73},
+    ]}),
+    "contextual-song-test", 64, 64, 1, "video", "head", "disabled",
+    "generated_audio", 0, 1.0, 8, 7, 18, "model-stack", 0, "guide",
+    contextual_chain_policy)
+contextual_samples = round(8.0 * source_audio["sample_rate"])
+contextual_source = {
+    "waveform": chain.torch.linspace(
+        -0.5, 0.5, contextual_samples).reshape(1, 1, -1),
+    "sample_rate": source_audio["sample_rate"],
+}
+contextual_plan = chain._plan_with_source_audio(
+    contextual_plan, contextual_source)
+contextual_current = chain.MiniMaxH3ChainCurrent().current(
+    {"plan": contextual_plan, "index": 2}, contextual_source)["result"]
+contextual_state = contextual_current[0]
+assert contextual_state[
+    "current_source_audio_target_clip_start_seconds"] == 1.0
+assert int(contextual_state["current_source_audio_target"][
+    "waveform"].shape[-1]) == round(
+        (1.0 + 73 / 24 + 0.2) * source_audio["sample_rate"])
+contextual_dependency = contextual_state[
+    "current_source_reference_dependency"]
+assert contextual_dependency["target_start_frame"] == 73
+assert contextual_dependency["target_end_frame"] == 146
+assert contextual_dependency["start_frame"] == 49
+assert contextual_dependency["end_frame"] == 151
+assert contextual_dependency["lip_sync_options"] == lip_options
+contextual_scene_dependency = chain._scene_dependency_record(
+    contextual_plan, 2, contextual_dependency)
+assert contextual_scene_dependency["scopes"]["global_generation"][
+    "lip_sync_options"] == lip_options
+
 silent_state = {"plan": prepared_silent, "index": 1}
 silent_current = chain.MiniMaxH3ChainCurrent().current(
     silent_state, None)["result"]

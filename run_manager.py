@@ -38,6 +38,8 @@ except ImportError:  # Standalone unit tests import this module without a packag
 
 
 PLAN_NODE_TYPE = "MiniMaxH3ChainPlan"
+MODERN_PLAN_NODE_TYPE = "MiniMaxH3ChainPlanModern"
+PLAN_NODE_TYPES = (PLAN_NODE_TYPE, MODERN_PLAN_NODE_TYPE)
 PLAN_WIDGET_NAMES = (
     "plan_json",
     "run_name",
@@ -57,13 +59,28 @@ PLAN_WIDGET_NAMES = (
     "video_blend_frames",
     "continuation_mode",
 )
+MODERN_PLAN_WIDGET_NAMES = (
+    "plan_json",
+    "run_name",
+    "generation_fingerprint",
+    "width",
+    "height",
+    "encode_mode",
+    "crop",
+    "default_duration_seconds",
+    "default_steps",
+    "base_seed",
+    "segment_crf",
+    "video_blend_frames",
+)
 
 H3_CONTEXT_LENGTHS = (
     1, 5, 22, 39, 56, 73, 90, 107, 124,
     141, 158, 175, 192, 209, 226, 243,
 )
 CONTINUATION_MODES = tuple(CONTINUATION_POLICIES)
-SCENE_LORA_ROUTES = ("base", "a", "b", "c", "d")
+SCENE_LORA_ROUTES = (
+    "base", *(chr(ord("a") + offset) for offset in range(26)))
 
 
 def _safe_name(value: Any, fallback: str = "") -> str:
@@ -111,7 +128,8 @@ def _api_prompt_inputs(document: Any, run_name: str) -> dict[str, Any]:
     candidates = []
     exact = []
     for node in document.values():
-        if not isinstance(node, dict) or node.get("class_type") != PLAN_NODE_TYPE:
+        if (not isinstance(node, dict) or
+                node.get("class_type") not in PLAN_NODE_TYPES):
             continue
         inputs = node.get("inputs")
         if not isinstance(inputs, dict):
@@ -123,7 +141,7 @@ def _api_prompt_inputs(document: Any, run_name: str) -> dict[str, Any]:
     if selected is None:
         return {}
     restored = {}
-    for name in PLAN_WIDGET_NAMES:
+    for name in dict.fromkeys(PLAN_WIDGET_NAMES + MODERN_PLAN_WIDGET_NAMES):
         if name not in selected:
             continue
         value = _restorable_widget_value(name, selected[name])
@@ -138,16 +156,32 @@ def _workflow_inputs(document: Any, run_name: str) -> dict[str, Any]:
     candidates = []
     exact = []
     for node in document["nodes"]:
-        if not isinstance(node, dict) or node.get("type") != PLAN_NODE_TYPE:
+        if (not isinstance(node, dict) or
+                node.get("type") not in PLAN_NODE_TYPES):
             continue
         widgets = node.get("widgets_values")
         if not isinstance(widgets, list):
             continue
-        candidates.append(widgets)
+        candidate = (node.get("type"), widgets)
+        candidates.append(candidate)
         if len(widgets) > 1 and _safe_name(widgets[1]) == run_name:
-            exact.append(widgets)
+            exact.append(candidate)
     selected = exact[0] if exact else (candidates[0] if len(candidates) == 1 else None)
-    if selected is None or len(selected) < 15:
+    if selected is None:
+        return {}
+    plan_type, selected = selected
+    if plan_type == MODERN_PLAN_NODE_TYPE:
+        if (len(selected) < len(MODERN_PLAN_WIDGET_NAMES)
+                or selected[5] not in ("video", "frames")
+                or selected[6] not in ("disabled", "center")):
+            return {}
+        restored = {}
+        for name, value in zip(MODERN_PLAN_WIDGET_NAMES, selected):
+            value = _restorable_widget_value(name, value)
+            if value is not None:
+                restored[name] = value
+        return restored
+    if len(selected) < 15:
         return {}
     # widgets_values is positional and old workflows can predate fields added
     # near the front of the Plan. Refuse a shifted layout rather than applying

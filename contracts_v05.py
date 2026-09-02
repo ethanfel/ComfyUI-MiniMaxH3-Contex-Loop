@@ -14,6 +14,7 @@ SOURCE_TIMELINE_VERSION = "h3_source_timeline_v1"
 AUDIO_POLICY_VERSION = "h3_audio_policy_v1"
 TRANSITION_POLICY_VERSION = "h3_transition_policy_v1"
 CHAIN_POLICY_VERSION = "h3_chain_policy_v1"
+LIP_SYNC_OPTIONS_VERSION = "h3_lip_sync_options_v1"
 SCENE_DEPENDENCY_VERSION = "h3_scene_dependency_v1"
 PREFLIGHT_VERSION = "h3_preflight_v1"
 
@@ -52,6 +53,9 @@ TRANSITION_CONTEXT_LENGTHS = (
     141, 158, 175, 192, 209, 226, 243,
 )
 AV_TRANSITION_CONTEXT_LENGTHS = (39, 90, 141, 192, 243)
+VIDEO_ONLY_AV_TRANSITION_CONTEXT_LENGTHS = tuple(
+    value for value in TRANSITION_CONTEXT_LENGTHS if value >= 5
+)
 
 # Experimental one-shot latent-context recipe adapted from beijinren's
 # ComfyUI-H3-Context-Noise. Keep every generation-significant value in the
@@ -238,7 +242,8 @@ def audio_policy(
     source_reference: str,
     generated_continuity: str,
     source_audio_target: str | bool = "off",
-) -> dict[str, str]:
+    lip_sync_options: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     """Validate and return one independent 0.5 audio-policy record."""
     final = str(final_audio)
     source = str(source_reference)
@@ -277,7 +282,78 @@ def audio_policy(
     # checkpoints when the new opt-in behavior is disabled.
     if target != "off":
         policy["source_audio_target"] = target
+    if target == "locked" and lip_sync_options is not None:
+        policy["lip_sync_options"] = masked_song_options(lip_sync_options)
     return policy
+
+
+def masked_song_options(
+    value: dict[str, Any] | None = None,
+    *,
+    preroll_seconds: float = 1.0,
+    lookahead_seconds: float = 0.2,
+    audio_denoise: float = 0.0,
+    gap_denoise: float = 0.15,
+    gate_hold_seconds: float = 0.2,
+    voice_fingerprint: str = "",
+) -> dict[str, Any]:
+    """Validate the optional contextual song-latent recipe.
+
+    The record is stored only for target-locked source audio.  Its absence is
+    the stable spelling of the pre-feature hard-cut/full-freeze behavior.
+    """
+    if value is not None:
+        if not isinstance(value, dict):
+            raise ValueError(
+                "H3 lip-sync options must come from MiniMax H3 Lip-Sync "
+                "Options.")
+        if value.get("version") != LIP_SYNC_OPTIONS_VERSION:
+            raise ValueError("H3 lip-sync options version is missing or obsolete.")
+        preroll_seconds = value.get("preroll_seconds", preroll_seconds)
+        lookahead_seconds = value.get("lookahead_seconds", lookahead_seconds)
+        audio_denoise = value.get("audio_denoise", audio_denoise)
+        gap_denoise = value.get("gap_denoise", gap_denoise)
+        gate_hold_seconds = value.get(
+            "gate_hold_seconds", gate_hold_seconds)
+        voice_fingerprint = value.get(
+            "voice_fingerprint", voice_fingerprint)
+
+    def bounded(name: str, raw: Any, low: float, high: float) -> float:
+        if isinstance(raw, bool):
+            raise ValueError("H3 lip-sync %s must be a number." % name)
+        try:
+            resolved = float(raw)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                "H3 lip-sync %s must be a number." % name) from exc
+        if resolved < low or resolved > high:
+            raise ValueError(
+                "H3 lip-sync %s must be between %.3g and %.3g." %
+                (name, low, high))
+        return resolved
+
+    resolved = {
+        "version": LIP_SYNC_OPTIONS_VERSION,
+        "preroll_seconds": bounded(
+            "pre-roll", preroll_seconds, 0.0, 4.0),
+        "lookahead_seconds": bounded(
+            "lookahead", lookahead_seconds, 0.0, 2.0),
+        "audio_denoise": bounded(
+            "sung-region denoise", audio_denoise, 0.0, 1.0),
+        "gap_denoise": bounded(
+            "gap denoise", gap_denoise, 0.0, 1.0),
+        "gate_hold_seconds": bounded(
+            "voice-gate hold", gate_hold_seconds, 0.0, 2.0),
+    }
+    fingerprint = str(voice_fingerprint or "").strip().lower()
+    if fingerprint:
+        if (len(fingerprint) != 64 or any(
+                character not in "0123456789abcdef"
+                for character in fingerprint)):
+            raise ValueError(
+                "H3 lip-sync voice fingerprint must be a SHA-256 hex digest.")
+        resolved["voice_fingerprint"] = fingerprint
+    return resolved
 
 
 def compose_chain_policy(
@@ -297,7 +373,8 @@ def compose_chain_policy(
     resolved_audio = audio_policy(
         audio.get("final_audio"), audio.get("source_reference"),
         audio.get("generated_continuity"),
-        audio.get("source_audio_target", "off"))
+        audio.get("source_audio_target", "off"),
+        audio.get("lip_sync_options"))
     if (not isinstance(transition, dict) or
             transition.get("version") != TRANSITION_POLICY_VERSION):
         raise ValueError("H3 Chain Policy requires a current Transition Policy.")
@@ -318,6 +395,22 @@ def compose_chain_policy(
     if resolved_audio_context < 0 or resolved_audio_context > 240:
         raise ValueError(
             "H3 Chain Policy audio context must be between 0 and 240 frames.")
+    mode = str(resolved_transition["continuation_mode"])
+    context = int(resolved_transition["context_length"])
+    carries_generated_audio = (
+        resolved_audio["generated_continuity"] == "on"
+        and resolved_audio.get("source_audio_target", "off") != "locked"
+        and resolved_audio_context > 0
+    )
+    if (mode in (
+            "masked_av", "feathered_av", "audio_feathered_av"
+        ) and context > 0 and carries_generated_audio
+            and context not in AV_TRANSITION_CONTEXT_LENGTHS):
+        raise ValueError(
+            "H3 AV generated-audio continuity requires an exact shared "
+            "video/audio boundary: 39, 90, 141, 192, or 243 context "
+            "frames. Set generated continuity off (or audio context to 0) "
+            "to test a video-only AV window from 5 frames.")
     return {
         "version": CHAIN_POLICY_VERSION,
         "audio_policy": resolved_audio,
@@ -332,6 +425,7 @@ def chain_policy(
     source_reference: str,
     generated_continuity: str,
     lock_source_audio: bool = False,
+    lip_sync_options: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Build the compact normal-user policy from its semantic choices."""
     preset = str(incoming_transition)
@@ -343,7 +437,8 @@ def chain_policy(
     return compose_chain_policy(
         audio_policy(
             final_audio, source_reference, generated_continuity,
-            "locked" if bool(lock_source_audio) else "off"),
+            "locked" if bool(lock_source_audio) else "off",
+            lip_sync_options),
         resolved_transition,
         # Normal authoring keeps picture and generated-audio carry on the
         # same tested boundary. The Advanced Policy keeps that semantic
@@ -401,14 +496,14 @@ def transition_policy(
             raise ValueError(
                 "H3 Latent Guide requires at least 5 context frames.")
         if (mode in (
-                "masked_av", "tapered_av", "feathered_av",
-                "audio_feathered_av", "drift_control_av",
-                "color_stable_drift_av"
-        ) and context > 0 and context not in AV_TRANSITION_CONTEXT_LENGTHS):
+                "masked_av", "feathered_av", "audio_feathered_av"
+        ) and context > 0
+                and context not in VIDEO_ONLY_AV_TRANSITION_CONTEXT_LENGTHS):
             raise ValueError(
-                "H3 AV transition implementations require an exact shared "
-                "video/audio boundary: 39, 90, 141, 192, or 243 context "
-                "frames (or 0 to disable continuation).")
+                "H3 video-only AV transition experiments require at least "
+                "5 context frames (or 0 to disable continuation). Exact "
+                "39/90/141/192/243-frame alignment is still required when "
+                "generated predecessor audio is carried.")
         if (mode == "tapered_av" and context not in (
                 0, int(DETAIL_AV_RECIPE["context_frames"]))):
             raise ValueError(

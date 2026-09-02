@@ -7,8 +7,9 @@ import {
     MAX_H3_FRAMES,
     MAX_SEED,
     MAX_SHOTS,
-    SCENE_LORA_ROUTES,
     automaticSceneColor,
+    audioContextLeadFrameOptions,
+    audioContextWindowStarts,
     calculatePlanTiming,
     duplicateShot,
     formatClock,
@@ -25,14 +26,18 @@ import {
     randomSceneSeed,
     removePlanShot,
     safeShotId,
+    sceneAudioContextLeadFrames,
+    sceneAudioContextLeadSource,
+    sceneAudioContextSource,
+    sceneAudioContextStartFrame,
+    sceneAudioContextUnlocked,
     sceneContextLength,
     sceneContinuationMode,
     sceneLoRARoute,
     scenePromptSeedMode,
-    sceneVisualContextSource,
+    renamePlanShot,
+    sceneVisualContextBlocks,
     sceneVisualContextLeadFrames,
-    sceneVisualContextLeadSource,
-    sceneVisualContextStartFrame,
     sceneVideoBlendFrames,
     setScenePromptSeedMode,
     setSharedPrompt,
@@ -40,18 +45,22 @@ import {
     sharedPrompt,
     shotLengthMode,
     visualContextCompositions,
-} from "./h3_chain_plan_core.mjs?v=0.5.68";
+    visualContextBoundaryFrames,
+    visualContextDefaultPartition,
+    visualContextMaximumBlocks,
+    visualContextPartitionFromBoundaries,
+} from "./h3_chain_plan_core.mjs?v=0.6.0";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
     promptRevisionNavigation,
-} from "./h3_prompt_history_core.mjs?v=0.5.68";
+} from "./h3_prompt_history_core.mjs?v=0.6.0";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.5.68";
+} from "./h3_reference_preview_core.mjs?v=0.6.0";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -60,12 +69,16 @@ import {
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.5.68";
+} from "./h3_policy_core.mjs?v=0.6.0";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.5.68";
+} from "./h3_socket_presentation_core.mjs?v=0.6.0";
+import {
+    availableLoRARoutes,
+    loraRouteLabel,
+} from "./h3_lora_scheduler_core.mjs?v=0.6.0";
 import {
     h3StudioGridMarkers,
     locateStudioTimelineSegment,
@@ -73,12 +86,18 @@ import {
     matchingStudioSourceAudio,
     matchingStudioSourceScene,
     parseStudioTimecode,
+    remapStudioEditorialSceneId,
     studioCheckpointSignature,
+    restoreStudioCheckpointCache,
+    studioCheckpointCacheSnapshot,
     studioContextWindowLayout,
     studioContextWindowStartAtRatio,
     parseTimedLyrics,
     studioEditorialSceneStartSeconds,
+    studioLatentSafeOutFrames,
+    studioNearestLatentSafeOutFrame,
     studioNearestH3FrameLength,
+    studioPlayerSegmentClock,
     studioSourceAudioSecond,
     studioSourceSecond,
     studioTimelineLayout,
@@ -90,25 +109,34 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.5.68";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.68";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.0";
 
-const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
+const {
+    connectedPromptEditors,
+    publishCompanionScene,
+} = promptCompanionSync;
+const planHasNonPromptChanges =
+    typeof promptCompanionSync.planHasNonPromptChanges === "function"
+        ? promptCompanionSync.planHasNonPromptChanges
+        : () => true;
 function publishCompanionPrompt(...args) {
     return promptCompanionSync.publishCompanionPrompt?.(...args) ?? 0;
 }
 
 const NODE_NAME = "MiniMaxH3ChainPlanStudio";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const MODERN_PLAN_NAME = "MiniMaxH3ChainPlanModern";
+const PLAN_NAMES = new Set([PLAN_NAME, MODERN_PLAN_NAME]);
 const ACTIVE_PROPERTY = "h3_plan_studio_active_scene";
 const ACTIVE_CHAPTER_PROPERTY = "h3_plan_studio_active_chapter";
 const VIEW_PROPERTY = "h3_plan_studio_view";
 const TIMELINE_ZOOM_PROPERTY = "h3_plan_studio_timeline_zoom";
-const ADVANCED_BOUNDARY_OPEN_PROPERTY = "h3_plan_studio_advanced_boundary_open";
 const SOURCE_AUDIO_MUTES_PROPERTY = "h3_plan_studio_source_audio_mutes";
 const GENERATED_VOLUME_PROPERTY = "h3_plan_studio_generated_volume";
 const SOURCE_VOLUME_PROPERTY = "h3_plan_studio_source_volume";
 const MOTION_VOLUME_PROPERTY = "h3_plan_studio_motion_volume";
+const CHECKPOINT_CACHE_PROPERTY = "h3_plan_studio_checkpoint_cache_v1";
 const MIN_WIDTH = 820;
 const MIN_HEIGHT = 690;
 const PLAN_SETTING_WIDGETS = Object.freeze([
@@ -204,6 +232,9 @@ function injectStyles() {
             background:color-mix(in srgb,var(--scene) 13%,var(--comfy-input-bg,#15171d)) !important; }
         .h3studio-card.h3studio-moving { cursor:grabbing; }
         .h3studio-card.h3studio-selected { box-shadow:0 0 0 2px var(--scene) inset; }
+        .h3studio-card.h3studio-alternate-selected::before { content:"ALT"; position:absolute;
+            z-index:4; right:17px; top:4px; padding:1px 4px; border:1px solid #b493f0;
+            border-radius:3px; color:#eadfff; background:rgba(45,25,78,.88); font-size:8px; font-weight:800; }
         .h3studio-card video, .h3studio-card-thumbnail { position:absolute; inset:0; width:100%; height:100%; object-fit:cover;
             opacity:.58; z-index:-1; background:#08090c; pointer-events:none; }
         .h3studio-card::after { content:""; position:absolute; inset:0; z-index:-1;
@@ -229,6 +260,12 @@ function injectStyles() {
             touch-action:none; opacity:.72; }
         .h3studio-resize-handle:hover, .h3studio-resize-handle:active { width:12px; opacity:1;
             background:linear-gradient(90deg,transparent,color-mix(in srgb,var(--scene) 28%,transparent)); }
+        .h3studio-resize-handle.h3studio-latent-trim { border-right-color:#62e1d1;
+            background:linear-gradient(90deg,transparent,rgba(98,225,209,.16)); }
+        .h3studio-resize-handle.h3studio-latent-trim::before { content:""; position:absolute;
+            right:1px; top:50%; width:0; height:0; transform:translateY(-50%);
+            border-top:5px solid transparent; border-bottom:5px solid transparent;
+            border-right:5px solid #62e1d1; }
         .h3studio-card.h3studio-locked { border-style:dashed !important; cursor:pointer; }
         .h3studio-card.h3studio-locked .h3studio-drag-handle,
         .h3studio-card.h3studio-locked .h3studio-resize-handle { cursor:not-allowed; opacity:.38; }
@@ -237,6 +274,7 @@ function injectStyles() {
         .h3studio-render-dot { position:absolute; right:6px; top:6px; width:8px; height:8px; border-radius:50%;
             background:#687080; box-shadow:0 0 0 1px #111; }
         .h3studio-rendered .h3studio-render-dot { background:#62d58b; }
+        .h3studio-continuation-stale .h3studio-render-dot { background:#f1a44c; }
         .h3studio-source-card { border-style:dashed !important; }
         .h3studio-source-card .h3studio-render-dot { background:#b58cff; }
         .h3studio-source-empty { display:flex; align-items:center; padding:0 10px; color:var(--hs-muted);
@@ -278,11 +316,17 @@ function injectStyles() {
         .h3studio-audio-overrides { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr));
             gap:7px; margin:0 0 8px; align-items:end; }
         .h3studio-field { display:flex; min-width:0; flex-direction:column; gap:3px; color:var(--hs-muted); }
-        .h3studio-advanced { margin:0 0 8px; padding:6px 8px; border:1px solid var(--hs-border);
-            border-radius:6px; color:var(--hs-muted); }
-        .h3studio-advanced summary { cursor:pointer; font-weight:700; }
-        .h3studio-advanced-grid { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr));
-            gap:7px; margin-top:7px; align-items:end; }
+        .h3studio-alternate { margin:0 0 9px; padding:9px; border:1px solid #7259a8;
+            border-radius:7px; background:color-mix(in srgb,var(--hs-panel) 88%,#3b245f); }
+        .h3studio-alternate-title { display:flex; align-items:center; gap:7px; margin-bottom:4px; }
+        .h3studio-alternate-enable { display:flex; align-items:center; gap:5px; margin:8px 0;
+            color:var(--hs-text); }
+        .h3studio-alternate-enable input { width:auto; }
+        .h3studio-alternate-grid { display:grid; grid-template-columns:minmax(260px,1fr) 180px;
+            gap:8px; margin-top:7px; align-items:end; }
+        .h3studio-alternate-prompt { min-height:105px; }
+        .h3studio-alternate-diff { margin:6px 0; color:#d6c7f4; font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;
+            white-space:pre-wrap; overflow-wrap:anywhere; }
         .h3studio-plan-settings { display:grid; grid-template-columns:repeat(3,minmax(170px,1fr));
             gap:9px; align-items:end; }
         .h3studio-plan-settings-section { grid-column:1 / -1; margin-top:5px; padding-top:7px;
@@ -303,6 +347,7 @@ function injectStyles() {
         .h3studio-history-meta { max-width:300px; color:var(--hs-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
         .h3studio-error { color:#ffb3b3; white-space:pre-wrap; }
         .h3studio-shared { min-height:260px; font:15px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace !important; }
+        .h3studio-defaults { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; max-width:390px; }
         .h3studio-json { min-height:360px; font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace !important; }
         .h3studio-json-actions { margin-top:7px; }
         .h3studio-player { display:flex; flex-direction:column; gap:7px; height:100%; min-height:330px; }
@@ -331,6 +376,18 @@ function injectStyles() {
             padding:5px 7px; border-bottom:1px solid var(--hs-border); }
         .h3studio-player-controls input[type=range] { flex:1; padding:0; }
         .h3studio-context-selector { display:flex; flex-direction:column; gap:9px; }
+        .h3studio-context-tabs { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
+        .h3studio-context-tabs button.h3studio-context-tab-active { border-color:#79a7ff;
+            color:#d9e7ff; background:rgba(65,112,190,.28); }
+        .h3studio-context-tabs .h3studio-context-lock { margin-left:auto; }
+        .h3studio-context-audio-settings { display:grid;
+            grid-template-columns:repeat(3,minmax(170px,1fr)); gap:7px; align-items:end; }
+        .h3studio-context-builder-settings { display:grid;
+            grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:7px; align-items:end;
+            padding:8px; border:1px solid var(--hs-border); border-radius:7px; }
+        .h3studio-context-cuts { display:flex; flex-wrap:wrap; gap:6px; align-items:end; }
+        .h3studio-context-cuts label { min-width:130px; flex:1 1 130px; }
+        .h3studio-context-audio { width:100%; margin:4px 0 7px; }
         .h3studio-context-help { color:var(--hs-muted); }
         .h3studio-context-blocks { display:grid; grid-template-columns:repeat(auto-fit,minmax(300px,1fr)); gap:9px; }
         .h3studio-context-block { min-width:0; padding:8px; border:1px solid var(--hs-border);
@@ -359,6 +416,12 @@ function injectStyles() {
             position:absolute; top:6px; bottom:6px; width:2px; background:rgba(255,255,255,.78); }
         .h3studio-context-window::before { left:4px; }
         .h3studio-context-window::after { right:4px; }
+        .h3studio-context-phase-tail { position:absolute; z-index:0; top:0; bottom:0;
+            pointer-events:none; border-left:1px dashed #d39a50;
+            background:repeating-linear-gradient(135deg,rgba(211,154,80,.24) 0,
+                rgba(211,154,80,.24) 4px,rgba(211,154,80,.06) 4px,
+                rgba(211,154,80,.06) 8px); }
+        .h3studio-context-phase-note { margin-top:4px; color:#d7ad73; font-size:10px; }
         .h3studio-context-playhead { position:absolute; z-index:2; top:0; bottom:0; width:2px;
             pointer-events:none; background:#ff9a3c; transform:translateX(-1px); }
         .h3studio-context-range-readout { display:flex; justify-content:space-between; gap:8px; }
@@ -387,7 +450,7 @@ function injectStyles() {
             gap:8px; align-items:start; color:var(--hs-muted); }
         .h3studio-ref-preview img,.h3studio-ref-preview video { width:100%; max-height:150px; object-fit:contain; background:#08090c; }
         .h3studio-ref-preview audio { width:100%; height:36px; }
-        @media(max-width:760px) { .h3studio-form,.h3studio-advanced-grid,.h3studio-plan-settings,
+        @media(max-width:760px) { .h3studio-form,.h3studio-plan-settings,.h3studio-alternate-grid,
             .h3studio-audio-overrides { grid-template-columns:1fr 1fr; }
             .h3studio-defaults,.h3studio-context-blocks { grid-template-columns:1fr; } }
     `;
@@ -428,7 +491,7 @@ function upstreamPlanNode(start) {
         const node = queue.shift();
         if (!node || seen.has(node)) continue;
         seen.add(node);
-        if (node !== start && nodeType(node) === PLAN_NAME) return node;
+        if (node !== start && PLAN_NAMES.has(nodeType(node))) return node;
         for (const input of node.inputs ?? []) {
             if (input.link == null) continue;
             const link = node.graph?.links?.[input.link];
@@ -539,6 +602,13 @@ function mount(node) {
     node._h3PlanStudioMounted = true;
     injectStyles();
     node.properties ??= {};
+    const alternateTakeWidget = widget(node, "alternate_take_json");
+    if (alternateTakeWidget) {
+        alternateTakeWidget.hidden = true;
+        alternateTakeWidget.type = "hidden";
+        alternateTakeWidget.computeSize = () => [0, -4];
+        alternateTakeWidget.draw = () => {};
+    }
 
     const root = element("div", "h3studio");
     root.title = "Timeline Plan editor: use it standalone or synchronize it with a connected H3 Chain Plan.";
@@ -557,8 +627,6 @@ function mount(node) {
             ? node.properties[VIEW_PROPERTY] : "scene",
         timelineZoom:normalizedTimelineZoom(
             node.properties[TIMELINE_ZOOM_PROPERTY]),
-        advancedBoundaryOpen:Boolean(
-            node.properties[ADVANCED_BOUNDARY_OPEN_PROPERTY]),
         checkpoints:new Map(), checkpointSignature:"", checkpointError:"", checkpointToken:0,
         checkpointPromise:null, checkpointRefreshQueued:false, disposed:false,
         sourcePreview:null, sourceWaveform:null, sourceWaveformToken:"",
@@ -579,13 +647,15 @@ function mount(node) {
         panelHost:null,
         planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
         editorialReady:false, editorialRun:"",
-        editorial:{placements:[], locked_scene_ids:[], subtitles:{}},
+        editorial:{placements:[], trims:[], locked_scene_ids:[], subtitles:{},
+            alternate_draft:null, replacements:[]},
         subtitleAssets:[], subtitleAssetsRun:"", subtitleAssetsToken:0,
         playhead:null, player:null, playerAudio:null, sourceAudioPlayer:null,
         sourcePlayer:null, sourceLayer:null, subtitleOverlay:null,
         editorialClockFrame:null, mediaClockFrame:null, mediaClockKind:"",
         playerSegmentKey:"",
         contextPlayers:[],
+        contextTab:"picture",
         playerSlider:null, playerIndex:-1,
         playerPreloadVideo:null, playerPreloadAudio:null,
         primePlayerNext:null, playPlayerTransport:null,
@@ -742,6 +812,17 @@ function mount(node) {
                 start_frame:startFrame,
             });
         }
+        const trims = [];
+        const trimmed = new Set();
+        for (const item of Array.isArray(value?.trims) ? value.trims : []) {
+            const sceneId = String(item?.scene_id ?? "").trim();
+            const outFrame = Math.round(Number(item?.out_frame));
+            if (!sceneId || !knownIds.has(sceneId) || trimmed.has(sceneId)
+                    || !Number.isInteger(outFrame) || outFrame < 1
+                    || outFrame > MAX_H3_FRAMES) continue;
+            trimmed.add(sceneId);
+            trims.push({scene_id:sceneId, out_frame:outFrame});
+        }
         const rawSubtitles = value?.subtitles && typeof value.subtitles === "object"
             ? value.subtitles : {};
         const mode = ["off", "preview_srt"].includes(rawSubtitles.mode)
@@ -753,8 +834,50 @@ function mount(node) {
                 .map((sceneId) => String(sceneId ?? "").trim())
                 .filter((sceneId) => knownIds.has(sceneId)),
         )];
+        const revisionPattern = /^[0-9a-f]{32}$/;
+        let alternateDraft = null;
+        const rawAlternate = value?.alternate_draft;
+        if (rawAlternate && typeof rawAlternate === "object") {
+            const sceneId = String(rawAlternate.scene_id ?? "").trim();
+            const scene = (state.plan?.shots ?? []).findIndex((shot, index) =>
+                safeShotId(shot?.id, `clip_${String(index + 1).padStart(4, "0")}`) === sceneId) + 1;
+            const baseRevision = String(rawAlternate.base_revision ?? "").toLowerCase();
+            const prompt = String(rawAlternate.prompt ?? "").trim();
+            let seed = "0";
+            try {
+                const parsed = BigInt(String(rawAlternate.seed ?? "0"));
+                if (parsed >= 0n && parsed <= MAX_SEED) seed = parsed.toString();
+            } catch (_error) {}
+            if (scene > 0 && revisionPattern.test(baseRevision) && prompt) {
+                alternateDraft = {
+                    enabled:rawAlternate.enabled !== false,
+                    scene, scene_id:sceneId, base_revision:baseRevision,
+                    prompt, seed, media_mode:"picture_only",
+                };
+            }
+        }
+        const replacements = [];
+        const replaced = new Set();
+        for (const item of Array.isArray(value?.replacements)
+            ? value.replacements : []) {
+            const sceneId = String(item?.scene_id ?? "").trim();
+            const scene = (state.plan?.shots ?? []).findIndex((shot, index) =>
+                safeShotId(shot?.id, `clip_${String(index + 1).padStart(4, "0")}`) === sceneId) + 1;
+            const baseRevision = String(item?.base_revision ?? "").toLowerCase();
+            const alternateRevision = String(item?.alternate_revision ?? "").toLowerCase();
+            if (scene < 1 || replaced.has(sceneId)
+                    || !revisionPattern.test(baseRevision)
+                    || !revisionPattern.test(alternateRevision)) continue;
+            replaced.add(sceneId);
+            replacements.push({
+                scene, scene_id:sceneId, base_revision:baseRevision,
+                alternate_revision:alternateRevision,
+                media_mode:"picture_only",
+            });
+        }
         return {
             placements,
+            trims,
             locked_scene_ids:lockedSceneIds,
             subtitles:{
                 mode,
@@ -762,13 +885,16 @@ function mount(node) {
                 offset_seconds:Number.isFinite(offset)
                     ? Math.max(-3600, Math.min(3600, offset)) : 0,
             },
+            alternate_draft:alternateDraft,
+            replacements,
         };
     }
 
     function timelineModel() {
         const result = timing();
         const sceneSegments = studioTimelineSegments(
-            result.shots, state.editorial.placements,
+            result.shots, state.editorial.placements, null,
+            state.editorial.trims,
         );
         const sceneEndFrame = Math.max(
             1,
@@ -800,6 +926,7 @@ function mount(node) {
         state.timelineWorkspaceEndFrame = workspaceEndFrame;
         const segments = studioTimelineSegments(
             result.shots, state.editorial.placements, workspaceEndFrame,
+            state.editorial.trims,
         );
         return {
             result, segments,
@@ -841,6 +968,32 @@ function mount(node) {
             (placement) => placement.scene_id === String(row?.id ?? ""),
         ) ?? null;
         return placement ? {...placement} : null;
+    }
+
+    function trimForScene(index) {
+        const row = timing().shots[index];
+        const trim = state.editorial.trims.find(
+            (item) => item.scene_id === String(row?.id ?? ""),
+        ) ?? null;
+        return trim ? {...trim} : null;
+    }
+
+    function setSceneTrim(index, outFrame) {
+        const row = timing().shots[index];
+        if (!row || sceneLocked(index)) return;
+        const sceneId = String(row.id);
+        const fullFrames = Math.max(1, Number(row.deliveredFrames) || 1);
+        const safeOut = studioNearestLatentSafeOutFrame(
+            row.rawFrames, fullFrames, outFrame,
+        );
+        state.editorial.trims = state.editorial.trims.filter(
+            (item) => item.scene_id !== sceneId,
+        );
+        if (safeOut < fullFrames) state.editorial.trims.push({
+            scene_id:sceneId, out_frame:safeOut,
+        });
+        scheduleEditorialSave();
+        renderShell();
     }
 
     function setScenePlacement(index, startFrame) {
@@ -970,8 +1123,17 @@ function mount(node) {
                 scene:sceneById.get(placement.scene_id),
                 start_frame:placement.start_frame,
             })),
+            trims:state.editorial.trims.map((trim) => ({
+                scene_id:trim.scene_id,
+                scene:sceneById.get(trim.scene_id),
+                out_frame:trim.out_frame,
+            })),
             locked_scene_ids:[...state.editorial.locked_scene_ids],
             subtitles:{...state.editorial.subtitles},
+            alternate_draft:state.editorial.alternate_draft
+                ? {...state.editorial.alternate_draft} : null,
+            replacements:state.editorial.replacements.map(
+                (replacement) => ({...replacement})),
         };
     }
 
@@ -1001,17 +1163,46 @@ function mount(node) {
                 )?.scene,
                 start_frame:placement.start_frame,
             })),
+            trims:next.trims.map((trim) => ({
+                scene_id:trim.scene_id,
+                scene:(payload.scene_order ?? []).find(
+                    (row) => row.scene_id === trim.scene_id,
+                )?.scene,
+                out_frame:trim.out_frame,
+            })),
             locked_scene_ids:[...next.locked_scene_ids],
             subtitles:{...next.subtitles},
+            alternate_draft:next.alternate_draft
+                ? {...next.alternate_draft} : null,
+            replacements:next.replacements.map(
+                (replacement) => ({...replacement})),
         });
         scheduleEditorialSave();
         return previous !== JSON.stringify(next);
     }
 
-    function scheduleEditorialSave() {
+    function cacheStudioPresentation(records, editorial) {
+        const snapshot = studioCheckpointCacheSnapshot(
+            runName(), records, editorial,
+        );
+        if (snapshot) node.properties[CHECKPOINT_CACHE_PROPERTY] = snapshot;
+    }
+
+    function scheduleEditorialSave(delay = 250) {
+        if (alternateTakeWidget) {
+            const serialized = JSON.stringify(
+                state.editorial.alternate_draft ?? null,
+            );
+            if (alternateTakeWidget.value !== serialized) {
+                alternateTakeWidget.value = serialized;
+                alternateTakeWidget.callback?.(serialized);
+                dirty();
+            }
+        }
         if (!state.plan) return;
         if (!state.editorialReady || state.editorialRun !== runName()) return;
         const payload = editorialPayload();
+        cacheStudioPresentation([...state.checkpoints.values()], payload);
         const signature = JSON.stringify(payload);
         if (signature === state.lastEditorialSignature) return;
         state.lastEditorialSignature = signature;
@@ -1034,7 +1225,7 @@ function mount(node) {
                 }
                 console.warn("H3 Plan Studio could not save chapter presentation data:", error);
             }
-        }, 250);
+        }, Math.max(0, Number(delay) || 0));
     }
 
     function writePlan(message = null) {
@@ -1200,6 +1391,7 @@ function mount(node) {
             if (changed) { refreshTimelineCheckpoints(); renderStatus(); }
             return;
         }
+        let editorialChanged = false;
         try {
             const query = new URLSearchParams({
                 run_name:currentRun, include_graph:"false",
@@ -1208,8 +1400,9 @@ function mount(node) {
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
             if (state.disposed || token !== state.checkpointToken || currentRun !== runName()) return;
-            const editorialChanged = applyEditorialPayload(payload.editorial);
+            editorialChanged = applyEditorialPayload(payload.editorial);
             const records = payload.checkpoints ?? [];
+            cacheStudioPresentation(records, payload.editorial);
             const signature = studioCheckpointSignature(currentRun, records);
             const recoveredFromError = Boolean(state.checkpointError);
             state.checkpointError = "";
@@ -1229,8 +1422,13 @@ function mount(node) {
             renderStatus();
             return;
         }
-        refreshTimelineCheckpoints(); renderStatus();
+        if (editorialChanged) renderTimeline();
+        else refreshTimelineCheckpoints();
+        renderStatus();
         if (state.view === "context") renderPanel();
+        if (editorialChanged && ["player", "subtitles"].includes(state.view)) {
+            renderPanel();
+        }
         if (state.view === "player" && state.player?.paused) {
             const media = playerCheckpoint(state.playerIndex);
             const desired = media?.video ? videoUrl(media.video) : "";
@@ -1421,10 +1619,10 @@ function mount(node) {
         const boundedAnchor = Math.max(0, Math.min(
             1, Number(restoreScroll?.anchorRatio ?? anchorRatio) || 0,
         ));
-        const restoredLeft = restoreScroll == null
-            ? Number.NaN : Number(restoreScroll.scrollLeft);
         const restoredSeconds = restoreScroll == null
             ? Number.NaN : Number(restoreScroll.seconds);
+        const restoredLeft = restoreScroll == null
+            ? Number.NaN : Number(restoreScroll.scrollLeft);
         const preservedLeft = preserveScroll
             ? Math.max(0, Number(viewport.scrollLeft) || 0) : Number.NaN;
         const model = timelineModel();
@@ -1432,6 +1630,7 @@ function mount(node) {
         const layout = studioTimelineLayout(
             result.shots, viewport.clientWidth, state.timelineZoom,
             state.editorial.placements, model.workspaceEndFrame,
+            state.editorial.trims,
         );
         state.timelineZoom = layout.zoom;
         state.timelineWidths = layout.widths;
@@ -1565,7 +1764,9 @@ function mount(node) {
     }
 
     function checkpointThumbnailUrl(index, checkpoint) {
-        const revision = String(checkpoint?.revision ?? "").trim().toLowerCase();
+        const revision = String(
+            checkpoint?.presentation_revision ?? checkpoint?.revision ?? "",
+        ).trim().toLowerCase();
         if (!checkpoint?.ready || !/^[0-9a-f]{32}$/.test(revision) || !runName()) {
             return "";
         }
@@ -1749,6 +1950,10 @@ function mount(node) {
             state.checkpoints, index, row,
         );
         card.classList.toggle("h3studio-rendered", Boolean(checkpoint?.ready));
+        card.classList.toggle(
+            "h3studio-alternate-selected",
+            Boolean(checkpoint?.presentation_revision),
+        );
         const url = checkpointThumbnailUrl(index, checkpoint);
         const current = card.querySelector(".h3studio-card-thumbnail");
         if (!url) {
@@ -1969,6 +2174,69 @@ function mount(node) {
         });
     }
 
+    function enableSceneLatentTrimDrag(card, handle, index) {
+        const row = timing().shots[index];
+        if (!row) return;
+        const fullFrames = Math.max(1, Number(row.deliveredFrames) || 1);
+        const options = studioLatentSafeOutFrames(
+            row.rawFrames, fullFrames,
+        );
+        const currentOut = Number(trimForScene(index)?.out_frame) || fullFrames;
+        const defaultTitle = sceneLocked(index)
+            ? "Scene locked · unlock it before changing the used endpoint"
+            : `Latent-safe used end · ${currentOut}/${fullFrames} frames. Drag to trim; double-click to restore the full checkpoint.`;
+        handle.title = defaultTitle;
+        handle.addEventListener("dblclick", (event) => {
+            event.preventDefault(); event.stopPropagation();
+            if (!sceneLocked(index)) setSceneTrim(index, fullFrames);
+        });
+        handle.addEventListener("pointerdown", (event) => {
+            if (event.button !== 0 || sceneLocked(index) || !options.length) return;
+            event.preventDefault(); event.stopPropagation();
+            const model = timelineModel();
+            const contentWidth = Math.max(
+                1, Number(state.timelineContent?.dataset.timelineWidth)
+                    || state.timelineContent?.clientWidth || 1,
+            );
+            const secondsPerPixel = model.totalSeconds / contentWidth;
+            const originX = event.clientX;
+            const originWidth = card.getBoundingClientRect().width;
+            let targetOut = currentOut;
+            let moved = false;
+            state.timelineDragging = true;
+            handle.setPointerCapture?.(event.pointerId);
+            const onMove = (moveEvent) => {
+                const deltaX = moveEvent.clientX - originX;
+                if (Math.abs(deltaX) > 2) moved = true;
+                if (!moved) return;
+                targetOut = studioNearestLatentSafeOutFrame(
+                    row.rawFrames, fullFrames,
+                    currentOut + deltaX * secondsPerPixel * FPS,
+                );
+                card.style.setProperty(
+                    "--h3-scene-width",
+                    `${targetOut / FPS / secondsPerPixel}px`,
+                );
+                handle.title = `${targetOut}/${fullFrames} frames used · ${(targetOut / FPS).toFixed(3)}s · full sampled checkpoint retained`;
+            };
+            const finish = (upEvent) => {
+                handle.removeEventListener("pointermove", onMove);
+                handle.removeEventListener("pointerup", finish);
+                handle.removeEventListener("pointercancel", finish);
+                handle.releasePointerCapture?.(upEvent.pointerId);
+                state.timelineDragging = false;
+                handle.title = defaultTitle;
+                card.style.setProperty("--h3-scene-width", `${originWidth}px`);
+                if (moved && targetOut !== currentOut) {
+                    setSceneTrim(index, targetOut);
+                }
+            };
+            handle.addEventListener("pointermove", onMove);
+            handle.addEventListener("pointerup", finish);
+            handle.addEventListener("pointercancel", finish);
+        });
+    }
+
     function renderTimeline({revealActive = false, restoreScroll = null} = {}) {
         const host = state.timelineHost;
         if (!host || !state.plan) return;
@@ -1991,6 +2259,8 @@ function mount(node) {
             card.title = locked
                 ? `Scene ${index + 1}: ${row.id} · locked`
                 : `Scene ${index + 1}: ${row.id} · drag to move`;
+            if (checkpoint?.continuation_stale) card.title +=
+                ` · regenerate: ${checkpoint.continuation_stale_reason}`;
             card.tabIndex = 0;
             card.setAttribute("role", "button");
             card.addEventListener("click", (event) => {
@@ -2008,7 +2278,7 @@ function mount(node) {
             });
             card.dataset.sceneIndex = String(index);
             card.dataset.timelineKey = `scene:${index}`;
-            card.className = `h3studio-card${index === state.active ? " h3studio-selected" : ""}${checkpoint?.ready ? " h3studio-rendered" : ""}${locked ? " h3studio-locked" : ""}`;
+            card.className = `h3studio-card${index === state.active ? " h3studio-selected" : ""}${checkpoint?.ready ? " h3studio-rendered" : ""}${checkpoint?.continuation_stale ? " h3studio-continuation-stale" : ""}${locked ? " h3studio-locked" : ""}`;
             card.style.setProperty("--scene", automaticSceneColor(index));
             const segmentIndex = state.timelineSegments.findIndex(
                 (segment) => segment.key === card.dataset.timelineKey,
@@ -2020,9 +2290,11 @@ function mount(node) {
             }
             updateTimelineCheckpointCard(card, index, result);
             const sceneSegment = timelineSegment;
+            const usedFrames = Number(sceneSegment?.durationFrames)
+                || Number(row.deliveredFrames) || 0;
             const copy = element("span", "h3studio-card-copy");
             copy.append(element("span", "h3studio-card-title", `${index + 1}. ${row.id}`),
-                element("span", "h3studio-card-meta", `${formatClock(sceneSegment?.startSeconds ?? 0)} → ${formatClock(sceneSegment?.endSeconds ?? row.deliveredSeconds)} · ${row.rawFrames || "—"}f raw${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
+                element("span", "h3studio-card-meta", `${formatClock(sceneSegment?.startSeconds ?? 0)} → ${formatClock(sceneSegment?.endSeconds ?? row.deliveredSeconds)} · ${usedFrames}/${row.deliveredFrames}f used${row.loraRoute === "base" ? "" : ` · LoRA ${row.loraRoute.toUpperCase()}`}`));
             const dragHandle = element("span", "h3studio-drag-handle", "⋮⋮");
             dragHandle.title = locked
                 ? "Scene locked · unlock it before moving"
@@ -2045,10 +2317,15 @@ function mount(node) {
             lockHandle.append(lockIcon);
             lockHandle.addEventListener("pointerdown", (event) => event.stopPropagation());
             const resizeHandle = element("span", "h3studio-resize-handle");
-            resizeHandle.title = locked
-                ? "Scene locked · unlock it before changing its length"
-                : "Resize scene length · snaps to H3's 17n+5 frame grid";
-            enableSceneDurationDrag(card, resizeHandle, index);
+            if (checkpoint?.ready) {
+                resizeHandle.classList.add("h3studio-latent-trim");
+                enableSceneLatentTrimDrag(card, resizeHandle, index);
+            } else {
+                resizeHandle.title = locked
+                    ? "Scene locked · unlock it before changing its length"
+                    : "Resize generated length · snaps to H3's 17n+5 frame grid";
+                enableSceneDurationDrag(card, resizeHandle, index);
+            }
             card.append(
                 copy, dragHandle, lockHandle, resizeHandle,
                 element("span", "h3studio-render-dot"),
@@ -2409,7 +2686,8 @@ function mount(node) {
             const chip = button(`${icons[record.kind] ?? "@"} ${displayToken}`, "Insert this connected reference label or alias", () => {
                 const start = textarea.selectionStart ?? textarea.value.length;
                 insertText(textarea, displayToken);
-                if (syntax === "semantic") {
+                if (syntax === "semantic" && displayToken.includes("[")
+                        && displayToken.includes("s]")) {
                     textarea.setSelectionRange(
                         start + displayToken.indexOf("[") + 1,
                         start + displayToken.lastIndexOf("s]"),
@@ -2427,7 +2705,7 @@ function mount(node) {
                         label,
                         target === "native"
                             ? "Use native @tag and convert semantic anchors in this scene"
-                            : "Use semantic #tag[time] and convert native tags in this scene",
+                            : "Use untimed Qwen-only #tag; add [time] for placement",
                         () => {
                             state.referenceSyntax.set(key, target);
                             const next = convertTaggedPictureReference(
@@ -2458,6 +2736,12 @@ function mount(node) {
     function renderScenePanel() {
         const shot = state.plan.shots[state.active];
         const row = timing().shots[state.active];
+        const checkpoint = matchingStudioCheckpoint(
+            state.checkpoints, state.active, row,
+        );
+        const activeTrim = trimForScene(state.active);
+        const usedFrames = Number(activeTrim?.out_frame)
+            || Number(row.deliveredFrames) || 0;
         const timelineLocked = sceneLocked(state.active);
         const panel = element("div");
         const head = element("div", "h3studio-scene-head");
@@ -2465,12 +2749,16 @@ function mount(node) {
             timelineModel().segments, state.active,
         );
         head.append(element("strong", "", `Scene ${state.active + 1} of ${state.plan.shots.length}`),
-            element("span", "h3studio-scene-label", `${row.rawFrames || "—"} raw · ${row.deliveredFrames || "—"} delivered · ${row.videoBlendFrames}f incoming blend · generation ${formatClock(row.generationStartFrame / 24)} · editorial ${formatClock(editorialStart)}`));
+            element("span", "h3studio-scene-label", `${row.rawFrames || "—"} raw · ${usedFrames}/${row.deliveredFrames || "—"} used · ${row.videoBlendFrames}f incoming blend · generation ${formatClock(row.generationStartFrame / 24)} · editorial ${formatClock(editorialStart)}`));
+        if (checkpoint?.continuation_stale) head.append(element(
+            "span", "h3studio-error",
+            `Regenerate this scene: ${checkpoint.continuation_stale_reason}. Its saved media still plays, but it was generated from the previous cut endpoint.`,
+        ));
         const grid = h3StudioGridMarkers(
             row.rawFrames, row.contextLength, row.continuationMode,
+            row.preservesGeneratedAudioPrefix,
         );
         const gridMarkers = element("span", "h3studio-grid-markers");
-        let experimentalCutMarker = null;
         const rawGrid = element(
             "span",
             `h3studio-grid-marker ${grid.raw.onGrid
@@ -2489,8 +2777,10 @@ function mount(node) {
                 grid.av.label,
             );
             avGrid.title = grid.av.exact
-                ? "The AV context ends on both H3's video latent grid and its 40 Hz audio grid."
-                : "This AV context is invalid because its duration ends between 40 Hz audio ticks. Exact aligned choices are 39, 90, 141, 192, … frames.";
+                ? (grid.av.audioPreserved
+                    ? "The AV context ends on both H3's video latent grid and its 40 Hz audio grid."
+                    : "Valid video-only AV context. Generated predecessor audio is not carried, so the 40 Hz audio grid does not constrain this test.")
+                : "This AV context is invalid because carried predecessor audio ends between 40 Hz ticks. Exact aligned choices are 39, 90, 141, 192, … frames.";
             gridMarkers.append(avGrid);
         }
         if (grid.cut) {
@@ -2501,25 +2791,26 @@ function mount(node) {
             );
             cut.title = "Experimental only: nearest reported four-frame 17n−3 cut window for generated-to-real joins. This does not change or validate the Plan.";
             gridMarkers.append(cut);
-            experimentalCutMarker = cut;
         }
         head.append(gridMarkers);
 
         const id = element("input");
         id.value = shot.id ?? "";
         id.addEventListener("change", () => {
-            const previousId = safeShotId(shot.id, row.id);
-            shot.id = safeShotId(id.value, row.id); id.value = shot.id;
-            for (const chapter of state.plan.chapters ?? []) {
-                if (chapter.start_scene_id === previousId) {
-                    chapter.start_scene_id = shot.id;
-                }
+            let renamed;
+            try {
+                renamed = renamePlanShot(state.plan, state.active, id.value);
+                id.setCustomValidity("");
+            } catch (error) {
+                id.value = safeShotId(shot.id, row.id);
+                id.setCustomValidity(error?.message || String(error));
+                id.reportValidity();
+                return;
             }
-            for (const placement of state.editorial.placements) {
-                if (placement.scene_id === previousId) placement.scene_id = shot.id;
-            }
-            state.editorial.locked_scene_ids = state.editorial.locked_scene_ids.map(
-                (sceneId) => sceneId === previousId ? shot.id : sceneId,
+            const previousId = renamed.previousId;
+            shot.id = renamed.id; id.value = renamed.id;
+            remapStudioEditorialSceneId(
+                state.editorial, previousId, renamed.id,
             );
             writePlan(); renderShell();
         });
@@ -2551,13 +2842,13 @@ function mount(node) {
         steps.placeholder = String(settings().defaultSteps); steps.value = shot.steps ?? "";
         steps.addEventListener("change", () => { if (steps.value) shot.steps = Number(steps.value); else delete shot.steps; writePlan(); });
         const promptSeedMode = element("select");
-        for (const [modeValue, label] of [
+        for (const [value, label] of [
             ["inherit", "Stable derived"],
             ["fixed", "Fixed scene seed"],
             ["randomize", "Randomize each queue"],
         ]) {
             const option = element("option", "", label);
-            option.value = modeValue;
+            option.value = value;
             promptSeedMode.append(option);
         }
         const promptSeed = element("input");
@@ -2607,16 +2898,18 @@ function mount(node) {
         const reroll = button("↻", "Store a new random seed for this scene", () => { seed.value = randomSceneSeed(); shot.seed = seed.value; writePlan(); });
         seedWrap.append(seed, reroll);
         const loraRoute = element("select");
-        for (const route of SCENE_LORA_ROUTES) {
-            const option = element(
-                "option", "",
-                route === "base" ? "Base model" : `LoRA ${route.toUpperCase()}`,
-            );
+        const selectedLoRARoute = sceneLoRARoute(shot);
+        for (const route of availableLoRARoutes(
+            node.graph ?? app.graph,
+            [node, state.planNode],
+            selectedLoRARoute,
+        )) {
+            const option = element("option", "", loraRouteLabel(route));
             option.value = route;
             loraRoute.append(option);
         }
-        loraRoute.value = sceneLoRARoute(shot);
-        loraRoute.title = "Select the Base or A-D MODEL branch on MiniMax H3 Scene LoRA Scheduler. Branches come from ordinary ComfyUI LoRA loaders.";
+        loraRoute.value = selectedLoRARoute;
+        loraRoute.title = "Select Base or a connected A-Z MODEL branch on MiniMax H3 Scene LoRA Scheduler. Connecting its last empty route reveals the next one automatically; branches come from ordinary ComfyUI LoRA loaders.";
         loraRoute.addEventListener("change", () => {
             if (loraRoute.value === "base") delete shot.lora_route;
             else shot.lora_route = loraRoute.value;
@@ -2696,241 +2989,38 @@ function mount(node) {
             normalizeVisualLeadSpan();
             delete shot.visual_context_start_frame;
             delete shot.visual_context_lead_start_frame;
-            writePlan();
-            renderShell();
-        });
-        const context = element("select");
-        for (const [value, label] of [
-            ["", `Plan default · ${settings().contextLength}`],
-            ["0", "0 · new visual"],
-            ...H3_CONTEXT_LENGTHS.map((value) => [String(value), `${value} frames`]),
-        ]) {
-            const option = element("option", "", label);
-            option.value = value;
-            context.append(option);
-        }
-        context.value = Object.hasOwn(shot, "context_length")
-            && shot.context_length !== null ? String(shot.context_length) : "";
-        context.title = state.active === 0
-            ? "Blank inherits the Plan video context. Zero ignores Existing Video Context visually."
-            : "Video context entering this scene. Blank inherits the Plan default; zero starts a visually new scene. Audio is controlled beside it.";
-        context.addEventListener("change", () => {
-            if (context.value === "") delete shot.context_length;
-            else shot.context_length = Number(context.value);
-            sceneContextLength(shot, settings().contextLength);
-            normalizeVisualLeadSpan();
-            delete shot.visual_context_start_frame;
-            delete shot.visual_context_lead_start_frame;
-            refreshBlendControl();
-            refreshIncomingTransition();
-            writePlan();
-            renderShell();
-        });
-        const visualSource = element("select");
-        if (state.active === 0) {
-            const option = element(
-                "option", "", "Existing Video Context (if connected)",
-            );
-            option.value = "";
-            visualSource.append(option);
-            visualSource.disabled = true;
-        } else {
-            const previousIndex = state.active;
-            const previousId = safeShotId(
-                state.plan.shots[previousIndex - 1]?.id,
-                `clip_${String(previousIndex).padStart(4, "0")}`,
-            );
-            const previous = element(
-                "option", "",
-                `Previous scene · ${previousIndex} ${previousId}`,
-            );
-            previous.value = "";
-            visualSource.append(previous);
-            for (let sourceOffset = 0;
-                sourceOffset < state.active - 1; sourceOffset += 1) {
-                const sourceId = safeShotId(
-                    state.plan.shots[sourceOffset]?.id,
-                    `clip_${String(sourceOffset + 1).padStart(4, "0")}`,
-                );
-                const option = element(
-                    "option", "",
-                    `Scene ${sourceOffset + 1} · ${sourceId}`,
-                );
-                option.value = sourceId;
-                visualSource.append(option);
-            }
-            const rawSource = shot.visual_context_source;
-            if (rawSource === undefined || rawSource === null
-                    || ["", "previous", "immediate"].includes(
-                        String(rawSource).trim().toLowerCase())) {
-                visualSource.value = "";
-            } else {
-                try {
-                    const resolved = sceneVisualContextSource(
-                        state.plan, state.active + 1,
-                    );
-                    visualSource.value = resolved === state.active ? ""
-                        : safeShotId(
-                            state.plan.shots[resolved - 1]?.id,
-                            `clip_${String(resolved).padStart(4, "0")}`,
-                        );
-                } catch (_error) {
-                    const invalid = element(
-                        "option", "", `Invalid · ${String(rawSource)}`,
-                    );
-                    invalid.value = String(rawSource);
-                    visualSource.append(invalid);
-                    visualSource.value = String(rawSource);
+            if (Array.isArray(shot.visual_context_blocks)) {
+                if (nextContext <= 0) {
+                    delete shot.visual_context_blocks;
+                    writePlan();
+                    renderShell();
+                    return;
                 }
-            }
-        }
-        visualSource.title = state.active === 0
-            ? "Scene 1 visual context comes from Existing Video Context."
-            : "Select any earlier saved scene for video/RGB context. Generated-audio continuity still uses the immediately previous timeline scene. Non-linear visual context forces a hard assembly cut.";
-        visualSource.addEventListener("change", () => {
-            if (!visualSource.value) {
-                delete shot.visual_context_source;
-            } else {
-                shot.visual_context_source = visualSource.value;
+                const sources = shot.visual_context_blocks.map(
+                    (block) => String(block?.source ?? ""),
+                );
+                const count = Math.min(
+                    Math.max(1, sources.length),
+                    visualContextMaximumBlocks(nextContext),
+                );
+                const partition = visualContextDefaultPartition(
+                    nextContext, count,
+                );
+                shot.visual_context_blocks = partition.map(
+                    (frames, offset) => ({
+                        source:sources[offset] ?? sources.at(-1)
+                            ?? safeShotId(
+                                state.plan.shots[state.active - 1]?.id,
+                                `clip_${String(state.active).padStart(4, "0")}`,
+                            ),
+                        frames,
+                    }),
+                );
                 shot.video_blend_frames = 0;
             }
-            delete shot.visual_context_start_frame;
-            refreshBlendControl();
             writePlan();
             renderShell();
         });
-        const visualLeadSource = element("select");
-        const noLead = element("option", "", "Off · one context block");
-        noLead.value = "";
-        visualLeadSource.append(noLead);
-        const recentSourceIndex = state.active === 0 ? null
-            : sceneVisualContextSource(state.plan, state.active + 1);
-        if (recentSourceIndex !== null) {
-            for (let sourceOffset = 0;
-                sourceOffset < state.active; sourceOffset += 1) {
-                const sourceId = safeShotId(
-                    state.plan.shots[sourceOffset]?.id,
-                    `clip_${String(sourceOffset + 1).padStart(4, "0")}`,
-                );
-                const sameSource = sourceOffset + 1 === recentSourceIndex;
-                const sourceLabel = `Scene ${sourceOffset + 1} · ${sourceId}`
-                    + (sameSource ? " · same scene, separate window" : "");
-                const option = element(
-                    "option", "", sourceLabel,
-                );
-                option.value = sourceId;
-                visualLeadSource.append(option);
-            }
-        }
-        visualLeadSource.disabled = state.active === 0;
-        try {
-            const resolvedLead = sceneVisualContextLeadSource(
-                state.plan, state.active + 1,
-            );
-            visualLeadSource.value = resolvedLead === null ? ""
-                : safeShotId(
-                    state.plan.shots[resolvedLead - 1]?.id,
-                    `clip_${String(resolvedLead).padStart(4, "0")}`,
-                );
-        } catch (_error) {
-            visualLeadSource.value = "";
-        }
-        visualLeadSource.title = "Optional first block in one composed visual context. It may use a different scene or a second independently positioned window from the same scene. Visual context source supplies the block nearest generation; generated audio remains continuous from the immediate timeline predecessor.";
-
-        const visualLeadFrames = element("select");
-        const resolvedVisualContext = sceneContextLength(
-            shot, settings().contextLength,
-        );
-        const compositionChoices = visualContextCompositions();
-        const defaultComposition = compositionChoices.find(
-            (choice) => choice.total === resolvedVisualContext,
-        ) ?? compositionChoices[0];
-        visualLeadSource.disabled = visualLeadSource.disabled
-            || !compositionChoices.length;
-        for (const total of H3_CONTEXT_LENGTHS) {
-            const groupChoices = compositionChoices.filter(
-                (choice) => choice.total === total,
-            );
-            if (!groupChoices.length) continue;
-            const group = element("optgroup");
-            group.label = `${total} total frames`;
-            for (const choice of groupChoices) {
-                const option = element("option", "", choice.label);
-                option.value = choice.value;
-                group.append(option);
-            }
-            visualLeadFrames.append(group);
-        }
-        visualLeadFrames.disabled = !visualLeadSource.value
-            || !compositionChoices.length;
-        if (visualLeadSource.value) {
-            try {
-                const lead = sceneVisualContextLeadFrames(
-                    shot, resolvedVisualContext,
-                );
-                visualLeadFrames.value = `${resolvedVisualContext}:${lead}`;
-            } catch (_error) {
-                visualLeadFrames.value = defaultComposition?.value ?? "";
-            }
-        } else {
-            visualLeadFrames.value = defaultComposition?.value ?? "";
-        }
-        visualLeadFrames.title = "Select the total H3 context and its ordered two-block split. Both blocks may use the same scene with independent floating windows. For example, 39 total includes 5+34, 17+22, and their reverse orientations.";
-        function applyVisualComposition() {
-            const [totalRaw, leadRaw] = visualLeadFrames.value.split(":");
-            const total = Number(totalRaw);
-            const lead = Number(leadRaw);
-            if (!Number.isInteger(total) || !Number.isInteger(lead)) return;
-            shot.context_length = total;
-            shot.visual_context_lead_frames = lead;
-            sceneVisualContextLeadFrames(shot, total);
-            shot.video_blend_frames = 0;
-        }
-        visualLeadSource.addEventListener("change", () => {
-            if (!visualLeadSource.value) {
-                delete shot.visual_context_lead_source;
-                delete shot.visual_context_lead_frames;
-                delete shot.visual_context_lead_start_frame;
-            } else {
-                shot.visual_context_lead_source = visualLeadSource.value;
-                applyVisualComposition();
-            }
-            delete shot.visual_context_start_frame;
-            delete shot.visual_context_lead_start_frame;
-            refreshBlendControl();
-            writePlan();
-            renderShell();
-        });
-        visualLeadFrames.addEventListener("change", () => {
-            if (visualLeadSource.value) {
-                applyVisualComposition();
-            }
-            delete shot.visual_context_start_frame;
-            delete shot.visual_context_lead_start_frame;
-            refreshBlendControl();
-            writePlan();
-            renderShell();
-        });
-        const audioContext = element("input");
-        audioContext.type = "number";
-        audioContext.min = "0";
-        audioContext.max = "240";
-        audioContext.step = "1";
-        audioContext.value = shot.audio_context_length ?? "";
-        const planAudioContextLength = Number(settings().audioContextLength);
-        audioContext.placeholder = planAudioContextLength
-            ? String(planAudioContextLength)
-            : `Video ${settings().contextLength}`;
-        audioContext.title = "Blank inherits the Plan audio context; an explicit 0 carries no prior generated audio. Positive audio context works with zero video context in guide generated-audio modes. AV mask modes remain synchronized to video.";
-        audioContext.addEventListener("change", () => {
-            if (audioContext.value === "") delete shot.audio_context_length;
-            else shot.audio_context_length = Number(audioContext.value);
-            refreshIncomingTransition();
-            writePlan();
-            renderStatus();
-        });
-        const contextPair = element("span", "h3studio-context-pair");
-        contextPair.append(context, audioContext);
         const blendFrames = element("input");
         blendFrames.type = "number";
         blendFrames.min = "0";
@@ -2956,55 +3046,6 @@ function mount(node) {
                 shot, settings().videoBlendFrames,
                 sceneContextLength(shot, settings().contextLength),
             );
-            writePlan();
-            renderStatus();
-        });
-        const continuation = element("select");
-        for (const [value, label] of [
-            ["", `Plan default · ${settings().continuationMode}`],
-            ["guide", "Guide · new shot"],
-            ["tone_carry_guide", "Tone Carry Guide · corrected RGB context"],
-            ["latent_guide", "Latent Guide · direct generated latent"],
-            ["tapered_guide", "Detail Guide · color injection"],
-            ["tapered_av", "Detail AV · experimental latent taper"],
-            ["drift_control_av", "Drift-Control AV · schedule-matched mask"],
-            ["color_stable_drift_av", "Color-Stable Drift AV · tapered scene-one latent delta"],
-            ["masked_av", "Masked AV · same shot"],
-            ["feathered_av", "Feathered AV · experimental dual-stream feather"],
-            ["audio_feathered_av", "Audio Feather AV · hard picture, soft sound"],
-        ]) {
-            const option = element("option", "", label);
-            option.value = value;
-            continuation.append(option);
-        }
-        continuation.value = Object.hasOwn(shot, "continuation_mode")
-            ? sceneContinuationMode(shot, settings().continuationMode) : "";
-        continuation.title = state.active === 0
-            ? "Continuation into this scene. Scene 1 uses it only with Existing Video Context. Guide re-encodes RGB; Latent Guide reuses generated latent context and falls back to RGB for imported context; Detail Guide adds luma-preserving tapered chroma injection; Detail AV applies a disposable video-only latent taper; Drift-Control AV applies a scheduler-matched video mask with a clean seam and needs the Chain Context MODEL path; Color-Stable Drift AV additionally carries a weak scene-one color correction as a tapered VAE delta on the copied video latent only."
-            : "Guide re-encodes RGB into persistent conditioning; Latent Guide directly conditions on the saved sampled-latent tail; Detail Guide applies luma-preserving tapered chroma injection; Detail AV applies a disposable video-only latent taper; Drift-Control AV applies a scheduler-matched video mask with a clean seam and needs the Chain Context MODEL path; Color-Stable Drift AV additionally carries a weak scene-one color correction as a tapered VAE delta on the copied video latent only; Masked AV preserves an exact prefix; experimental Feathered AV softens both streams; Audio-Feathered AV keeps the picture exact and softens only the final audio ticks.";
-        continuation.addEventListener("change", () => {
-            if (continuation.value) shot.continuation_mode = continuation.value;
-            else delete shot.continuation_mode;
-            sceneContinuationMode(shot, settings().continuationMode);
-            refreshIncomingTransition();
-            writePlan();
-            renderStatus();
-        });
-        const spatialProxy = element("select");
-        for (const [value, label] of [
-            ["", "Off · native context"],
-            ["rgb_5_6", "Low-grid 5/6 proxy · Guide"],
-            ["latent_5_6", "Latent 5/6 proxy · AV"],
-        ]) {
-            const option = element("option", "", label);
-            option.value = value;
-            spatialProxy.append(option);
-        }
-        spatialProxy.value = shot.context_spatial_proxy ?? "";
-        spatialProxy.title = "Scheduled only on incoming boundaries for scenes 2+. Low-grid 5/6 reduces the full saved predecessor video latent to the proxy grid, VAE-decodes it there, and lets Motion Context restore the selected Guide tail; 1376×768 uses 1152×640 (48×86 → 40×72 latent). This exact low-grid decode costs extra preparation time and peak memory. Latent 5/6 is the cheaper copied-prefix latent filter for AV. Audio, outputs, checkpoints, and assembly stay native size.";
-        spatialProxy.addEventListener("change", () => {
-            if (spatialProxy.value) shot.context_spatial_proxy = spatialProxy.value;
-            else delete shot.context_spatial_proxy;
             writePlan();
             renderStatus();
         });
@@ -3048,6 +3089,35 @@ function mount(node) {
         );
         const sceneStartWrap = element("span", "h3studio-length");
         sceneStartWrap.append(sceneStart, resetStart);
+        const usedEnd = element("select");
+        for (const frame of studioLatentSafeOutFrames(
+            row.rawFrames, row.deliveredFrames,
+        )) {
+            const option = element(
+                "option", "",
+                frame === Number(row.deliveredFrames)
+                    ? `Full · ${frame}f · ${formatClock(frame / FPS)}`
+                    : `${frame}f · ${formatClock(frame / FPS)}`,
+            );
+            option.value = String(frame);
+            usedEnd.append(option);
+        }
+        usedEnd.value = String(usedFrames);
+        usedEnd.disabled = !checkpoint?.ready || timelineLocked;
+        usedEnd.title = checkpoint?.ready
+            ? "Non-destructive editorial endpoint. Only boundaries shared by the sampled H3 video latent and delivered 40 Hz audio grid are offered. The full checkpoint remains available, while assembly and the next scene use this endpoint."
+            : "Generate this scene first; latent-safe endpoint editing uses its saved checkpoint.";
+        usedEnd.addEventListener("change", () => {
+            setSceneTrim(state.active, Number(usedEnd.value));
+        });
+        const resetUsedEnd = button(
+            "Full", "Use the complete generated checkpoint",
+            () => setSceneTrim(state.active, row.deliveredFrames),
+        );
+        resetUsedEnd.disabled = !checkpoint?.ready || timelineLocked
+            || usedFrames === Number(row.deliveredFrames);
+        const usedEndWrap = element("span", "h3studio-length");
+        usedEndWrap.append(usedEnd, resetUsedEnd);
         const sceneLockControl = button(
             timelineLocked ? "Unlock scene" : "Lock scene",
             timelineLocked
@@ -3064,6 +3134,7 @@ function mount(node) {
             field("LoRA route", loraRoute),
             field("Timeline lock", sceneLockControl),
             field("Editorial start", sceneStartWrap),
+            field("Latent-safe used end", usedEndWrap),
             field("Incoming transition", incomingTransition),
             field("Final assembly crossfade frames", blendFrames),
         );
@@ -3123,33 +3194,157 @@ function mount(node) {
             field("Generated continuity", generatedContinuity),
             field("Lock source audio", lockSourceAudio),
         );
-        const advanced = element("details", "h3studio-advanced");
-        advanced.open = state.advancedBoundaryOpen;
-        advanced.addEventListener("toggle", () => {
-            state.advancedBoundaryOpen = advanced.open;
-            node.properties[ADVANCED_BOUNDARY_OPEN_PROPERTY] = advanced.open;
-            dirty();
-        });
-        advanced.append(element(
-            "summary", "", "Advanced boundary controls",
-        ));
-        const refreshExperimentalMarkers = () => {
-            if (experimentalCutMarker) {
-                experimentalCutMarker.hidden = !advanced.open;
+        function alternateTakePanel() {
+            const section = element("section", "h3studio-alternate");
+            const title = element("div", "h3studio-alternate-title");
+            title.append(
+                element("strong", "", "Alternate final-cut take"),
+                element("span", "h3studio-grid-marker h3studio-grid-experimental",
+                    "Picture only"),
+            );
+            section.append(title, element(
+                "div", "h3studio-hint",
+                "Regenerate this scene with a small prompt change without replacing its generation checkpoint. Later scenes keep depending on the original take; preview and final assembly use the accepted alternate picture with the original audio.",
+            ));
+            if (!checkpoint?.ready) {
+                section.append(element(
+                    "div", "h3studio-message",
+                    "Generate and accept the original scene before creating an alternate.",
+                ));
+                return section;
             }
-        };
-        advanced.addEventListener("toggle", refreshExperimentalMarkers);
-        refreshExperimentalMarkers();
-        const advancedGrid = element("div", "h3studio-advanced-grid");
-        advancedGrid.append(
-            field("Visual / audio context", contextPair),
-            field("Visual context source", visualSource),
-            field("Context block 1 source", visualLeadSource),
-            field("Composed total / split", visualLeadFrames),
-            field("Implementation", continuation),
-            field("Boundary spatial proxy", spatialProxy),
-        );
-        advanced.append(advancedGrid);
+            const sceneId = String(row.id);
+            const baseRevision = String(checkpoint.revision ?? "");
+            const draft = state.editorial.alternate_draft;
+            const thisDraft = draft
+                && draft.scene_id === sceneId
+                && draft.base_revision === baseRevision ? draft : null;
+            const selected = state.editorial.replacements.find(
+                (item) => item.scene_id === sceneId
+                    && item.base_revision === baseRevision,
+            ) ?? null;
+            const select = element("select");
+            const original = element("option", "", `Original · ${baseRevision.slice(0, 8)}`);
+            original.value = ""; select.append(original);
+            for (const alternate of checkpoint.alternates ?? []) {
+                if (!alternate.ready || alternate.base_revision !== baseRevision) continue;
+                const option = element(
+                    "option", "",
+                    `ALT ${String(alternate.revision).slice(0, 8)} · seed ${alternate.seed || "?"}`,
+                );
+                option.value = String(alternate.revision);
+                option.title = String(alternate.prompt ?? "");
+                select.append(option);
+            }
+            select.value = selected?.alternate_revision ?? "";
+            select.title = "Choose the picture shown in Plan Studio and final assembly. This never changes the active checkpoint used by following scenes.";
+            select.addEventListener("change", () => {
+                state.editorial.replacements = state.editorial.replacements.filter(
+                    (item) => item.scene_id !== sceneId,
+                );
+                if (select.value) state.editorial.replacements.push({
+                    scene:state.active + 1, scene_id:sceneId,
+                    base_revision:baseRevision,
+                    alternate_revision:select.value,
+                    media_mode:"picture_only",
+                });
+                // Choosing presentation media is never a generation command.
+                // Disarm any draft for this scene and flush the hidden queue
+                // widget immediately so a saved ALT cannot retarget Loop Start.
+                if (state.editorial.alternate_draft?.scene_id === sceneId) {
+                    state.editorial.alternate_draft = null;
+                }
+                scheduleEditorialSave(0);
+                renderShell();
+            });
+            section.append(field("Used in final cut", select));
+
+            const enabled = element("input"); enabled.type = "checkbox";
+            enabled.checked = Boolean(thisDraft?.enabled);
+            enabled.title = "When enabled, the next queued execution generates only this scene as an immutable alternate. The original active checkpoint remains untouched.";
+            const enabledLabel = element("label", "h3studio-alternate-enable");
+            enabledLabel.append(enabled, document.createTextNode(
+                " Generate a prompt-word alternate on the next queue",
+            ));
+            section.append(enabledLabel);
+            const editor = element("textarea", "h3studio-prompt h3studio-alternate-prompt");
+            const basePrompt = promptValueToText(
+                shot.prompt, `Scene ${state.active + 1} prompt`,
+            );
+            editor.value = thisDraft?.prompt ?? basePrompt;
+            editor.disabled = !enabled.checked;
+            editor.spellcheck = true;
+            editor.placeholder = "Change only the words needed for this alternate…";
+            const altSeed = element("input");
+            altSeed.type = "text"; altSeed.inputMode = "numeric";
+            altSeed.value = String(thisDraft?.seed ?? shot.seed ?? row.seed ?? 0);
+            altSeed.disabled = !enabled.checked;
+            const diff = element("div", "h3studio-alternate-diff");
+            const refreshDiff = () => {
+                const before = basePrompt.trim().split(/\s+/);
+                const after = editor.value.trim().split(/\s+/);
+                let prefix = 0;
+                while (prefix < before.length && prefix < after.length
+                        && before[prefix] === after[prefix]) prefix += 1;
+                let suffix = 0;
+                while (suffix < before.length - prefix
+                        && suffix < after.length - prefix
+                        && before[before.length - 1 - suffix]
+                            === after[after.length - 1 - suffix]) suffix += 1;
+                const removed = before.slice(prefix, before.length - suffix).join(" ");
+                const added = after.slice(prefix, after.length - suffix).join(" ");
+                diff.textContent = removed || added
+                    ? `Prompt change: “${removed || "∅"}” → “${added || "∅"}”`
+                    : "Prompt is unchanged from the original take.";
+            };
+            const storeDraft = () => {
+                if (!enabled.checked) return;
+                let seedValue;
+                try {
+                    const parsed = BigInt(altSeed.value.trim() || "0");
+                    if (parsed < 0n || parsed > MAX_SEED) throw new Error();
+                    seedValue = parsed.toString();
+                } catch (_error) {
+                    altSeed.setCustomValidity("Seed must be an unsigned 64-bit integer.");
+                    return;
+                }
+                altSeed.setCustomValidity("");
+                state.editorial.alternate_draft = {
+                    enabled:true, scene:state.active + 1, scene_id:sceneId,
+                    base_revision:baseRevision, prompt:editor.value.trim(),
+                    seed:seedValue, media_mode:"picture_only",
+                };
+                scheduleEditorialSave();
+            };
+            enabled.addEventListener("change", () => {
+                editor.disabled = !enabled.checked;
+                altSeed.disabled = !enabled.checked;
+                if (enabled.checked) {
+                    storeDraft();
+                    scheduleEditorialSave(0);
+                }
+                else if (thisDraft || state.editorial.alternate_draft?.scene_id === sceneId) {
+                    state.editorial.alternate_draft = null;
+                    scheduleEditorialSave(0);
+                }
+                refreshDiff();
+            });
+            editor.addEventListener("input", () => {
+                refreshDiff(); storeDraft();
+            });
+            altSeed.addEventListener("change", storeDraft);
+            refreshDiff();
+            const draftForm = element("div", "h3studio-alternate-grid");
+            draftForm.append(field("Alternate prompt", editor), field("Seed", altSeed));
+            section.append(draftForm, diff, element(
+                "div", "h3studio-message",
+                enabled.checked
+                    ? `Ready: queue normally; Loop Start will render only scene ${state.active + 1}. Review acceptance selects it for the final cut.`
+                    : "Enable only while you are ready to queue the alternate.",
+            ));
+            return section;
+        }
+        const alternate = alternateTakePanel();
 
         if (state.promptEditors.length) {
             const delegated = element("div", "h3studio-prompt-delegated");
@@ -3160,7 +3355,7 @@ function mount(node) {
                     "Scene selection is synchronized in both directions; Studio keeps scene ID, length, steps, seed, timeline, and playback controls.",
                 ),
             );
-            panel.append(head, form, audioOverrides, advanced, delegated);
+            panel.append(head, form, audioOverrides, alternate, delegated);
             return panel;
         }
 
@@ -3191,7 +3386,7 @@ function mount(node) {
         const history = element("div", "h3studio-history");
         state.history.host = history; state.history.textarea = prompt; state.history.status = message;
         panel.append(
-            head, form, audioOverrides, advanced, prompt, tools, tray, history,
+            head, form, audioOverrides, alternate, prompt, tools, tray, history,
         );
         void loadHistory(row.id, prompt.value);
         return panel;
@@ -3292,6 +3487,7 @@ function mount(node) {
         const panel = element("div");
         const grid = element("div", "h3studio-plan-settings");
         const owner = state.planOwner ?? node;
+        const modernPlan = owner?.type === MODERN_PLAN_NAME;
         const transition = resolveTransitionPolicy(owner);
         const audioPolicy = resolveAudioPolicy(owner);
         const projectAssetsManaged = inputConnected(owner, "project_assets");
@@ -3354,7 +3550,7 @@ function mount(node) {
         });
 
         const mode = state.planNode
-            ? "Connected mode · changes are written to the H3 Chain Plan and mirrored into Studio. Disconnecting keeps this synchronized snapshot."
+            ? `Connected mode · changes are written to the ${modernPlan ? "Modern Plan" : "H3 Chain Plan"} and mirrored into Studio. Disconnecting keeps this synchronized snapshot.`
             : "Standalone mode · this node owns, validates, and outputs the complete H3 Chain Plan.";
         const identityFields = projectAssetsManaged ? [
             element(
@@ -3386,12 +3582,27 @@ function mount(node) {
             field("Context encoding", selectControl("encode_mode", [
                 ["video", "Video clip"], ["frames", "Separate frames"],
             ], "video")),
-            field("Anchor placement", selectControl("anchor_mode", [
-                ["head", "Head (tested)"], ["before", "Before timeline (experimental)"],
-            ], "head")),
             field("Context fit", selectControl("crop", [
                 ["disabled", "Resize directly"], ["center", "Preserve aspect + center crop"],
             ], "disabled")),
+        );
+        if (modernPlan) {
+            grid.append(
+                section("Generation Profile"),
+                element(
+                    "div", "h3studio-plan-defaults-help",
+                    transition.known || audioPolicy.known
+                        ? "Visual transition, context length, audio behavior, and continuation are owned by the connected Generation Profile. Per-scene Context controls remain available for deliberate overrides."
+                        : "Connect a Generation Profile to the Modern Plan. It owns visual transition, context length, audio behavior, and continuation.",
+                ),
+            );
+            panel.append(grid);
+            return panel;
+        }
+        grid.append(
+            field("Anchor placement", selectControl("anchor_mode", [
+                ["head", "Head (tested)"], ["before", "Before timeline (experimental)"],
+            ], "head")),
             section("Legacy policy fallback"),
         );
         const context = selectControl(
@@ -3419,7 +3630,7 @@ function mount(node) {
             element("div", "h3studio-plan-defaults-help",
                 transition.known || audioPolicy.known
                     ? "Connected Chain Policy owns the disabled fallback controls. The active policy is used for timing and execution."
-                    : "These controls are used only when no Chain Policy is connected. Per-scene Advanced settings can still override them."),
+                    : "These controls are used only when no Chain Policy is connected. Per-scene Context Planner settings can still override them."),
         );
         panel.append(grid);
         return panel;
@@ -3431,11 +3642,342 @@ function mount(node) {
         );
         if (!item) return null;
         return {
-            video:item.preview_video ?? item.video,
+            video:item.presentation_video ?? item.preview_video ?? item.video,
             // Review previews already contain synchronized audio. Raw saved
             // segments do not, so pair those with their delivered WAV.
-            audio:item.preview_video ? null : (item.audio ?? null),
+            // Picture-only alternates deliberately keep the original take's
+            // generated audio sidecar.
+            audio:item.presentation_video
+                ? (item.audio ?? null)
+                : item.preview_video ? null : (item.audio ?? null),
         };
+    }
+
+    function renderAudioContextPanel(panel, result, row, shot) {
+        if (!row.preservesGeneratedAudioPrefix || !Number(row.audioContextLength)) {
+            panel.append(element(
+                "div", "h3studio-context-empty",
+                "This scene does not carry generated audio. Enable Generated continuity and a positive audio context before selecting extracts.",
+            ));
+            return panel;
+        }
+        const sourceSelect = (field, {lead = false} = {}) => {
+            const select = element("select");
+            if (lead) {
+                const off = element("option", "", "Off · one audio extract");
+                off.value = "";
+                select.append(off);
+            } else {
+                const previous = element(
+                    "option", "",
+                    `Previous scene · ${state.active} ${safeShotId(
+                        state.plan.shots[state.active - 1]?.id,
+                        `clip_${String(state.active).padStart(4, "0")}`,
+                    )}`,
+                );
+                previous.value = "";
+                select.append(previous);
+            }
+            for (let offset = 0; offset < state.active; offset += 1) {
+                if (!lead && offset === state.active - 1) continue;
+                const sourceId = safeShotId(
+                    state.plan.shots[offset]?.id,
+                    `clip_${String(offset + 1).padStart(4, "0")}`,
+                );
+                const option = element(
+                    "option", "", `Scene ${offset + 1} · ${sourceId}`,
+                );
+                option.value = sourceId;
+                select.append(option);
+            }
+            const resolver = lead
+                ? sceneAudioContextLeadSource : sceneAudioContextSource;
+            try {
+                const resolved = resolver(state.plan, state.active + 1);
+                select.value = resolved === null || (
+                    !lead && resolved === state.active
+                ) ? "" : safeShotId(
+                    state.plan.shots[resolved - 1]?.id,
+                    `clip_${String(resolved).padStart(4, "0")}`,
+                );
+            } catch (_error) {
+                select.value = "";
+            }
+            select.addEventListener("change", () => {
+                if (select.value) shot[field] = select.value;
+                else delete shot[field];
+                delete shot[lead
+                    ? "audio_context_lead_start_frame"
+                    : "audio_context_start_frame"];
+                if (lead) {
+                    if (!select.value) {
+                        delete shot.audio_context_lead_frames;
+                    } else if (!Object.hasOwn(
+                        shot, "audio_context_lead_frames",
+                    )) {
+                        const options = audioContextLeadFrameOptions(
+                            row.audioContextLength,
+                        );
+                        shot.audio_context_lead_frames = options.includes(5)
+                            ? 5 : options[Math.floor(options.length / 2)];
+                    }
+                }
+                writePlan();
+                renderShell();
+            });
+            return select;
+        };
+        const audioSource = sourceSelect("audio_context_source");
+        audioSource.title = "The extract nearest the new generation boundary. It may come from any earlier scene.";
+        const audioLeadSource = sourceSelect(
+            "audio_context_lead_source", {lead:true},
+        );
+        audioLeadSource.title = "Optional first extract. It may come from another character's scene or a second position in the same scene.";
+        const split = element("select");
+        const splitOptions = audioContextLeadFrameOptions(
+            row.audioContextLength,
+        );
+        for (const lead of splitOptions) {
+            const option = element(
+                "option", "",
+                `${row.audioContextLength} total · ${lead} + ${row.audioContextLength - lead}`,
+            );
+            option.value = String(lead);
+            split.append(option);
+        }
+        split.disabled = !audioLeadSource.value;
+        split.value = String(row.audioContextLeadFrames || (
+            splitOptions.includes(5) ? 5 : splitOptions.at(0)
+        ));
+        split.title = "Ordered duration of the two exact 40 Hz audio-latent extracts. These are sequential context excerpts, not a live audio mix.";
+        split.addEventListener("change", () => {
+            shot.audio_context_lead_frames = Number(split.value);
+            delete shot.audio_context_start_frame;
+            delete shot.audio_context_lead_start_frame;
+            writePlan();
+            renderShell();
+        });
+        const settingsGrid = element(
+            "div", "h3studio-context-audio-settings",
+        );
+        settingsGrid.append(
+            field("Boundary-nearest audio source", audioSource),
+            field("Optional first audio source", audioLeadSource),
+            field("Dual extract split", split),
+        );
+        panel.append(
+            element(
+                "div", "h3studio-context-help",
+                "Audio is unlocked from picture for this scene. Choose one exact latent extract, or two ordered extracts—for example two character voice regions. The second block sits nearest generation. No waveform is decoded or re-encoded.",
+            ),
+            settingsGrid,
+        );
+
+        const blocks = [];
+        if (row.audioContextLeadSource !== null) {
+            blocks.push({
+                label:"Audio block 1 · first extract",
+                sourceIndex:row.audioContextLeadSource - 1,
+                span:Number(row.audioContextLeadFrames),
+                field:"audio_context_lead_start_frame",
+                lead:true,
+            });
+        }
+        blocks.push({
+            label:row.audioContextLeadSource === null
+                ? "Audio context extract" : "Audio block 2 · nearest generation",
+            sourceIndex:row.audioContextSource - 1,
+            span:Number(row.audioContextLength - row.audioContextLeadFrames),
+            field:"audio_context_start_frame",
+            lead:false,
+        });
+        const blocksHost = element("div", "h3studio-context-blocks");
+        for (const block of blocks) {
+            const sourceRow = result.shots[block.sourceIndex];
+            const card = element("div", "h3studio-context-block");
+            const head = element("div", "h3studio-context-block-head");
+            head.append(
+                element("strong", "", `${block.label} · ${block.span}f`),
+                element(
+                    "span", "", sourceRow
+                        ? `Scene ${sourceRow.index} · ${sourceRow.id}`
+                        : "Missing source scene",
+                ),
+            );
+            card.append(head);
+            if (!sourceRow || block.span < 1) {
+                card.append(element(
+                    "div", "h3studio-context-empty",
+                    "The selected source or audio split is invalid.",
+                ));
+                blocksHost.append(card);
+                continue;
+            }
+            const validStarts = audioContextWindowStarts(
+                sourceRow.rawFrames, sourceRow.deliveredFrames, block.span,
+            );
+            if (!validStarts.length) {
+                card.append(element(
+                    "div", "h3studio-context-empty",
+                    "This scene has no position with the exact requested 40 Hz latent duration.",
+                ));
+                blocksHost.append(card);
+                continue;
+            }
+            const defaultStart = validStarts.at(-1);
+            let selectedStart = defaultStart;
+            let rangeError = "";
+            try {
+                selectedStart = sceneAudioContextStartFrame(
+                    shot, sourceRow.rawFrames, sourceRow.deliveredFrames,
+                    block.span, block.lead,
+                );
+            } catch (error) {
+                rangeError = error?.message || String(error);
+                selectedStart = nearestNativeContextWindowStart(
+                    validStarts, Number(shot[block.field]),
+                );
+            }
+            const media = playerCheckpoint(block.sourceIndex);
+            let audio = null;
+            const audioPath = media?.audio ?? media?.video;
+            if (audioPath) {
+                audio = element("audio", "h3studio-context-audio");
+                audio.controls = true;
+                audio.preload = "metadata";
+                audio.src = videoUrl(audioPath);
+                state.contextPlayers.push(audio);
+                card.append(audio);
+            }
+            const track = element("div", "h3studio-context-movie-track");
+            track.tabIndex = 0;
+            track.setAttribute("role", "slider");
+            track.setAttribute("aria-label", `${block.label} position`);
+            const zone = element(
+                "div", "h3studio-context-window", `${block.span}f`,
+            );
+            const playhead = element("div", "h3studio-context-playhead");
+            track.append(zone, playhead);
+            const rangeLabel = element("span", "h3studio-context-range-label");
+            const movieLength = element(
+                "span", "h3studio-context-movie-length",
+                `source audio · ${sourceRow.deliveredFrames}f · ${(sourceRow.deliveredFrames / FPS).toFixed(3)}s`,
+            );
+            const update = () => {
+                const layout = studioContextWindowLayout(
+                    sourceRow.deliveredFrames, block.span, selectedStart,
+                );
+                selectedStart = nearestNativeContextWindowStart(
+                    validStarts, layout.start,
+                );
+                const exact = studioContextWindowLayout(
+                    sourceRow.deliveredFrames, block.span, selectedStart,
+                );
+                zone.style.left = `${exact.leftFraction * 100}%`;
+                zone.style.width = `${exact.widthFraction * 100}%`;
+                rangeLabel.textContent = `frames ${exact.start + 1}–${exact.end} · ${(exact.start / FPS).toFixed(3)}–${(exact.end / FPS).toFixed(3)}s`;
+                track.setAttribute("aria-valuenow", String(exact.start));
+            };
+            const seek = () => {
+                if (!audio || audio.readyState < 1) return;
+                try { audio.currentTime = selectedStart / FPS; }
+                catch (_error) {}
+            };
+            const commit = () => {
+                if (selectedStart === defaultStart) delete shot[block.field];
+                else shot[block.field] = selectedStart;
+                writePlan();
+                renderStatus();
+            };
+            const choose = (value, commitNow = false) => {
+                selectedStart = nearestNativeContextWindowStart(
+                    validStarts, value,
+                );
+                update();
+                seek();
+                if (commitNow) commit();
+            };
+            let drag = null;
+            track.addEventListener("pointerdown", (event) => {
+                if (event.button !== 0) return;
+                event.preventDefault();
+                const bounds = track.getBoundingClientRect();
+                choose(studioContextWindowStartAtRatio(
+                    sourceRow.deliveredFrames, block.span,
+                    (event.clientX - bounds.left) / Math.max(1, bounds.width),
+                ));
+                drag = {id:event.pointerId, x:event.clientX,
+                    start:selectedStart, width:Math.max(1, bounds.width)};
+                track.setPointerCapture(event.pointerId);
+            });
+            track.addEventListener("pointermove", (event) => {
+                if (!drag || drag.id !== event.pointerId) return;
+                choose(drag.start + (event.clientX - drag.x) / drag.width
+                    * sourceRow.deliveredFrames);
+            });
+            const finish = (event) => {
+                if (!drag || drag.id !== event.pointerId) return;
+                drag = null;
+                try { track.releasePointerCapture(event.pointerId); }
+                catch (_error) {}
+                commit();
+            };
+            track.addEventListener("pointerup", finish);
+            track.addEventListener("pointercancel", finish);
+            track.addEventListener("keydown", (event) => {
+                const slot = Math.max(0, validStarts.indexOf(selectedStart));
+                let next = null;
+                if (event.key === "ArrowLeft") next = validStarts[Math.max(0, slot - 1)];
+                else if (event.key === "ArrowRight") next = validStarts[Math.min(validStarts.length - 1, slot + 1)];
+                else if (event.key === "Home") next = validStarts[0];
+                else if (event.key === "End") next = defaultStart;
+                if (next === null) return;
+                event.preventDefault();
+                choose(next, true);
+            });
+            const readout = element("div", "h3studio-context-range-readout");
+            readout.append(movieLength, rangeLabel);
+            const range = element("div", "h3studio-context-range");
+            range.append(track, readout);
+            card.append(range);
+            update();
+            if (audio) {
+                audio.addEventListener("loadedmetadata", seek, {once:true});
+                audio.addEventListener("timeupdate", () => {
+                    playhead.style.left = `${Math.max(0, Math.min(
+                        1, audio.currentTime * FPS / sourceRow.deliveredFrames,
+                    )) * 100}%`;
+                    const end = Number(audio.dataset.contextEnd);
+                    if (Number.isFinite(end) && audio.currentTime >= end) {
+                        delete audio.dataset.contextEnd;
+                        audio.pause();
+                    }
+                });
+            }
+            const actions = element("div", "h3studio-context-actions");
+            const play = button("Play extract", "Play only this audio extract", async () => {
+                if (!audio) return;
+                audio.dataset.contextEnd = String((selectedStart + block.span) / FPS);
+                audio.currentTime = selectedStart / FPS;
+                try { await audio.play(); } catch (_error) {}
+            });
+            play.disabled = !audio;
+            const usePlayhead = button("Start at playhead", "Place extract at the audio player's current time", () => {
+                if (audio) choose(audio.currentTime * FPS, true);
+            });
+            usePlayhead.disabled = !audio;
+            actions.append(usePlayhead, play, button(
+                "Latest exact (default)",
+                "Use the last exact 40 Hz crop and remove the override",
+                () => choose(defaultStart, true),
+            ));
+            const error = element("div", "h3studio-error", rangeError);
+            error.hidden = !rangeError;
+            card.append(actions, error);
+            blocksHost.append(card);
+        }
+        panel.append(blocksHost);
+        return panel;
     }
 
     function renderContextPanel() {
@@ -3445,7 +3987,7 @@ function mount(node) {
         const shot = state.plan.shots[state.active];
         const title = element(
             "div", "h3studio-scene-head",
-            `Scene ${state.active + 1} selected visual context`,
+            `Scene ${state.active + 1} context planner`,
         );
         panel.append(title);
         if (!row || state.active === 0) {
@@ -3455,37 +3997,295 @@ function mount(node) {
             ));
             return panel;
         }
+        let audioUnlocked = false;
+        try { audioUnlocked = sceneAudioContextUnlocked(shot); }
+        catch (_error) {}
+        if (!audioUnlocked) state.contextTab = "picture";
+        const tabs = element("div", "h3studio-context-tabs");
+        const pictureTab = button(
+            "Picture", "Select picture context sources and latent windows",
+            () => { state.contextTab = "picture"; renderShell(); },
+        );
+        const audioTab = button(
+            "Audio", audioUnlocked
+                ? "Select independent audio context sources and latent windows"
+                : "Unlock audio context to choose sources independently",
+            () => { state.contextTab = "audio"; renderShell(); },
+        );
+        audioTab.disabled = !audioUnlocked;
+        (state.contextTab === "audio" ? audioTab : pictureTab).classList.add(
+            "h3studio-context-tab-active",
+        );
+        const lock = button(
+            audioUnlocked ? "Lock audio context" : "Unlock audio context",
+            audioUnlocked
+                ? "Restore the default behavior: picture may be single or dual while generated audio remains the immediate predecessor tail"
+                : "Expose an Audio tab that can choose one or two saved-scene audio extracts independently from picture",
+            () => {
+                if (audioUnlocked) {
+                    delete shot.audio_context_unlocked;
+                    delete shot.audio_context_source;
+                    delete shot.audio_context_start_frame;
+                    delete shot.audio_context_lead_source;
+                    delete shot.audio_context_lead_frames;
+                    delete shot.audio_context_lead_start_frame;
+                    state.contextTab = "picture";
+                } else {
+                    shot.audio_context_unlocked = true;
+                    state.contextTab = "audio";
+                }
+                writePlan();
+                renderShell();
+            },
+        );
+        lock.classList.add("h3studio-context-lock");
+        lock.disabled = !audioUnlocked && !row.preservesGeneratedAudioPrefix;
+        tabs.append(pictureTab, audioTab, lock);
+        panel.append(tabs);
+        if (state.contextTab === "audio" && audioUnlocked) {
+            return renderAudioContextPanel(panel, result, row, shot);
+        }
+        const legacyVisualFields = [
+            "visual_context_source", "visual_context_start_frame",
+            "visual_context_lead_source", "visual_context_lead_frames",
+            "visual_context_lead_start_frame",
+        ];
+        const clearLegacyVisualFields = () => {
+            for (const key of legacyVisualFields) delete shot[key];
+        };
+        const sourceId = (source) => safeShotId(
+            state.plan.shots[source - 1]?.id,
+            `clip_${String(source).padStart(4, "0")}`,
+        );
+        const currentVisualBlocks = () => {
+            try {
+                return sceneVisualContextBlocks(
+                    state.plan, state.active + 1,
+                    sceneContextLength(shot, settings().contextLength),
+                );
+            } catch (_error) {
+                return row.visualContextBlocks ?? [];
+            }
+        };
+        const writeVisualBuilder = (
+            partition, {preserveStarts = false} = {},
+        ) => {
+            const previous = currentVisualBlocks();
+            shot.visual_context_blocks = partition.map((frames, offset) => {
+                const prior = previous[offset] ?? previous.at(-1);
+                const source = Number(prior?.source) || state.active;
+                const block = {source:sourceId(source), frames:Number(frames)};
+                if (preserveStarts && Number(prior?.frames) === Number(frames)
+                        && Number.isInteger(prior?.startFrame)) {
+                    block.start_frame = Number(prior.startFrame);
+                }
+                return block;
+            });
+            clearLegacyVisualFields();
+            shot.video_blend_frames = 0;
+        };
+        const visualTotal = element("select");
+        for (const [value, label] of [
+            ["", `Plan default · ${settings().contextLength}`],
+            ["0", "0 · new visual scene"],
+            ...H3_CONTEXT_LENGTHS.map((value) => [
+                String(value), `${value} picture frames`,
+            ]),
+        ]) {
+            const option = element("option", "", label);
+            option.value = value;
+            visualTotal.append(option);
+        }
+        visualTotal.value = Object.hasOwn(shot, "context_length")
+            ? String(shot.context_length) : "";
+        visualTotal.title = "Total picture prefix entering this scene. The builder divides this exact H3-safe total into ordered source blocks.";
+        visualTotal.addEventListener("change", () => {
+            if (visualTotal.value === "") delete shot.context_length;
+            else shot.context_length = Number(visualTotal.value);
+            const total = sceneContextLength(shot, settings().contextLength);
+            if (total <= 0) {
+                delete shot.visual_context_blocks;
+                clearLegacyVisualFields();
+            } else {
+                const count = Math.min(
+                    Math.max(1, currentVisualBlocks().length || 1),
+                    visualContextMaximumBlocks(total),
+                );
+                writeVisualBuilder(
+                    visualContextDefaultPartition(total, count),
+                );
+            }
+            writePlan();
+            renderShell();
+        });
+        const audioTotal = element("input");
+        audioTotal.type = "number";
+        audioTotal.min = "0";
+        audioTotal.max = "240";
+        audioTotal.step = "1";
+        audioTotal.value = shot.audio_context_length ?? "";
+        audioTotal.placeholder = Number(settings().audioContextLength)
+            ? String(settings().audioContextLength)
+            : `Picture ${row.contextLength}`;
+        audioTotal.title = "Generated-audio context length. Audio remains locked to its normal continuous source unless you explicitly unlock the Audio tab.";
+        audioTotal.addEventListener("change", () => {
+            if (audioTotal.value === "") delete shot.audio_context_length;
+            else shot.audio_context_length = Number(audioTotal.value);
+            writePlan();
+            renderShell();
+        });
+        const implementation = element("select");
+        const inheritImplementation = element(
+            "option", "", `Inherit · ${settings().continuationMode}`,
+        );
+        inheritImplementation.value = "";
+        implementation.append(inheritImplementation);
+        for (const [value, label] of [
+            ["guide", "Guide"], ["latent_guide", "Latent Guide"],
+            ["tapered_guide", "Detail Guide"],
+            ["tone_carry_guide", "Tone Carry Guide"],
+            ["tapered_av", "Detail AV"],
+            ["drift_control_av", "Drift-Control AV"],
+            ["color_stable_drift_av", "Color-Stable Drift AV"],
+            ["masked_av", "Masked AV"],
+            ["feathered_av", "Feathered AV"],
+            ["audio_feathered_av", "Audio Feather AV"],
+        ]) {
+            const option = element("option", "", label);
+            option.value = value;
+            implementation.append(option);
+        }
+        implementation.value = shot.continuation_mode ?? "";
+        implementation.title = "Boundary implementation used to consume the complete ordered picture prefix.";
+        implementation.addEventListener("change", () => {
+            if (implementation.value) {
+                shot.continuation_mode = implementation.value;
+            } else delete shot.continuation_mode;
+            writePlan();
+            renderShell();
+        });
+        const spatialProxyControl = element("select");
+        for (const [value, label] of [
+            ["", "Off · native context"],
+            ["rgb_5_6", "Low-grid 5/6 proxy · Guide"],
+            ["latent_5_6", "Latent 5/6 proxy · AV"],
+        ]) {
+            const option = element("option", "", label);
+            option.value = value;
+            spatialProxyControl.append(option);
+        }
+        spatialProxyControl.value = shot.context_spatial_proxy ?? "";
+        spatialProxyControl.title = "Optional boundary-only 5/6 spatial proxy. Output, audio, checkpoints, and assembly stay at native size.";
+        spatialProxyControl.addEventListener("change", () => {
+            if (spatialProxyControl.value) {
+                shot.context_spatial_proxy = spatialProxyControl.value;
+            } else delete shot.context_spatial_proxy;
+            writePlan();
+            renderShell();
+        });
+        const contextSettings = element(
+            "div", "h3studio-context-builder-settings",
+        );
+        contextSettings.append(
+            field("Picture context total", visualTotal),
+            field("Audio context total", audioTotal),
+            field("Boundary implementation", implementation),
+            field("Boundary spatial proxy", spatialProxyControl),
+        );
+        panel.append(contextSettings);
         if (!Number(row.contextLength)) {
             panel.append(element(
                 "div", "h3studio-context-empty",
-                "This scene has 0 visual context. Choose a positive context in Scene settings before selecting a source segment.",
+                "This scene has 0 visual context. Choose a positive picture context total above to enable the builder.",
             ));
             return panel;
         }
+        const resolvedBlocks = row.visualContextBlocks ?? [];
+        const blockCount = element("select");
+        const maximumBlocks = visualContextMaximumBlocks(row.contextLength);
+        for (let count = 1; count <= maximumBlocks; count += 1) {
+            const option = element(
+                "option", "",
+                `${count} ${count === 1 ? "block" : "blocks"}`,
+            );
+            option.value = String(count);
+            blockCount.append(option);
+        }
+        blockCount.value = String(Math.max(1, resolvedBlocks.length));
+        blockCount.title = "Choose how many ordered picture extracts form the prefix. Every block may use any earlier scene, including another window from the same scene.";
+        blockCount.addEventListener("change", () => {
+            writeVisualBuilder(visualContextDefaultPartition(
+                row.contextLength, Number(blockCount.value),
+            ));
+            writePlan();
+            renderShell();
+        });
+        const partition = resolvedBlocks.map((block) => Number(block.frames));
+        const cuts = [];
+        let cumulative = 0;
+        for (const span of partition.slice(0, -1)) {
+            cumulative += span;
+            cuts.push(cumulative);
+        }
+        const validBoundaries = visualContextBoundaryFrames(row.contextLength);
+        const cutsHost = element("div", "h3studio-context-cuts");
+        for (let cutOffset = 0; cutOffset < cuts.length; cutOffset += 1) {
+            const select = element("select");
+            const lower = cutOffset === 0 ? -1 : cuts[cutOffset - 1];
+            const upper = cutOffset === cuts.length - 1
+                ? row.contextLength + 1 : cuts[cutOffset + 1];
+            for (const boundary of validBoundaries) {
+                if (boundary <= lower || boundary >= upper) continue;
+                const option = element(
+                    "option", "", `after frame ${boundary}`,
+                );
+                option.value = String(boundary);
+                select.append(option);
+            }
+            select.value = String(cuts[cutOffset]);
+            select.title = "Move this division to another native H3 cumulative boundary. Together the cuts expose every valid repartition for the selected block count.";
+            select.addEventListener("change", () => {
+                const nextCuts = [...cuts];
+                nextCuts[cutOffset] = Number(select.value);
+                writeVisualBuilder(visualContextPartitionFromBoundaries(
+                    row.contextLength, nextCuts,
+                ));
+                writePlan();
+                renderShell();
+            });
+            cutsHost.append(field(`Division ${cutOffset + 1}`, select));
+        }
+        const partitionSummary = element(
+            "div", "h3studio-context-help",
+            `Ordered repartition: ${partition.join(" + ")} = ${row.contextLength} frames. The last block sits nearest the new generation boundary.`,
+        );
+        const builderSettings = element(
+            "div", "h3studio-context-builder-settings",
+        );
+        builderSettings.append(field("Picture blocks", blockCount));
+        if (cuts.length) builderSettings.append(cutsHost);
+        panel.append(builderSettings, partitionSummary);
         panel.append(element(
             "div", "h3studio-context-help",
-            "Drag the fixed-width zone between native H3 latent positions. The selector advances on the 17-frame / 5-latent-step lattice and crops saved latent steps directly; it never re-encodes an arbitrary RGB window. Latest aligned is the default. Generated-audio continuity still follows the immediate previous scene.",
+            "Drag the fixed-width zone between native H3 latent positions. The selector advances on the 17-frame / 5-latent-step lattice and crops saved latent steps directly; it never re-encodes an arbitrary RGB window. Latest aligned is the default. While audio is locked, generated-audio continuity still follows the immediate previous scene.",
         ));
         const blocksHost = element("div", "h3studio-context-blocks");
-        const blocks = [];
-        if (row.visualContextLeadSource !== null) {
-            blocks.push({
-                label:"Block 1 · first in composed context",
-                sourceIndex:row.visualContextLeadSource - 1,
-                span:Number(row.visualContextLeadFrames),
-                field:"visual_context_lead_start_frame",
-                lead:true,
-                prefixFrames:0,
-            });
-        }
-        blocks.push({
-            label:row.visualContextLeadSource === null
-                ? "Context block" : "Block 2 · nearest generation",
-            sourceIndex:row.visualContextSource - 1,
-            span:Number(row.contextLength - row.visualContextLeadFrames),
-            field:"visual_context_start_frame",
-            lead:false,
-            prefixFrames:Number(row.visualContextLeadFrames),
+        let prefixFrames = 0;
+        const blocks = resolvedBlocks.map((resolved, blockIndex) => {
+            const block = {
+                label:resolvedBlocks.length === 1
+                    ? "Picture context"
+                    : blockIndex === resolvedBlocks.length - 1
+                        ? `Block ${blockIndex + 1} · nearest generation`
+                        : `Block ${blockIndex + 1}`,
+                blockIndex,
+                sourceIndex:Number(resolved.source) - 1,
+                span:Number(resolved.frames),
+                prefixFrames,
+                startFrame:resolved.startFrame,
+            };
+            prefixFrames += block.span;
+            return block;
         });
 
         for (const block of blocks) {
@@ -3502,6 +4302,31 @@ function mount(node) {
                 ),
             );
             card.append(head);
+            const sourceSelect = element("select");
+            for (let sourceOffset = 0; sourceOffset < state.active;
+                sourceOffset += 1) {
+                const id = sourceId(sourceOffset + 1);
+                const option = element(
+                    "option", "", `Scene ${sourceOffset + 1} · ${id}`,
+                );
+                option.value = id;
+                sourceSelect.append(option);
+            }
+            sourceSelect.value = sourceRow
+                ? sourceId(sourceRow.index) : "";
+            sourceSelect.title = "Choose any earlier scene. Multiple blocks may select the same scene and use independent latent windows.";
+            sourceSelect.addEventListener("change", () => {
+                if (!Array.isArray(shot.visual_context_blocks)) {
+                    writeVisualBuilder(partition, {preserveStarts:true});
+                }
+                const authored = shot.visual_context_blocks[block.blockIndex];
+                authored.source = sourceSelect.value;
+                delete authored.start_frame;
+                shot.video_blend_frames = 0;
+                writePlan();
+                renderShell();
+            });
+            card.append(field("Source scene", sourceSelect));
             if (!sourceRow || !Number.isInteger(block.span) || block.span < 1) {
                 card.append(element(
                     "div", "h3studio-context-empty",
@@ -3524,16 +4349,15 @@ function mount(node) {
                 continue;
             }
             const defaultStart = validStarts.at(-1);
-            let start = defaultStart;
+            let start = Number.isInteger(block.startFrame)
+                ? block.startFrame : defaultStart;
             let rangeError = "";
-            try {
-                start = sceneVisualContextStartFrame(
-                    shot, sourceRow.rawFrames, sourceRow.deliveredFrames,
-                    block.span, block.lead, block.prefixFrames,
+            if (!validStarts.includes(start)) {
+                rangeError = `Block ${block.blockIndex + 1} start ${start} is not native-aligned for this source and target offset.`;
+                const raw = Number(
+                    shot.visual_context_blocks?.[block.blockIndex]
+                        ?.start_frame,
                 );
-            } catch (error) {
-                rangeError = error?.message || String(error);
-                const raw = Number(shot[block.field]);
                 start = nearestNativeContextWindowStart(
                     validStarts, Number.isInteger(raw) ? raw : defaultStart,
                 );
@@ -3566,8 +4390,19 @@ function mount(node) {
             const selectedZone = element(
                 "div", "h3studio-context-window", `${block.span}f`,
             );
+            const phaseTailFrames = Math.max(0, latest - defaultStart);
+            const phaseTail = element("div", "h3studio-context-phase-tail");
+            phaseTail.hidden = phaseTailFrames < 1;
+            if (phaseTailFrames > 0) {
+                phaseTail.style.left = `${(
+                    (defaultStart + block.span) / sourceRow.deliveredFrames
+                ) * 100}%`;
+                phaseTail.style.width = `${(
+                    phaseTailFrames / sourceRow.deliveredFrames
+                ) * 100}%`;
+            }
             const playhead = element("div", "h3studio-context-playhead");
-            movieTrack.append(selectedZone, playhead);
+            movieTrack.append(phaseTail, selectedZone, playhead);
             const rangeLabel = element("span", "h3studio-context-range-label");
             const movieLength = element(
                 "span", "h3studio-context-movie-length",
@@ -3585,7 +4420,7 @@ function mount(node) {
                 selectedZone.style.width = `${layout.widthFraction * 100}%`;
                 selectedZone.title = `${block.span} context frames · ${layout.start + 1}–${layout.end} · native latent crop`;
                 const slot = validStarts.indexOf(layout.start) + 1;
-                rangeLabel.textContent = `aligned ${slot}/${validStarts.length} · frames ${layout.start + 1}–${layout.end} · ${(layout.start / FPS).toFixed(3)}–${(layout.end / FPS).toFixed(3)}s`;
+                rangeLabel.textContent = `aligned ${slot}/${validStarts.length} · frames ${layout.start + 1}–${layout.end} · ${(layout.start / FPS).toFixed(3)}–${(layout.end / FPS).toFixed(3)}s${phaseTailFrames > 0 ? ` · final ${phaseTailFrames}f use another phase` : ""}`;
                 movieTrack.setAttribute("aria-valuenow", String(layout.start));
                 movieTrack.setAttribute(
                     "aria-valuetext", `frames ${layout.start + 1} through ${layout.end}`,
@@ -3597,11 +4432,13 @@ function mount(node) {
                 catch (_error) {}
             };
             const commitStart = () => {
-                if (selectedStart === defaultStart) delete shot[block.field];
-                else {
-                    shot[block.field] = selectedStart;
-                    shot.video_blend_frames = 0;
+                if (!Array.isArray(shot.visual_context_blocks)) {
+                    writeVisualBuilder(partition, {preserveStarts:true});
                 }
+                const authored = shot.visual_context_blocks[block.blockIndex];
+                if (selectedStart === defaultStart) delete authored.start_frame;
+                else authored.start_frame = selectedStart;
+                shot.video_blend_frames = 0;
                 error.hidden = true;
                 error.textContent = "";
                 writePlan();
@@ -3674,6 +4511,12 @@ function mount(node) {
             const rangeReadout = element("div", "h3studio-context-range-readout");
             rangeReadout.append(movieLength, rangeLabel);
             rangeWrap.append(movieTrack, rangeReadout);
+            if (phaseTailFrames > 0) {
+                rangeWrap.append(element(
+                    "div", "h3studio-context-phase-note",
+                    `The hatched final ${phaseTailFrames} frames are on a different H3 latent phase for this ${block.span}-frame block at target offset ${block.prefixFrames}. A direct latent crop cannot end there; change the composed split to use that physical tail without RGB/VAE re-encoding.`,
+                ));
+            }
             card.append(rangeWrap);
             updateSelection();
             if (video) {
@@ -3945,7 +4788,14 @@ function mount(node) {
             new Event("change"),
         );
         updateSubtitleOverlay(target);
-        state.primePlayerNext?.(location.trailing ? -1 : inGap ? index : index + 1);
+        const segmentPosition = model.segments.findIndex(
+            (segment) => segment.key === location.key,
+        );
+        const upcomingSegment = model.segments[segmentPosition + 1];
+        state.primePlayerNext?.(
+            upcomingSegment?.kind === "scene"
+                ? upcomingSegment.sceneIndex : -1,
+        );
         if (autoplay && !generated) state.playPlayerTransport?.();
     }
 
@@ -3953,10 +4803,10 @@ function mount(node) {
         const wrapper = element("div", "h3studio-player");
         const label = element("div", "h3studio-player-label", "Generated playback");
         const stage = element("div", "h3studio-compare-stage");
-        const video = element("video"); video.playsInline = true; video.preload = "metadata";
+        let video = element("video"); video.playsInline = true; video.preload = "metadata";
         const handoffFrame = element("canvas", "h3studio-handoff-frame");
         handoffFrame.hidden = true;
-        const generatedAudio = element("audio");
+        let generatedAudio = element("audio");
         generatedAudio.preload = "metadata"; generatedAudio.hidden = true;
         const sourceTimelineAudio = element("audio");
         sourceTimelineAudio.preload = "metadata"; sourceTimelineAudio.hidden = true;
@@ -3989,6 +4839,9 @@ function mount(node) {
         const preloadAudio = element("audio");
         preloadAudio.preload = "auto"; preloadAudio.muted = true;
         preloadAudio.hidden = true;
+        let standbyVideo = preloadVideo;
+        let standbyAudio = preloadAudio;
+        stage.insertBefore(preloadVideo, handoffFrame);
         const clearPreload = (media) => {
             if (!media.dataset.source) return;
             delete media.dataset.source;
@@ -3999,15 +4852,15 @@ function mount(node) {
                 ? playerCheckpoint(index) : null;
             const videoSource = media?.video ? videoUrl(media.video) : "";
             const audioSource = media?.audio ? videoUrl(media.audio) : "";
-            if (!videoSource) clearPreload(preloadVideo);
-            else if (preloadVideo.dataset.source !== videoSource) {
-                preloadVideo.dataset.source = videoSource;
-                preloadVideo.src = videoSource; preloadVideo.load();
+            if (!videoSource) clearPreload(standbyVideo);
+            else if (standbyVideo.dataset.source !== videoSource) {
+                standbyVideo.dataset.source = videoSource;
+                standbyVideo.src = videoSource; standbyVideo.load();
             }
-            if (!audioSource) clearPreload(preloadAudio);
-            else if (preloadAudio.dataset.source !== audioSource) {
-                preloadAudio.dataset.source = audioSource;
-                preloadAudio.src = audioSource; preloadAudio.load();
+            if (!audioSource) clearPreload(standbyAudio);
+            else if (standbyAudio.dataset.source !== audioSource) {
+                standbyAudio.dataset.source = audioSource;
+                standbyAudio.src = audioSource; standbyAudio.load();
             }
         };
         const captureHandoffFrame = () => {
@@ -4047,8 +4900,45 @@ function mount(node) {
                 handoffFrame.hidden = true;
             }, 180);
         };
-        state.playerPreloadVideo = preloadVideo;
-        state.playerPreloadAudio = preloadAudio;
+        const primedSegmentReady = (index) => {
+            const media = index >= 0 && index < state.plan.shots.length
+                ? playerCheckpoint(index) : null;
+            const videoSource = media?.video ? videoUrl(media.video) : "";
+            return Boolean(
+                videoSource && standbyVideo.dataset.source === videoSource &&
+                standbyVideo.readyState >= HTMLMediaElement.HAVE_CURRENT_DATA,
+            );
+        };
+        const promotePrimedSegment = (index) => {
+            if (!primedSegmentReady(index)) return false;
+            const outgoingVideo = video;
+            const outgoingAudio = generatedAudio;
+            const incomingVideo = standbyVideo;
+            const incomingAudio = standbyAudio;
+            incomingVideo.playbackRate = outgoingVideo.playbackRate;
+            incomingVideo.volume = outgoingVideo.volume;
+            incomingVideo.muted = outgoingVideo.muted;
+            incomingAudio.playbackRate = outgoingAudio.playbackRate;
+            incomingAudio.volume = outgoingAudio.volume;
+            incomingAudio.muted = outgoingAudio.muted;
+            incomingVideo.hidden = false;
+            outgoingVideo.hidden = true;
+            video = incomingVideo;
+            standbyVideo = outgoingVideo;
+            generatedAudio = incomingAudio;
+            standbyAudio = outgoingAudio;
+            state.player = video;
+            state.playerAudio = generatedAudio;
+            state.playerPreloadVideo = standbyVideo;
+            state.playerPreloadAudio = standbyAudio;
+            try { standbyVideo.pause(); } catch (_error) {}
+            try { standbyAudio.pause(); } catch (_error) {}
+            standbyVideo.muted = true;
+            standbyAudio.muted = true;
+            return true;
+        };
+        state.playerPreloadVideo = standbyVideo;
+        state.playerPreloadAudio = standbyAudio;
         state.primePlayerNext = primeNextSegment;
         const controls = element("div", "h3studio-player-controls");
         const play = button(
@@ -4083,6 +4973,11 @@ function mount(node) {
         };
         const playerTimelineSecond = () => {
             const model = timelineModel();
+            const clock = studioPlayerSegmentClock(
+                model.segments, state.playerSegmentKey,
+                Number(video.currentTime) || 0, FPS,
+            );
+            if (clock) return Math.min(model.totalSeconds, clock.timelineSeconds);
             return Math.min(
                 model.totalSeconds,
                 studioEditorialSceneStartSeconds(model.segments, state.playerIndex) +
@@ -4131,10 +5026,47 @@ function mount(node) {
                     Math.max(0, Number(descriptor.seek_seconds) || 0),
             );
         };
+        let videoAdvancePending = false;
+        const advanceVideoSegment = (autoplay = true) => {
+            if (videoAdvancePending) return false;
+            const model = timelineModel();
+            const currentSegment = model.segments.findIndex(
+                (segment) => segment.key === state.playerSegmentKey,
+            );
+            const current = model.segments[currentSegment];
+            const next = model.segments[currentSegment + 1];
+            if (!current) return false;
+            videoAdvancePending = true;
+            stopMediaClock("video");
+            captureHandoffFrame();
+            generatedAudio.pause(); sourceVideo.pause();
+            updateTransportPosition(current.endSeconds);
+            if (!next) {
+                video.pause();
+                sourceTimelineAudio.pause();
+                play.textContent = "▶";
+                videoAdvancePending = false;
+                return false;
+            }
+            if (next.kind === "scene") promotePrimedSegment(next.sceneIndex);
+            seekTimeline(next.startSeconds, autoplay);
+            setTimeout(() => { videoAdvancePending = false; }, 0);
+            return true;
+        };
         const refreshVideoTransport = () => {
             if (!video.dataset.source) return;
-            const current = playerTimelineSecond();
+            const model = timelineModel();
+            const segmentClock = studioPlayerSegmentClock(
+                model.segments, state.playerSegmentKey,
+                Number(video.currentTime) || 0, FPS,
+            );
+            const current = segmentClock?.timelineSeconds
+                ?? playerTimelineSecond();
             updateTransportPosition(current);
+            if (segmentClock?.boundaryReached && !video.paused) {
+                advanceVideoSegment(true);
+                return;
+            }
             synchronizeGeneratedAudio(false);
             synchronizeSourceTimelineAudio(false, current);
             syncSource();
@@ -4280,29 +5212,57 @@ function mount(node) {
         };
         state.playPlayerTransport = playPlayerTransport;
         state.togglePlayerPlayback = togglePlayerPlayback;
-        video.addEventListener("play", () => {
+        const transportVideos = [video, standbyVideo];
+        const generatedAudios = [generatedAudio, standbyAudio];
+        const onActiveVideo = (eventName, listener) => {
+            for (const player of transportVideos) {
+                player.addEventListener(eventName, (event) => {
+                    if (event.currentTarget !== video) return;
+                    listener(event);
+                });
+            }
+        };
+        const onActiveGeneratedAudio = (eventName, listener) => {
+            for (const player of generatedAudios) {
+                player.addEventListener(eventName, (event) => {
+                    if (event.currentTarget !== generatedAudio) return;
+                    listener(event);
+                });
+            }
+        };
+        onActiveVideo("play", () => {
             play.textContent = "❚❚";
             syncSource(); synchronizeGeneratedAudio(true);
             synchronizeSourceTimelineAudio(true);
             if (sourceVideo.dataset.source) void sourceVideo.play().catch(() => {});
         });
-        video.addEventListener("playing", () => {
+        onActiveVideo("playing", () => {
             releaseHandoffFrame();
             startMediaClock("video");
         });
-        video.addEventListener("pause", () => {
+        onActiveVideo("pause", () => {
             stopMediaClock("video");
+            const model = timelineModel();
+            const currentSegment = model.segments.findIndex(
+                (segment) => segment.key === state.playerSegmentKey,
+            );
+            const upcoming = model.segments[currentSegment + 1];
+            if (video.ended && upcoming?.kind === "scene" &&
+                    primedSegmentReady(upcoming.sceneIndex)) {
+                generatedAudio.pause(); sourceVideo.pause();
+                return;
+            }
             play.textContent = "▶";
             // The source track is a monitor slaved to the video transport.
             // Always stop it on pause; automatic scene handoff will restart it
             // from the next absolute timeline position when video fires play.
             pausePlayerMonitors();
         });
-        video.addEventListener("waiting", () => {
+        onActiveVideo("waiting", () => {
             stopMediaClock("video");
             generatedAudio.pause(); sourceTimelineAudio.pause(); sourceVideo.pause();
         });
-        generatedAudio.addEventListener("canplay", () => {
+        onActiveGeneratedAudio("canplay", () => {
             synchronizeGeneratedAudio(!video.paused);
         });
         sourceVideo.addEventListener("canplay", () => {
@@ -4322,26 +5282,26 @@ function mount(node) {
             stopMediaClock("source");
             if (!video.dataset.source) play.textContent = "▶";
         });
-        video.addEventListener("seeking", () => {
+        onActiveVideo("seeking", () => {
             generatedAudio.pause(); sourceTimelineAudio.pause(); sourceVideo.pause();
             synchronizeGeneratedAudio(false); synchronizeSourceTimelineAudio(false);
             syncSource();
         });
-        video.addEventListener("seeked", () => {
+        onActiveVideo("seeked", () => {
             synchronizeGeneratedAudio(!video.paused);
             synchronizeSourceTimelineAudio(!video.paused); syncSource();
             if (!video.paused && sourceVideo.dataset.source) {
                 void sourceVideo.play().catch(() => {});
             }
         });
-        video.addEventListener("ratechange", () => {
+        onActiveVideo("ratechange", () => {
             synchronizeGeneratedAudio(false);
             synchronizeSourceTimelineAudio(false); syncSource();
         });
         // timeupdate is only a low-frequency fallback. The visible transport
         // is driven from requestAnimationFrame while media is playing so its
         // clock and red timeline line remain on the same frame.
-        video.addEventListener("timeupdate", refreshVideoTransport);
+        onActiveVideo("timeupdate", refreshVideoTransport);
         sourceTimelineAudio.addEventListener("timeupdate", () => {
             if (video.dataset.source) return;
             refreshSourceTransport();
@@ -4357,20 +5317,8 @@ function mount(node) {
             updateTransportPosition(current);
             startEditorialClock();
         });
-        video.addEventListener("ended", () => {
-            stopMediaClock("video");
-            captureHandoffFrame();
-            generatedAudio.pause(); sourceVideo.pause();
-            const model = timelineModel();
-            const currentSegment = model.segments.findIndex(
-                (segment) => segment.key === state.playerSegmentKey,
-            );
-            const next = model.segments[currentSegment + 1];
-            if (!next) {
-                sourceTimelineAudio.pause();
-                return;
-            }
-            seekTimeline(next.startSeconds, true);
+        onActiveVideo("ended", () => {
+            advanceVideoSegment(true);
         });
         const compareControls = element("div", "h3studio-compare-controls");
         const wipeLabel = element("span", "h3studio-wipe-label", "Wipe");
@@ -4472,9 +5420,9 @@ function mount(node) {
         }));
         wrapper.append(
             label, stage, generatedAudio, sourceTimelineAudio,
-            preloadVideo, preloadAudio,
+            preloadAudio,
             compareControls, controls,
-            element("div", "h3studio-message", "Generated and Source Track can play together on the planned timeline. Before a scene is rendered, Source Track playback supplies the timeline clock; playback hands back to video automatically when a saved segment begins. Each monitor has independent volume; waveform speaker buttons mute only the Source Track for that scene. Click the player and press Space to play or pause. Motion-ref audio is optional when available."),
+            element("div", "h3studio-message", "Generated and Source Track can play together on the planned timeline. Adjacent saved scenes are pre-decoded in a second player for a smooth boundary handoff; this preview behavior never changes the saved clips or final assembly. Before a scene is rendered, Source Track playback supplies the timeline clock; playback hands back to video automatically when a saved segment begins. Each monitor has independent volume; waveform speaker buttons mute only the Source Track for that scene. Click the player and press Space to play or pause. Motion-ref audio is optional when available."),
         );
         setTimeout(() => {
             if (state.player !== video || !video.isConnected) return;
@@ -4892,12 +5840,23 @@ function mount(node) {
                 (chapter) => chapter.id === state.activeChapterId,
             )) state.activeChapterId = "";
             if (runChanged) {
-                state.checkpoints = new Map(); state.checkpointSignature = "";
+                const cached = restoreStudioCheckpointCache(
+                    node.properties[CHECKPOINT_CACHE_PROPERTY], currentRun,
+                );
+                const cachedRecords = cached?.checkpoints ?? [];
+                state.checkpoints = new Map(cachedRecords.map(
+                    (item) => [Number(item.scene), item],
+                ));
+                state.checkpointSignature = cached
+                    ? studioCheckpointSignature(currentRun, cachedRecords) : "";
                 state.checkpointError = ""; state.timelinePosition = null;
                 state.editorialReady = false; state.editorialRun = "";
-                state.editorial = {placements:[], locked_scene_ids:[], subtitles:{
-                    mode:"off", asset_id:"", offset_seconds:0,
-                }};
+                state.editorial = cached?.editorial
+                    ? normalizedEditorial(cached.editorial)
+                    : {placements:[], trims:[], locked_scene_ids:[], subtitles:{
+                        mode:"off", asset_id:"", offset_seconds:0,
+                    }, alternate_draft:null, replacements:[]};
+                if (cached?.editorial) state.editorialRun = currentRun;
                 state.timelineWorkspaceEndFrame = 0;
                 state.timelineSceneEndFrame = 0;
                 state.timelineRenderedActive = null;
@@ -4912,9 +5871,10 @@ function mount(node) {
                 state.sourceWaveformPromise = null;
             }
             state.active = Math.min(state.active, state.plan.shots.length - 1);
-            if (Object.hasOwn(state.plan, "chapters")) scheduleEditorialSave();
-            renderShell();
-            void refreshCheckpoints();
+            // Always synchronize the hidden one-shot queue widget on load.
+            // Editorial data is useful even when the Plan has no chapters.
+            scheduleEditorialSave();
+            renderShell(); void refreshCheckpoints();
             if (runChanged && currentRun) {
                 void restoreSourcePresentation();
                 void loadSubtitleAssets();
@@ -4944,6 +5904,13 @@ function mount(node) {
             state.presentationToken += 1;
             applySourcePresentation(sourcePayload);
         }
+        // Plan Studio executes near the start of a recursive queue, while the
+        // alternate is accepted by Loop End. Refresh after later node events
+        // so the armed draft becomes the selected ALT without waiting for the
+        // periodic poll (the refresh queue coalesces repeated events).
+        if (state.editorial.alternate_draft) {
+            setTimeout(() => void refreshCheckpoints(), 250);
+        }
         const values = event.detail?.output?.h3_chain_active_scene;
         const scene = Array.isArray(values) ? values.at(-1) : null;
         if (!scene || String(scene.run_name ?? "") !== runName()) return;
@@ -4958,6 +5925,13 @@ function mount(node) {
         }, 50);
     };
     api.addEventListener("executed", onPromptExecuted);
+    const onLoRARoutesChanged = () => {
+        if (!state.disposed && state.plan) {
+            renderPanel();
+            renderTimeline();
+        }
+    };
+    document.addEventListener("h3-lora-routes-changed", onLoRARoutesChanged);
     const removed = node.onRemoved;
     node.onRemoved = function () {
         state.disposed = true;
@@ -4969,6 +5943,8 @@ function mount(node) {
         if (state.editorialTimer != null) clearTimeout(state.editorialTimer);
         state.timelineResizeObserver?.disconnect();
         api.removeEventListener("executed", onPromptExecuted);
+        document.removeEventListener(
+            "h3-lora-routes-changed", onLoRARoutesChanged);
         document.removeEventListener("keydown", onPlayerKeydown, true);
         delete node._h3PromptCompanionSetActiveScene;
         delete node._h3PromptCompanionSetScenePrompt;
@@ -4984,6 +5960,18 @@ function mount(node) {
     };
     node._h3PromptCompanionSetScenePrompt = (planNode, index, text) => {
         if (planNode !== state.planNode || !state.plan?.shots?.[index]) return false;
+        const liveValue = String(state.planWidget?.value ?? "");
+        let livePlanParsed = false;
+        try {
+            const livePlan = parsePlanJson(liveValue);
+            livePlanParsed = true;
+            if (planHasNonPromptChanges(state.plan, livePlan)) {
+                loadPlan(true);
+                return true;
+            }
+        } catch (_error) {
+            // Leave lastValue untouched so normal polling reports invalid JSON.
+        }
         state.plan.shots[index].prompt = promptTextToLines(text);
         if (index === state.active && state.history.textarea
                 && state.history.textarea.value !== text) {
@@ -4998,7 +5986,7 @@ function mount(node) {
                 String(state.plan.shots[index].id || `clip_${String(index + 1).padStart(4, "0")}`),
                 text);
         }
-        state.lastValue = String(state.planWidget?.value ?? state.lastValue);
+        if (livePlanParsed) state.lastValue = liveValue;
         return true;
     };
     node._h3PlanStudioRefresh = () => {

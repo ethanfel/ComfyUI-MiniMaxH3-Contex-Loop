@@ -209,7 +209,7 @@
       "type": "MiniMaxH3ChainScenePromptEditor",
       "pos": [
         416,
-        1344
+        544
       ],
       "size": [
         1120,
@@ -250,7 +250,7 @@
       "id": 1906,
       "type": "Note",
       "pos": [
-        -3936,
+        -3008,
         -1088
       ],
       "size": [
@@ -1663,7 +1663,7 @@
       "type": "Note",
       "pos": [
         1568,
-        1312
+        544
       ],
       "size": [
         576,
@@ -1689,7 +1689,7 @@
       "type": "MiniMaxH3ChainPlan",
       "pos": [
         -672,
-        1344
+        544
       ],
       "size": [
         1024,
@@ -2149,8 +2149,8 @@
       "id": 1950,
       "type": "LoadVideo",
       "pos": [
-        -2368,
-        640
+        -2176,
+        512
       ],
       "size": [
         576,
@@ -2184,8 +2184,8 @@
       "id": 1951,
       "type": "MiniMaxH3ReferenceVideoPrepare",
       "pos": [
-        -1760,
-        672
+        -1568,
+        544
       ],
       "size": [
         448,
@@ -2258,8 +2258,8 @@
       "id": 1952,
       "type": "MiniMaxH3TaggedVideoReference",
       "pos": [
-        -1280,
-        672
+        -1088,
+        544
       ],
       "size": [
         480,
@@ -2371,8 +2371,8 @@
       "id": 1956,
       "type": "MiniMaxH3ChainPreflight",
       "pos": [
-        -672,
-        256
+        -992,
+        0
       ],
       "size": [
         384,
@@ -2456,7 +2456,7 @@
       "type": "MiniMaxH3ChainPolicy",
       "pos": [
         -1092,
-        1504
+        704
       ],
       "size": [
         340,
@@ -3084,9 +3084,9 @@
       "title": "H3 MODEL STACK",
       "bounding": [
         -2112,
-        -1536,
+        -1024,
         2200,
-        1162
+        650
       ],
       "color": "#3f789e",
       "flags": {}
@@ -3098,7 +3098,7 @@
         -704,
         -352,
         5728,
-        1568
+        800
       ],
       "color": "#744c8c",
       "flags": {}
@@ -3131,10 +3131,10 @@
       "id": 6,
       "title": "REF2V — PLAN + STANDARD PROMPT EDITOR",
       "bounding": [
-        -1152,
-        1280,
-        3664,
-        1728
+        -704,
+        480,
+        3216,
+        1280
       ],
       "color": "#3f789e",
       "flags": {}
@@ -3155,24 +3155,12 @@
       "id": 8,
       "title": "EXPERIMENTAL LONG MOTION TIMELINE — VIDEO + AUDIO REQUIRED",
       "bounding": [
-        -2432,
-        576,
+        -2240,
+        448,
         1712,
-        480
+        448
       ],
       "color": "#8a5a2b",
-      "flags": {}
-    },
-    {
-      "id": 9,
-      "title": "WORKFLOW GUIDE",
-      "bounding": [
-        -4000,
-        -1152,
-        864,
-        1280
-      ],
-      "color": "#2f596b",
       "flags": {}
     }
   ],

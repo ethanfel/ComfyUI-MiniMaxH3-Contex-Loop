@@ -3,7 +3,7 @@ import {
     H3_ALL_SECTIONS,
     H3_TASK_DIRECTIVES,
     h3SectionsForMode,
-} from "./h3_prompt_schema_core.mjs?v=0.5.68";
+} from "./h3_prompt_schema_core.mjs?v=0.6.0";
 
 export const H3_PROMPT_SECTIONS = Object.freeze(
     H3_ALL_SECTIONS.map((section) => `${section}:`),
@@ -164,18 +164,16 @@ function referenceItems(records, referenceMode, trigger) {
                 || record?.semanticToken || token.startsWith("@"),
             );
             if (!tag || !semanticCapable) continue;
-            const anchor = `#${tag}[0.00s]`;
+            const anchor = `#${tag}`;
             items.push({
                 id: `semantic:${tag}`,
                 kind: "semantic",
-                label: `#${tag}[timestamp]`,
+                label: anchor,
                 insertText: anchor,
                 filterText: tag,
                 detail: record?.semanticOnly
-                    ? "Semantic Picture Anchor · Qwen storyboard anchor; type the scene time"
-                    : "Tagged Picture · Qwen semantic/storyboard anchor; type the scene time",
-                selectionStart: anchor.indexOf("[") + 1,
-                selectionEnd: anchor.indexOf("s]"),
+                    ? "Semantic Picture Anchor · untimed Qwen-only visual; add [time] for placement"
+                    : "Tagged Picture · untimed Qwen-only visual; add [time] for placement",
                 priority: record.active ? 0 : 1,
             });
         }

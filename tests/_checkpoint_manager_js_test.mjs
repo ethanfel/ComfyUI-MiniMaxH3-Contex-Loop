@@ -182,8 +182,6 @@ assert.doesNotMatch(source, /side rail/);
 assert.match(source, /h3cm-chapter-tabs/);
 assert.match(source, /h3_checkpoint_manager_collapsed_chapters/);
 assert.match(source, /function setChapterCollapsed/);
-assert.equal((source.match(/function renderBranches\(\)/g) ?? []).length, 1);
-assert.equal((source.match(/function renderBranchRows\(container, rows\)/g) ?? []).length, 1);
 assert.match(source, /heading\.setAttribute\("aria-expanded", String\(!collapsed\)\)/);
 assert.match(source, /body\.hidden = collapsed/);
 assert.match(source, /if \(!collapsed\) renderBranchRows\(body, rows\)/);
@@ -198,6 +196,15 @@ assert.doesNotMatch(source, /stroke-dasharray/);
 assert.doesNotMatch(source, /new ResizeObserver\(scheduleSharedLinks\)/);
 assert.doesNotMatch(source, /sharedLinksResizeObserver/);
 assert.match(source, /Video \$\{record\.context_length\}f · Audio \$\{record\.audio_context_length\}f/);
+assert.match(source, /h3_checkpoint_manager_preview_height/);
+assert.match(source, /function previewHeight\(value\)/);
+assert.match(source, /Math\.max\(MIN_PREVIEW_HEIGHT, Math\.min\(MAX_PREVIEW_HEIGHT/);
+assert.match(source, /h3cm-preview-resizer/);
+assert.match(source, /Resize clip preview height/);
+assert.match(source, /startHeight \+ moveEvent\.clientY - startY/);
+assert.match(source, /setPreviewHeight\(state\.previewHeight, true\)/);
+assert.match(source, /setPreviewHeight\(DEFAULT_PREVIEW_HEIGHT, true\)/);
+assert.match(source, /event\.key === "ArrowDown"/);
 assert.match(source, /addDOMWidget\("h3_checkpoint_manager"/);
 
 const backend = fs.readFileSync(

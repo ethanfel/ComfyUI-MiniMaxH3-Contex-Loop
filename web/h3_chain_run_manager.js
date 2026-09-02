@@ -7,18 +7,19 @@ import {
     assetInputNumber,
     collectAssetBindings,
     nodeType,
-} from "./h3_run_assets_core.mjs?v=0.5.68";
+} from "./h3_run_assets_core.mjs?v=0.6.0";
 import {
     runArchiveOptionLabel,
     runManagerIdentity,
-} from "./h3_run_manager_core.mjs?v=0.5.68";
+} from "./h3_run_manager_core.mjs?v=0.6.0";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.5.68";
+} from "./h3_plan_restore_core.mjs?v=0.6.0";
 
 const NODE_NAME = "MiniMaxH3ChainRunManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const PLAN_NAMES = new Set([PLAN_NAME, "MiniMaxH3ChainPlanModern"]);
 const ASSET_WIDGETS = [
     "archive_images", "archive_audio", "archive_video", "asset_bindings_json",
 ];
@@ -30,7 +31,7 @@ function upstreamPlanNode(start) {
         const node = queue.shift();
         if (!node || seen.has(node)) continue;
         seen.add(node);
-        if (node !== start && nodeType(node) === PLAN_NAME) return node;
+        if (node !== start && PLAN_NAMES.has(nodeType(node))) return node;
         for (const input of node.inputs ?? []) {
             if (input.link == null) continue;
             const link = node.graph?.links?.[input.link];

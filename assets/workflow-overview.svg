@@ -1,0 +1,188 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="650" viewBox="0 0 1400 650" role="img" aria-labelledby="title desc">
+  <title id="title">MiniMax H3 Context Loop workflow overview</title>
+  <desc id="desc">Active setup and loop nodes with a muted recovery branch. Solid cards execute; grey dashed cards are muted.</desc>
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#080b18"/>
+      <stop offset="1" stop-color="#11162b"/>
+    </linearGradient>
+    <linearGradient id="head" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#5b46d8"/>
+      <stop offset="1" stop-color="#2589a2"/>
+    </linearGradient>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#8390bd"/>
+    </marker>
+    <style>
+      .label { font: 700 13px Inter, ui-sans-serif, system-ui, sans-serif; fill: #f4f6ff; }
+      .small { font: 500 11px Inter, ui-sans-serif, system-ui, sans-serif; fill: #aeb6d3; }
+      .tiny { font: 700 10px Inter, ui-sans-serif, system-ui, sans-serif; letter-spacing: .9px; }
+      .card { fill: #181d34; stroke: #6673b7; stroke-width: 1.4; }
+      .muted { fill: #171a23; stroke: #747985; stroke-width: 1.5; stroke-dasharray: 7 5; opacity: .74; }
+      .wire { fill: none; stroke: #8390bd; stroke-width: 2; marker-end: url(#arrow); }
+      .widget { fill: #0e1222; stroke: #343d62; }
+      .socket-in { fill: #8f78ff; stroke: #d9d2ff; }
+      .socket-out { fill: #3bd1dd; stroke: #c9fbff; }
+    </style>
+  </defs>
+
+  <rect width="1400" height="650" rx="24" fill="url(#bg)"/>
+  <text x="28" y="34" class="tiny" fill="#7ce9f3">SETUP</text>
+
+  <path class="wire" d="M220 105H238"/>
+  <path class="wire" d="M440 105H458"/>
+  <path class="wire" d="M660 105H678"/>
+  <path class="wire" d="M780 150V185H120V223"/>
+
+  <g transform="translate(20 55)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Generation Profile</text>
+    <rect x="12" y="42" width="176" height="19" rx="5" class="widget"/>
+    <text x="20" y="55" class="small">Visual continuity</text>
+    <rect x="12" y="68" width="176" height="19" rx="5" class="widget"/>
+    <text x="20" y="81" class="small">Generate audio</text>
+    <circle cx="200" cy="50" r="5" class="socket-out"/>
+  </g>
+
+  <g transform="translate(240 55)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Plan</text>
+    <circle cx="0" cy="50" r="5" class="socket-in"/>
+    <circle cx="200" cy="50" r="5" class="socket-out"/>
+    <rect x="12" y="42" width="176" height="19" rx="5" class="widget"/>
+    <text x="20" y="55" class="small">run_name</text>
+    <rect x="12" y="68" width="176" height="19" rx="5" class="widget"/>
+    <text x="20" y="81" class="small">Scene Plan</text>
+  </g>
+
+  <g transform="translate(460 55)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Preflight</text>
+    <circle cx="0" cy="50" r="5" class="socket-in"/>
+    <circle cx="200" cy="50" r="5" class="socket-out"/>
+    <text x="14" y="56" class="small">check before model load</text>
+    <text x="14" y="78" class="tiny" fill="#73ddb1">READY / EXPLAIN ERROR</text>
+  </g>
+
+  <g transform="translate(680 55)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Loop Start</text>
+    <circle cx="0" cy="50" r="5" class="socket-in"/>
+    <circle cx="100" cy="100" r="5" class="socket-out"/>
+    <text x="14" y="56" class="small">start or resume</text>
+    <text x="14" y="78" class="small">flow + scene state</text>
+  </g>
+
+  <path class="wire" d="M220 275H238"/>
+  <path class="wire" d="M440 275H458"/>
+  <path class="wire" d="M660 275H678"/>
+  <path class="wire" d="M880 275H898"/>
+  <path class="wire" d="M1100 275H1118"/>
+
+  <text x="28" y="204" class="tiny" fill="#7ce9f3">ONE SCENE AT A TIME</text>
+
+  <g transform="translate(20 225)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Current Scene</text>
+    <circle cx="100" cy="0" r="5" class="socket-in"/>
+    <circle cx="0" cy="50" r="5" class="socket-in"/>
+    <circle cx="68" cy="100" r="5" class="socket-in"/>
+    <circle cx="200" cy="50" r="5" class="socket-out"/>
+    <text x="14" y="54" class="small">prompt · seed · timing</text>
+    <text x="14" y="77" class="small">or compact Tagged Ref2VA</text>
+  </g>
+
+  <g transform="translate(240 225)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Chain Context</text>
+    <circle cx="0" cy="50" r="5" class="socket-in"/>
+    <circle cx="200" cy="50" r="5" class="socket-out"/>
+    <text x="14" y="54" class="small">add visual / audio carry</text>
+    <text x="14" y="77" class="small">scene 1 passes through</text>
+  </g>
+
+  <g transform="translate(460 225)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="#374472"/>
+    <text x="12" y="20" class="label">H3 Sample + Decode</text>
+    <circle cx="0" cy="50" r="5" class="socket-in"/>
+    <circle cx="200" cy="50" r="5" class="socket-out"/>
+    <text x="14" y="54" class="small">ordinary ComfyUI nodes</text>
+    <text x="14" y="77" class="small">one reusable sampler body</text>
+  </g>
+
+  <g transform="translate(680 225)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Trim + Checkpoint</text>
+    <circle cx="0" cy="50" r="5" class="socket-in"/>
+    <circle cx="200" cy="50" r="5" class="socket-out"/>
+    <text x="14" y="54" class="small">remove repeated context</text>
+    <text x="14" y="77" class="small">save immutable take</text>
+  </g>
+
+  <g transform="translate(900 225)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Review Gate</text>
+    <circle cx="0" cy="50" r="5" class="socket-in"/>
+    <circle cx="200" cy="50" r="5" class="socket-out"/>
+    <text x="14" y="54" class="small">approve · retry · reroll</text>
+    <text x="14" y="77" class="small">choose take · stop</text>
+  </g>
+
+  <g transform="translate(1120 225)">
+    <rect class="card" width="200" height="100" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Loop End</text>
+    <circle cx="0" cy="50" r="5" class="socket-in"/>
+    <circle cx="100" cy="100" r="5" class="socket-out"/>
+    <text x="14" y="54" class="small">next scene or manifest</text>
+    <text x="14" y="77" class="small">keeps accepted lineage</text>
+  </g>
+
+  <path d="M1220 325V372H120Q88 372 88 340V327" fill="none" stroke="#a174ff" stroke-width="2" stroke-dasharray="8 5" marker-end="url(#arrow)"/>
+  <text x="1030" y="363" class="small">next scene</text>
+
+  <path class="wire" d="M1220 325V438"/>
+  <g transform="translate(1120 440)">
+    <rect class="card" width="200" height="82" rx="9"/>
+    <path d="M0 9A9 9 0 0 1 9 0H191A9 9 0 0 1 200 9V29H0Z" fill="url(#head)"/>
+    <text x="12" y="20" class="label">Assemble final MP4</text>
+    <circle cx="100" cy="0" r="5" class="socket-in"/>
+    <circle cx="200" cy="52" r="5" class="socket-out"/>
+    <text x="14" y="56" class="small">manifest → video path</text>
+  </g>
+
+  <text x="28" y="424" class="tiny" fill="#a9afbf">RECOVERY BRANCH · PRESENT BUT MUTED</text>
+  <path d="M440 480H458" fill="none" stroke="#777d8a" stroke-width="2" stroke-dasharray="6 5" marker-end="url(#arrow)"/>
+  <g transform="translate(20 440)">
+    <rect class="muted" width="420" height="82" rx="9"/>
+    <text x="14" y="21" class="tiny" fill="#aeb3bf">MUTED · MODE 2</text>
+    <text x="14" y="50" class="label" opacity=".76">Load Manifest</text>
+    <text x="14" y="69" class="small">read an existing run from disk</text>
+    <circle cx="420" cy="40" r="5" fill="#727887" stroke="#c8cbd1"/>
+  </g>
+  <g transform="translate(460 440)">
+    <rect class="muted" width="420" height="82" rx="9"/>
+    <text x="14" y="21" class="tiny" fill="#aeb3bf">MUTED · MODE 2</text>
+    <text x="14" y="50" class="label" opacity=".76">Assemble without rendering</text>
+    <text x="14" y="69" class="small">unmute this pair only for recovery</text>
+    <circle cx="0" cy="40" r="5" fill="#727887" stroke="#c8cbd1"/>
+  </g>
+
+  <g transform="translate(20 575)">
+    <rect width="14" height="14" rx="3" fill="#181d34" stroke="#6673b7"/>
+    <text x="22" y="12" class="small">ACTIVE · solid card · executes</text>
+    <rect x="245" width="14" height="14" rx="3" fill="#171a23" stroke="#747985" stroke-dasharray="4 3"/>
+    <text x="267" y="12" class="small">MUTED · grey dashed · no execution</text>
+    <rect x="570" width="14" height="14" rx="3" fill="#242016" stroke="#d1a555" stroke-dasharray="4 3"/>
+    <text x="592" y="12" class="small">BYPASSED · amber dashed · forwards compatible input</text>
+  </g>
+</svg>

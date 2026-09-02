@@ -89,7 +89,7 @@
       "widgets_values": [
         "h3_lbh_3d_derope",
         "h3_latent",
-        "{\"upscaler\":\"LBH 3D\",\"scale_multiplier\":2.0,\"derope\":\"MAINodes adaptive pixel smear\",\"oracle\":\"balanced q0.75 dmax4\",\"pass2_steps\":8,\"inject\":0.5,\"audio_init\":0.5,\"audio_output\":\"original performance\"}",
+        "{\"upscaler\":\"LBH 3D\",\"target_megapixels\":1.5,\"derope\":\"MAINodes adaptive pixel smear\",\"oracle\":\"balanced q0.75 dmax4\",\"pass2_steps\":8,\"inject\":0.5,\"audio_init\":0.5,\"audio_output\":\"original performance\"}",
         1,
         0,
         false,
@@ -604,10 +604,10 @@
           "link": 39
         },
         {
-          "name": "mode.scale",
+          "name": "mode.megapixels",
           "type": "FLOAT",
           "widget": {
-            "name": "mode.scale"
+            "name": "mode.megapixels"
           },
           "link": null,
           "shape": 7
@@ -627,16 +627,16 @@
       },
       "widgets_values": [
         "minimax_h3_latent_upscaler_3d_fp16.safetensors",
-        "scale by multiplier",
-        2,
+        "megapixels",
+        1.5,
         32,
         "cuda",
         "fp16"
       ],
       "widgets_values_named": {
         "model_name": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
-        "mode": "scale by multiplier",
-        "mode.scale": 2,
+        "mode": "megapixels",
+        "mode.megapixels": 1.5,
         "align": 32,
         "device": "cuda",
         "precision": "fp16"
@@ -1048,7 +1048,7 @@
         "Node name for S&R": "Note"
       },
       "widgets_values": [
-        "REQUIRES\nhttps://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler\nhttps://github.com/matlowai/ComfyUI-MAINodes\n\nThis uses MAINodes' stable decoded pixel-smear path, not experimental latent temporal insertion. The longer smeared IMAGE batch lives on CPU, then VAE Encode and LBH operate scene by scene; effective time can still reach roughly 2-3x on high-motion clips. If RAM or generation time is excessive, process a smaller start/end scene range or use a less aggressive oracle preset before lowering target resolution.\n\nDefaults: balanced oracle q=0.75 / d_max=4 / ramp ON / bridge=8; exactly 2.0x LBH 3D with grid-32 alignment; 20-step simple schedule injected from 0.50; res_multistep sampler; audio init follows the original performance at 0.5; Audio Recover delivers the original performance. Community testing consistently places d_max=4 at the useful H3 threshold and recommends doing spatial upscale and de-rope in this same regeneration pass.\n\nH3 Conditioning Sync now permits the longer target clock while resizing only spatial reference/keyframe latents. Motion refs remain excluded by default. The pass-2 Comfy Kitchen override is bypassed because large H3 sequences can exceed Sage prequantized int32 strides. save_latent remains OFF; the compact HQ continuation tail is retained automatically when the next scene needs it."
+        "REQUIRES\nhttps://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler\nhttps://github.com/matlowai/ComfyUI-MAINodes\n\nThis uses MAINodes' stable decoded pixel-smear path, not experimental latent temporal insertion. The longer smeared IMAGE batch lives on CPU, then VAE Encode and LBH operate scene by scene; effective time can still reach roughly 2-3x on high-motion clips. If RAM or generation time is excessive, process a smaller start/end scene range or use a less aggressive oracle preset before lowering target resolution.\n\nDefaults: balanced oracle q=0.75 / d_max=4 / ramp ON / bridge=8; 1.5 MP LBH 3D; 20-step simple schedule injected from 0.50; res_multistep sampler; audio init follows the original performance at 0.5; Audio Recover delivers the original performance. Community testing consistently places d_max=4 at the useful H3 threshold and recommends doing spatial upscale and de-rope in this same regeneration pass.\n\nH3 Conditioning Sync now permits the longer target clock while resizing only spatial reference/keyframe latents. Motion refs remain excluded by default. The pass-2 Comfy Kitchen override is bypassed because large H3 sequences can exceed Sage prequantized int32 strides. save_latent remains OFF; the compact HQ continuation tail is retained automatically when the next scene needs it."
       ],
       "title": "DEPENDENCIES / QUALITY AND MEMORY"
     },
