@@ -229,6 +229,20 @@ extension.nodeCreated(integrationHost);
 assert.equal(integrationExisting.widgets[0].width, undefined);
 assert.equal(integrationExisting.addWidget("number", "new", 0).width, undefined);
 
+integrationHost.title = "MiniMax H3 Contex Loop Plan — CUSTOM TITLE";
+integrationExisting.title = "MiniMax H3 Contex Loop is mentioned by another node";
+extension.afterConfigureGraph();
+assert.equal(
+    integrationHost.title,
+    "MiniMax H3 Context Loop Plan — CUSTOM TITLE",
+    "saved H3 titles receive the spelling correction without losing suffixes",
+);
+assert.equal(
+    integrationExisting.title,
+    "MiniMax H3 Contex Loop is mentioned by another node",
+    "foreign node titles are never migrated",
+);
+
 registeredSetting.onChange(false);
 integrationExisting.widgets[0].width = 440;
 assert.equal(integrationExisting.widgets[0].width, 440);

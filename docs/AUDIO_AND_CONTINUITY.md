@@ -414,7 +414,7 @@ delivered-only assembly.
 
 ## Continuation trimming
 
-Use **MiniMax H3 Contex Loop Trim** after decoding. In head mode it removes the
+Use **MiniMax H3 Context Loop Trim** after decoding. In head mode it removes the
 repeated visual prefix. With `match_tail=true`, it time-conforms the small H3
 grid mismatch to the exact delivered-frame duration and carries the
 full AV overlap privately to Segment Save. Connect Trim's AUDIO output directly;
@@ -436,7 +436,7 @@ removed from delivered duration, including the feathered portion.
 
 ## Measure a join
 
-Place **MiniMax H3 Contex Loop Seam Probe** between the current clip's untrimmed
+Place **MiniMax H3 Context Loop Seam Probe** between the current clip's untrimmed
 audio decode and Loop Trim. Connect the preceding sampler AV latent, H3 audio
 VAE, and the same `trim_frames` value.
 

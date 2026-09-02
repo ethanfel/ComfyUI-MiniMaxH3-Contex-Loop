@@ -1,8 +1,8 @@
 <p align="center">
-  <img src="assets/minimax-h3-contex-loop.svg" alt="MiniMax H3 Contex Loop v0.5 — scene plans that survive the render" width="100%">
+  <img src="assets/minimax-h3-contex-loop.svg" alt="MiniMax H3 Context Loop v0.5 — scene plans that survive the render" width="100%">
 </p>
 
-# ComfyUI MiniMax H3 Contex Loop
+# ComfyUI MiniMax H3 Context Loop
 
 Build a multi-scene MiniMax H3 video with one reusable sampling body. Review
 each scene, retry mistakes, resume interrupted runs, and assemble accepted
@@ -16,7 +16,9 @@ scenes from disk.
 > **Version 0.5 status:** `main` is the supported 0.5 release line.
 > Saved 0.4 workflows and checkpoints remain supported.
 
-> **Contex** is the intentional public repository spelling.
+> The public GitHub repository slug retains its original `Contex-Loop`
+> spelling for compatibility. Package, node, menu, and documentation labels
+> use the correctly spelled **Context Loop** name.
 
 ## What you get
 

@@ -1500,7 +1500,7 @@ function mount(node) {
             const backend = promptOptimizerBackend();
             optimize.disabled = busy || backend === "disabled";
             optimize.title = backend === "disabled"
-                ? "Prompt optimization is disabled in ComfyUI Settings → MiniMax H3 Contex Loop → Prompt optimizer."
+                ? "Prompt optimization is disabled in ComfyUI Settings → MiniMax H3 Context Loop → Prompt optimizer."
                 : `Optimize through ${backend === "mcp" ? `MCP agent (${promptOptimizerMcpProvider()})` : "the configured Direct API"}. The result becomes a reversible prompt revision.`;
         }
         const stop = root.querySelector(".h3rp-stop");
@@ -1721,7 +1721,7 @@ function mount(node) {
         const configurationError = directConfig
             ? directOptimizerConfigurationError(directConfig) : "";
         if (configurationError) {
-            state.optimizer.error = `${configurationError} Configure it in ComfyUI Settings → MiniMax H3 Contex Loop → Prompt optimizer.`;
+            state.optimizer.error = `${configurationError} Configure it in ComfyUI Settings → MiniMax H3 Context Loop → Prompt optimizer.`;
             state.optimizer.message = "";
             refreshOptimizerUi();
             void openPromptOptimizerSettings();

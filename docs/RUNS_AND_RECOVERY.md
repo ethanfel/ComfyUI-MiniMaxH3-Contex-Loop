@@ -33,7 +33,7 @@ When a Scene Prompt Editor or Rich Scene Prompt Editor is bound to the same
 Plan, Review Gate selects the scene under review there automatically. Editor
 changes are used by **Retry prompt / seed** or **Reroll seed** through the live
 Plan prompt. In 0.5, Review Gate's own prompt field is disabled by default.
-Restore it under **Settings → MiniMax H3 Contex Loop → Interface → Review Gate
+Restore it under **Settings → MiniMax H3 Context Loop → Interface → Review Gate
 → Enable prompt editing inside Review Gate**. When enabled, text explicitly
 typed in that field wins for the submitted retry and is synchronized back to
 the Plan and connected editor after the server accepts it.
@@ -44,7 +44,7 @@ new explicit scene seed, moves Loop Start to that scene, preserves a bounded
 range end, and queues normally. Once saving or review begins, Review Gate owns
 the retry instead.
 
-Disable the floating control under **Settings → MiniMax H3 Contex Loop →
+Disable the floating control under **Settings → MiniMax H3 Context Loop →
 Interface → Cancel & reroll** without affecting Review Gate.
 
 ## Between-scene memory cleanup

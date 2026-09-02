@@ -970,7 +970,7 @@ class MiniMaxH3ChainUpscaleAdapter:
         "Selected profile, scene range, backend label, and latent-save policy.",
     )
     FUNCTION = "adapt"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = ("Turn Checkpoint Manager's selected generated lineage into a "
                    "resumable child upscale loop without a source Plan or "
                    "changes to the source run.")
@@ -1065,7 +1065,7 @@ class MiniMaxH3ChainUpscaleCurrent:
         "Source scene, selected x0 route, and exact frame contract.",
     )
     FUNCTION = "current"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = ("Verify and load one source scene checkpoint lazily for an "
                    "H3, LTX, or custom upscale body.")
 
@@ -1136,7 +1136,7 @@ class MiniMaxH3ChainDeropeGuard:
         "Verified scene-clock and boundary-protection summary.",
     )
     FUNCTION = "guard"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = (
         "Adapt a MAINodes de-rope hold map to a live or deferred H3 chain "
         "scene. The repeated continuation prefix is never retimed; the last "
@@ -1215,7 +1215,7 @@ class MiniMaxH3ChainDeropeFreezeMask:
         "Prefix-freeze and dilated-clock summary.",
     )
     FUNCTION = "mask"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = (
         "Build the time-varying mask paired with De-Rope Guard. Connect it "
         "to MAINodes H3 V2V Init and enable time_varying. This prevents pass "
@@ -1275,7 +1275,7 @@ class MiniMaxH3ChainDeropeContinuity:
         "or the scene has no latent continuation prefix.",
     )
     FUNCTION = "splice"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = (
         "Restore live or deferred continuity before MAINodes H3 V2V Init. "
         "For Drift-Control scenes it replaces the protected target-resolution "
@@ -1325,7 +1325,7 @@ class MiniMaxH3ChainRecoveredAV:
         "Verified recovered RAW clock and packed stream layout.",
     )
     FUNCTION = "pack"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = (
         "Return the de-roped result to the source scene's world clock. This "
         "node rejects a still-dilated video latent, optionally rejoins the "
@@ -1408,7 +1408,7 @@ class MiniMaxH3UpscaleReferencePromptOverride:
         "Whether the node passed, filtered, or omitted connected refs.",
     )
     FUNCTION = "override"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = (
         "Stay inline on the standard H3 Tagged Reference chain while selecting "
         "the explicit refs and text used only by deferred upscale. Connected "
@@ -1534,7 +1534,7 @@ class MiniMaxH3ChainUpscaleReferenceConditioning:
         "Scene-local cache lookup result and fingerprint summary.",
     )
     FUNCTION = "condition"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = (
         "Automatically restore a scene-local H3 reference payload or replace "
         "it with a connected pass-2 Tagged Ref line and, when "
@@ -1723,7 +1723,7 @@ class H3ConditioningSyncFromLatents:
         "Exact vertical latent scale.",
     )
     FUNCTION = "sync"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = (
         "Synchronize H3 pass-2 conditioning from the original and upscaled "
         "latents. Resizes match-sized picture refs and keyframes while keeping "
@@ -1802,7 +1802,7 @@ class MiniMaxH3ChainPass2Prepare:
         "Verified stream geometry, audio lock, and sigma start.",
     )
     FUNCTION = "prepare"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = (
         "Adapt a video-only learned upscale into a joint MiniMax H3 pass-2 "
         "latent. Rejoins the saved audio, applies MiniMax CONST re-noise to "
@@ -1936,7 +1936,7 @@ class MiniMaxH3ChainUpscaleSegmentSave:
     )
     FUNCTION = "save"
     OUTPUT_NODE = True
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = ("Persist one trimmed HQ scene plus a self-contained assembly "
                    "checkpoint; always retain the small HQ tail needed by a "
                    "following Drift-Control scene and optionally retain the "
@@ -2194,7 +2194,7 @@ class MiniMaxH3ChainUpscaleLoopEnd:
         "Transient HQ latent retained from the last processed scene, if connected.",
     )
     FUNCTION = "end"
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = ("Advance the child upscale graph scene by scene and emit a "
                    "mergeable manifest after the selected range completes.")
 
@@ -2448,7 +2448,7 @@ class MiniMaxH3ChainUpscaleMerge:
     )
     FUNCTION = "merge"
     OUTPUT_NODE = True
-    CATEGORY = "conditioning/minimax/contex_loop/upscale"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = ("Deprecated compatibility wrapper. New workflows connect "
                    "Upscale Loop End directly to H3 Chain Assemble.")
 

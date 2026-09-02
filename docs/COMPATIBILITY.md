@@ -3,7 +3,7 @@
 ## Runtime scope
 
 Installing the pack does not globally alter ordinary ComfyUI workflows. Its H3
-conditioning patches activate when a Contex Loop Context node executes and
+conditioning patches activate when a Context Loop Context node executes and
 self-check the live model/layout assumptions before use.
 
 The two continuation engines and public masking path are capability-gated:
@@ -68,7 +68,7 @@ Compatible legacy patch copies share ownership markers; the second copy
 normally stands down.
 
 If an older compatible copy owns the process first, wire **MiniMax H3 Patch
-Priority** before Contex Loop Context. It can replace only a recognized sibling
+Priority** before Context Loop Context. It can replace only a recognized sibling
 implementation. Unknown wrappers fail with an ownership explanation rather
 than being overwritten.
 
@@ -113,13 +113,13 @@ tests. KJ preview bridging is scoped to the active loop.
 
 ## Legacy widget widths
 
-While any Contex Loop node is present on a legacy LiteGraph canvas, the pack
+While any Context Loop node is present on a legacy LiteGraph canvas, the pack
 works around
 [ComfyUI frontend issue #12443](https://github.com/Comfy-Org/ComfyUI_frontend/issues/12443)
 for all visible nodes. A separate Legacy Widget Width Fix node is unnecessary
 but remains compatible.
 
-Disable the embedded workaround under **Settings → MiniMax H3 Contex Loop →
+Disable the embedded workaround under **Settings → MiniMax H3 Context Loop →
 Compatibility → Widget widths** if another frontend or extension handles it.
 
 ## Platform notes

@@ -245,7 +245,7 @@ class MiniMaxH3ContexMaskedAVBridge:
         "Actual number of protected picture frames copied from each endpoint.",
     )
     FUNCTION = "prepare"
-    CATEGORY = "conditioning/minimax/contex_loop/masking"
+    CATEGORY = "conditioning/minimax/context_loop/masking"
     DESCRIPTION = (
         "Construct a true two-ended H3 AV bridge target: preserve the first "
         "clip's tail and second clip's head, then denoise only the middle.")

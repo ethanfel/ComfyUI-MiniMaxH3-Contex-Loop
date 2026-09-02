@@ -55,7 +55,7 @@ function notifyChanged() {
     globalThis.dispatchEvent?.(new CustomEvent("h3-prompt-optimizer-settings-changed"));
 }
 
-const category = ["MiniMax H3 Contex Loop", "Prompt optimizer", "Connection"];
+const category = ["MiniMax H3 Context Loop", "Prompt optimizer", "Connection"];
 
 app.registerExtension({
     name: "minimax_h3_context_loop.prompt_optimizer_settings",

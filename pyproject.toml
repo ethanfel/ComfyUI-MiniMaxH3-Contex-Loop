@@ -43,7 +43,7 @@ MotionContextProvider = "https://github.com/seitanism/ComfyUI-H3-Motion-Context-
 
 [tool.comfy]
 PublisherId = "ethanfel"
-DisplayName = "MiniMax H3 Contex Loop"
+DisplayName = "MiniMax H3 Context Loop"
 
 [tool.setuptools]
 packages = []

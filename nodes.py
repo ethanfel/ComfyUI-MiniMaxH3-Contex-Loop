@@ -154,7 +154,7 @@ def _activate_inline_patches(*, require_video_merge=False,
         return "native"
     if not _legacy_core_warning_emitted:
         _LOG.warning(
-            "MiniMax H3 Contex Loop 0.5: this ComfyUI build does not include "
+            "MiniMax H3 Context Loop 0.5: this ComfyUI build does not include "
             "the native H3 Add Guide API merged in Comfy-Org/ComfyUI PR "
             "#15439. Update ComfyUI for the supported 0.5 path. Falling back "
             "to legacy compatibility patches for this session; they are more "
@@ -532,7 +532,7 @@ class MiniMaxH3MotionContext:
         "Conditioning with the previous clip's motion and optional timeline "
         "audio appended. Connect this to the guider/sampler path.",
         "Number of pinned leading frames reproduced at target_start 0. "
-        "Connect to MiniMax H3 Contex Loop Trim; before mode and interior "
+        "Connect to MiniMax H3 Context Loop Trim; before mode and interior "
         "Guide placement return 0.",
     )
     FUNCTION = "apply"
@@ -853,7 +853,7 @@ class MiniMaxH3LoopTrim:
                                "The leading pinned overlap is removed."}),
                 "trim_frames": ("INT", {
                     "default": 0, "min": 0, "max": 4096,
-                    "tooltip": "Connect trim_frames from MiniMax H3 Contex "
+                    "tooltip": "Connect trim_frames from MiniMax H3 Context "
                                "Loop Context. In head mode this removes the "
                                "repeated overlap; before mode supplies 0."}),
             },
@@ -904,7 +904,7 @@ class MiniMaxH3LoopTrim:
         "Use as an overlap count in a compatible video stitcher.",
     )
     FUNCTION = "trim"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = ("Remove the leading pinned frames from a decoded H3 clip, "
                    "trimming picture and sound by the same duration. In 0.5 "
                    "chains, Current Shot state also resolves the scene blend "
@@ -1271,5 +1271,5 @@ NODE_CLASS_MAPPINGS = {
     "MiniMaxH3LoopTrim": MiniMaxH3LoopTrim,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3LoopTrim": "MiniMax H3 Contex Loop Trim",
+    "MiniMaxH3LoopTrim": "MiniMax H3 Context Loop Trim",
 }

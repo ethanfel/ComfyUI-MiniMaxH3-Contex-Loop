@@ -1,7 +1,7 @@
 # MiniMax H3 Loop Plan Formatting Guide
 
 This guide belongs to `ComfyUI-MiniMaxH3-Contex-Loop` and describes the JSON
-accepted by `MiniMax H3 Contex Loop Plan` (`MiniMaxH3ChainPlan`), including
+accepted by `MiniMax H3 Context Loop Plan` (`MiniMaxH3ChainPlan`), including
 scene lengths, prompts, seeds, steps, audio timing, and resume-safe settings.
 
 ## Visual editor or raw JSON
@@ -54,7 +54,7 @@ only in scene 1 and is omitted from the menu on continuation scenes.
 The experimental **Rich Scene Prompt Editor** adds color-coded tokens, larger
 media previews, prompt guides, revision history, and one-click **Optimize**.
 Its optimizer connection is global rather than stored on the node or in the
-workflow. Open **ComfyUI Settings → MiniMax H3 Contex Loop → Prompt
+workflow. Open **ComfyUI Settings → MiniMax H3 Context Loop → Prompt
 optimizer** and choose:
 
 - **Direct API** (default) for an OpenAI-compatible Chat Completions endpoint,
@@ -345,7 +345,7 @@ Use `length` when exact H3 timing matters. Invalid examples include `120`,
 ### Raw length versus delivered length
 
 With the recommended `anchor_mode: head`, the beginning of every continuation
-contains the previous scene's repeated context. `MiniMax H3 Contex Loop Trim`
+contains the previous scene's repeated context. `MiniMax H3 Context Loop Trim`
 removes that overlap:
 
 ```text
@@ -546,7 +546,7 @@ advanced**; Plan Studio keeps them in the existing scene-properties row.
 | `continuation_mode` | `guide`, `tone_carry_guide`, `latent_guide`, `tapered_guide`, `masked_av`, `tapered_av`, `feathered_av`, `audio_feathered_av`, or `drift_control_av` | Legacy/advanced implementation override for scenes without `shots[n].continuation_mode`. `latent_guide` needs video encode mode and at least 5 positive context frames; `tapered_guide` accepts normal Guide context lengths and 22 is its published baseline; experimental `tapered_av` and `drift_control_av` are fixed to 39 frames. Drift-Control AV also needs Chain Context's MODEL route. |
 | `context_length` | `0`, `1`, then native runs `5`, `22`, `39`, ... `243` | Legacy/advanced exact context. Guide accepts the native runs; AV requires the shared-clock subset `39`, `90`, `141`, `192`, or `243`. |
 | `encode_mode` | `video` or `frames` | Use `video`. It preserves motion inside the VAE latent and is more efficient. |
-| `anchor_mode` | `head` or `before` | Use `head`; wire `trim_frames` into MiniMax H3 Contex Loop Trim. |
+| `anchor_mode` | `head` or `before` | Use `head`; wire `trim_frames` into MiniMax H3 Context Loop Trim. |
 | `crop` | `disabled` or `center` | Use `disabled` when references and output already share the intended framing. |
 | `audio_mode` | `source_track`, `generated_audio`, or `source_plus_timeline` | Legacy 0.4 fallback when Audio Policy is unconnected. |
 | `audio_context_length` | `0`–`240` frames | In generated-audio modes, `0` follows the video context length; `22` is the tested explicit value. It is unused for video-only context in `source_track`. |
@@ -717,10 +717,10 @@ pass-through reporting that no compatibility patch is required. On an older
 ComfyUI build, the first compatible H3 Motion Context copy loaded owns the
 legacy process-level wrappers. If an older installed copy wins load order, wire
 **MiniMax H3 Patch Priority** between the conditioning node and **MiniMax H3
-Contex Loop Context**:
+Context Loop Context**:
 
 ```text
-Ref2VA / I2V conditioning → Patch Priority → Contex Loop Context
+Ref2VA / I2V conditioning → Patch Priority → Context Loop Context
 ```
 
 The node passes conditioning through bit-for-bit and executes an ownership
@@ -857,7 +857,7 @@ Recommended for a music video driven by one song.
 - Assemble uses cumulative frame boundaries and lets every later masked-AV
   scene own its saved decoded overlap, preserving hard or feathered AV sound.
 - The same generated track is also preserved as WAV sidecars for later editing.
-- MiniMax H3 Contex Loop Trim must keep `match_tail` enabled for exact sample counts.
+- MiniMax H3 Context Loop Trim must keep `match_tail` enabled for exact sample counts.
 
 ### `source_plus_timeline`
 
@@ -997,7 +997,7 @@ folder private if a workflow contains credentials or other sensitive values.
 ### Re-decode checkpoints to PNG
 
 Wire a completed or partial manifest and the same H3 video VAE into
-**MiniMax H3 Contex Loop Export PNG Sequence**. The node:
+**MiniMax H3 Context Loop Export PNG Sequence**. The node:
 
 1. verifies every safetensors checkpoint hash without depending on the H.264
    segment file;
@@ -1071,4 +1071,4 @@ to frames decoded previously under different settings.
 | Unexpected scene duration | Remember that seconds round up and later `head` clips lose the repeated context after trimming. Inspect Current Shot's `raw` and `delivered` status. |
 | Resume rejected | Restore the prior completed-scene settings and source track, or start a new run from clip 1 with a new `run_name`. |
 | Source audio too short | Use a longer song, shorten the plan, or choose a non-source audio mode. Truly silent placeholder audio is padded automatically; non-silent audio is never padded. |
-| Final audio/video drift | Wire both decoded streams through MiniMax H3 Contex Loop Trim and leave `match_tail` enabled. It truncates excess audio or zero-pads a fractional-step shortage. |
+| Final audio/video drift | Wire both decoded streams through MiniMax H3 Context Loop Trim and leave `match_tail` enabled. It truncates excess audio or zero-pads a fractional-step shortage. |

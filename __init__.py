@@ -1,4 +1,4 @@
-"""ComfyUI MiniMax H3 Contex Loop 0.5.
+"""ComfyUI MiniMax H3 Context Loop 0.5.
 
 Disk-backed recursive MiniMax H3 scene loops with frame-exact picture/audio
 continuation, review gates, checkpoint resume, and final assembly.

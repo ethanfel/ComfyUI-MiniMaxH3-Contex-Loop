@@ -327,7 +327,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Start — LOOP START / RESUME",
+      "title": "MiniMax H3 Context Loop Start — LOOP START / RESUME",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",
@@ -538,7 +538,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Current Shot — CURRENT REF2V SCENE — PROMPT / SEED / TIMING",
+      "title": "MiniMax H3 Context Loop Current Shot — CURRENT REF2V SCENE — PROMPT / SEED / TIMING",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",
@@ -585,7 +585,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Assemble — RECOVERY: ASSEMBLE WITHOUT RENDERING",
+      "title": "MiniMax H3 Context Loop Assemble — RECOVERY: ASSEMBLE WITHOUT RENDERING",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",
@@ -896,7 +896,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Context — MASKED AV CONTEXT — PRESERVE PREFIX / GENERATE FUTURE",
+      "title": "MiniMax H3 Context Loop Context — MASKED AV CONTEXT — PRESERVE PREFIX / GENERATE FUTURE",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",
@@ -1343,7 +1343,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Trim — TRIM CONTEXT / AUTO-RESOLVE SCENE BLEND",
+      "title": "MiniMax H3 Context Loop Trim — TRIM CONTEXT / AUTO-RESOLVE SCENE BLEND",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",
@@ -1416,7 +1416,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Segment + Checkpoint — SAVE DELIVERED + BLEND-READY SEGMENTS",
+      "title": "MiniMax H3 Context Loop Segment + Checkpoint — SAVE DELIVERED + BLEND-READY SEGMENTS",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",
@@ -1461,7 +1461,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Assemble — FINAL ASSEMBLY — 5-FRAME VISUAL BLEND",
+      "title": "MiniMax H3 Context Loop Assemble — FINAL ASSEMBLY — 5-FRAME VISUAL BLEND",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",
@@ -1568,7 +1568,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Load Manifest — RECOVERY: LOAD ALL SAVED CLIPS",
+      "title": "MiniMax H3 Context Loop Load Manifest — RECOVERY: LOAD ALL SAVED CLIPS",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",
@@ -1840,7 +1840,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Review Gate — REVIEW GATE — APPROVE / EDIT+RETRY / REROLL / STOP",
+      "title": "MiniMax H3 Context Loop Review Gate — REVIEW GATE — APPROVE / EDIT+RETRY / REROLL / STOP",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.4.0",
@@ -1925,7 +1925,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop End — LOOP END — ADVANCE REF2V SCENE",
+      "title": "MiniMax H3 Context Loop End — LOOP END — ADVANCE REF2V SCENE",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",
@@ -2329,7 +2329,7 @@
           "links": null
         }
       ],
-      "title": "MiniMax H3 Contex Loop Plan — REF2V STUDIO TAGGED PLAN — EDITED THROUGH STUDIO",
+      "title": "MiniMax H3 Context Loop Plan — REF2V STUDIO TAGGED PLAN — EDITED THROUGH STUDIO",
       "properties": {
         "cnr_id": "comfyui-minimaxh3-contex-loop",
         "ver": "0.3.10",

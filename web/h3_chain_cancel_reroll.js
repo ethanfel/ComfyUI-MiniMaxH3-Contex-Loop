@@ -401,7 +401,7 @@ app.registerExtension({
     init() {
         app.ui?.settings?.addSetting?.({
             id: SETTING_ID,
-            category: ["MiniMax H3 Contex Loop", "Interface", "Cancel & reroll"],
+            category: ["MiniMax H3 Context Loop", "Interface", "Cancel & reroll"],
             name: "Show floating Cancel & reroll control",
             tooltip: "Show the guarded floating action while an H3 scene is sampling. Disabling it does not remove Review Gate retry or reroll controls.",
             type: "boolean",

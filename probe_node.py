@@ -201,7 +201,7 @@ class MiniMaxH3ContexLoopSeamProbe:
         "The measurement report, for a Preview Text node.",
     )
     FUNCTION = "probe"
-    CATEGORY = "conditioning/minimax/contex_loop"
+    CATEGORY = "conditioning/minimax/context_loop"
     OUTPUT_NODE = True
     DESCRIPTION = ("Measure a chain join in the graph: does clip B "
                    "continue clip A's audio, and does the level step at "
@@ -443,5 +443,5 @@ NODE_CLASS_MAPPINGS = {
     "MiniMaxH3ContexLoopSeamProbe": MiniMaxH3ContexLoopSeamProbe,
 }
 NODE_DISPLAY_NAME_MAPPINGS = {
-    "MiniMaxH3ContexLoopSeamProbe": "MiniMax H3 Contex Loop Seam Probe",
+    "MiniMaxH3ContexLoopSeamProbe": "MiniMax H3 Context Loop Seam Probe",
 }
