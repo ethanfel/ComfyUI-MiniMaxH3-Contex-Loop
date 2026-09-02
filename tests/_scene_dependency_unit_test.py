@@ -55,6 +55,14 @@ def audio(values):
 
 
 plan = make_plan(5)
+assert chain._resume_context_predecessors(plan, 3) == {
+    "visual": None, "audio": None, "scenes": []}
+try:
+    chain._resume_context_predecessors(plan, 4)
+except ValueError as exc:
+    assert "exceeds the 2-scene plan" in str(exc)
+else:
+    raise AssertionError("resume accepted a target beyond the complete sentinel")
 
 # Reference registries are incremental. Appending an unused prompt reference
 # must not invalidate an already-rendered predecessor, including checkpoints

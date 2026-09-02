@@ -78,7 +78,9 @@ class FakeAudioVAE:
 
     def decode(self, _audio):
         self.calls += 1
-        samples = chain.sample_boundary_from_frames(8, 8000, chain.FPS)
+        # Return one extra sample so the export exercises its real waveform
+        # conformance path instead of only the already-exact fast path.
+        samples = chain.sample_boundary_from_frames(8, 8000, chain.FPS) + 1
         return torch.linspace(
             -0.5, 0.5, samples, dtype=torch.float32
         ).reshape(1, 1, -1).expand(1, 2, -1).contiguous()

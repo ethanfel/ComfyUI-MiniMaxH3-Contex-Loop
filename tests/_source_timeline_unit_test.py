@@ -155,6 +155,31 @@ with tempfile.TemporaryDirectory() as temporary:
     restored_audio = chain._source_timeline_scene_audio(restored, 0, 5)
     assert tuple(restored_audio["waveform"].shape) == (1, 1, 10000)
 
+    # Independent 24 fps boundaries can differ by one PCM sample when an
+    # imported-video lead and extension soundtrack are recombined. That
+    # harmless quantization remainder is conformed, while a truly short
+    # extension remains an error.
+    quantized_extension = {
+        "waveform": torch.linspace(-0.5, 0.5, 1333).reshape(1, 1, -1),
+        "sample_rate": 8000,
+    }
+    imported_lead = {
+        "waveform": torch.full((1, 1, 333), 0.75),
+        "sample_rate": 8000,
+    }
+    recombined = chain._slice_audio_after_external_context(
+        quantized_extension, imported_lead, 5, 1, False)
+    assert int(recombined["waveform"].shape[-1]) == round(5 / 24 * 8000)
+    try:
+        chain._slice_audio_after_external_context({
+            "waveform": torch.zeros((1, 1, 1000)),
+            "sample_rate": 8000,
+        }, imported_lead, 5, 1, False)
+    except ValueError as exc:
+        assert "extension soundtrack" in str(exc)
+    else:
+        raise AssertionError("materially short extension audio was conformed")
+
     wrong_audio = {
         "waveform": torch.zeros_like(full_track["waveform"]),
         "sample_rate": full_track["sample_rate"],

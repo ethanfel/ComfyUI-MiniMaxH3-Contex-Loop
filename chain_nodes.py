@@ -100,6 +100,7 @@ from .av_timing import (
     AUDIO_TRIM_FRAMES_KEY,
     AUDIO_WITH_OVERLAP_FRAMES_KEY,
     AUDIO_WITH_OVERLAP_WAVEFORM_KEY,
+    conform_waveform_length,
     sample_boundary_from_frames,
 )
 from .contracts_v05 import (
@@ -10319,10 +10320,22 @@ def _resume_context_predecessors(
         plan: dict[str, Any], start_clip: int) -> dict[str, Any]:
     """Return every saved scene whose video or audio the start consumes."""
     start_clip = int(start_clip)
+    empty = {"visual": None, "audio": None, "scenes": []}
     if start_clip <= 1:
-        return {"visual": None, "audio": None, "scenes": []}
+        return empty
+    shots = plan.get("shots")
+    if not isinstance(shots, list) or not shots:
+        raise ValueError("H3 resume context requires a non-empty scene plan.")
+    if start_clip == len(shots) + 1:
+        # Manifest Load validates a completed run through this deliberate
+        # post-plan sentinel. There is no next scene consuming context.
+        return empty
+    if start_clip > len(shots) + 1:
+        raise ValueError(
+            "H3 resume clip %d exceeds the %d-scene plan." %
+            (start_clip, len(shots)))
     cfg = plan["compatibility"]
-    shot = plan["shots"][start_clip - 1]
+    shot = shots[start_clip - 1]
     context_length = _shot_context_length(
         shot, int(cfg.get("context_length", 0)))
     audio_context_length = _shot_audio_context_length(
@@ -10675,10 +10688,23 @@ def _slice_audio_after_external_context(
                 extension_samples, "H3 silent extension soundtrack")
             extension = source["waveform"]
         else:
-            raise ValueError(
-                "H3 extension soundtrack has %d samples; scene 1 requires %d "
-                "after its imported-video audio lead." %
-                (int(waveform.shape[-1]), extension_samples))
+            try:
+                shortfall = extension_samples - int(waveform.shape[-1])
+                if shortfall == 1:
+                    # Adjacent rounded 24 fps sample boundaries can differ
+                    # by one sample. Preserve the source waveform verbatim
+                    # and extend only its final boundary sample.
+                    extension = torch.cat(
+                        (waveform, waveform[..., -1:]), dim=-1)
+                else:
+                    extension = conform_waveform_length(
+                        waveform, extension_samples,
+                        "H3 existing-video extension soundtrack")
+            except ValueError as exc:
+                raise ValueError(
+                    "H3 extension soundtrack has %d samples; scene 1 "
+                    "requires %d after its imported-video audio lead." %
+                    (int(waveform.shape[-1]), extension_samples)) from exc
     else:
         extension = waveform[..., :extension_samples]
     if external_audio is None:
