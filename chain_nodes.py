@@ -15799,6 +15799,7 @@ def _preflight_runtime_compatibility(
             "ok": not partial,
             "mode": ("ready" if (
                 engine.get("mask_engine_complete")
+                and engine.get("velocity_mask_conversion")
                 and (payload.get("native_av_mask_payload")
                      or payload.get("wrapper_present")))
                 else "runtime_bridge_available"),
