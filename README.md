@@ -10,7 +10,8 @@ scene can be reviewed, retried, checkpointed, resumed, and assembled later.
 **[Start here](docs/GETTING_STARTED.md)** ·
 **[Node guide](docs/NODE_REFERENCE.md)** ·
 **[Choose a workflow](example_workflows/README.md)** ·
-**[All documentation](docs/README.md)**
+**[All documentation](docs/README.md)** ·
+**[0.5 → 0.6 visual overview](docs/assets/minimax-h3-context-loop-0.5-to-0.6-major-improvements.png)**
 
 > The public GitHub repository slug retains its original `Contex-Loop`
 > spelling for compatibility. Package, node, menu, and documentation labels

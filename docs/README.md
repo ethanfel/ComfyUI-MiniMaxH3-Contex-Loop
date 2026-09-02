@@ -11,6 +11,8 @@ read the implementation references to run a normal workflow.
    example for your task.
 3. [Node guide](NODE_REFERENCE.md) — understand the visible nodes, sockets, and
    disabled-node notation.
+4. [0.5 → 0.6 major improvements](assets/minimax-h3-context-loop-0.5-to-0.6-major-improvements.png)
+   — a Discord-ready visual overview of the current release.
 
 ## Guides by task
 
