@@ -4,6 +4,15 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added the nightly **Picture Context Builder** to Plan Studio. Scene Context
+  now owns picture/audio totals, boundary implementation, and spatial proxy;
+  selecting 1–N picture blocks exposes every H3-native repartition through
+  ordered boundary selectors plus an independent earlier-scene source and
+  latent window for every block. Repeated sources are supported, audio stays
+  locked to its continuous predecessor path by default, and checkpoint,
+  resume, trim, review, and dependency metadata track every selected block.
+  Released one/two-block Plan fields remain a read-only compatibility path.
+
 - Added **MiniMax H3 Plan (Modern)** as a clean, opt-in replacement for the
   original Plan node. It preserves the familiar vertical scene-column editor
   and exact Plan output sockets, but organizes its controls into Project,

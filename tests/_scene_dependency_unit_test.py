@@ -607,6 +607,74 @@ assert chain._resume_context_predecessors(same_scene_plan, 5) == {
     "visual": 3, "audio": 4, "scenes": [3, 4], "visual_lead": 3,
 }
 
+# The nightly builder accepts any ordered number of phase-safe picture
+# blocks. Sources may repeat, and every source remains an explicit resume
+# dependency while generated audio stays on the immediate predecessor.
+builder_plan = chain._normalize_plan(
+    json.dumps({"shots": [
+        {"id": name, "prompt": name, "length": 90,
+         **({"visual_context_blocks": [
+             {"source": "three", "frames": 5},
+             {"source": "four", "frames": 12},
+             {"source": "three", "frames": 22},
+         ], "video_blend_frames": 0} if name == "five" else {})}
+        for name in ("one", "two", "three", "four", "five")
+    ]}),
+    "visual-context-builder-test", 64, 64, 39, "video", "head",
+    "disabled", "generated_audio", 39, 1.0, 8, 11, 18,
+    "body:auto:v1", 0, "masked_av")
+assert builder_plan["shots"][4]["visual_context_blocks"] == [
+    {"source": "three", "frames": 5},
+    {"source": "four", "frames": 12},
+    {"source": "three", "frames": 22},
+]
+assert chain._resume_context_predecessors(builder_plan, 5) == {
+    "visual": 3, "audio": 4, "scenes": [3, 4],
+    "visual_blocks": [3, 4, 3],
+}
+builder_boundary = chain._scene_dependency_record(
+    builder_plan, 5, None)["scopes"]["incoming_boundary"]
+assert builder_boundary["visual_context_blocks"] == [
+    {"source_scene": 3, "source_id": "three", "frames": 5},
+    {"source_scene": 4, "source_id": "four", "frames": 12},
+    {"source_scene": 3, "source_id": "three", "frames": 22},
+]
+builder_revision = chain._checkpoint_plan_revision({
+    "index": 5, "id": "five", "revision": "r5", "seed": "5",
+    "steps": 8, "raw_frames": 90, "segment": "scene_5.mp4",
+    "visual_context_blocks": [
+        {"source_id": "three", "frames": 5,
+         "resolved_start_frame": 46},
+        {"source_id": "four", "frames": 12, "start_frame": 0,
+         "resolved_start_frame": 0},
+        {"source_id": "three", "frames": 22,
+         "resolved_start_frame": 29},
+    ],
+})
+assert builder_revision["visual_context_blocks"] == [
+    {"source": "three", "frames": 5},
+    {"source": "four", "frames": 12, "start_frame": 0},
+    {"source": "three", "frames": 22},
+]
+
+invalid_builder = {"shots": [
+    {"id": name, "prompt": name, "length": 90,
+     **({"visual_context_blocks": [
+         {"source": "three", "frames": 6},
+         {"source": "four", "frames": 33},
+     ]} if name == "five" else {})}
+    for name in ("one", "two", "three", "four", "five")
+]}
+try:
+    chain._normalize_plan(
+        json.dumps(invalid_builder), "invalid-visual-builder", 64, 64, 39,
+        "video", "head", "disabled", "generated_audio", 39, 1.0, 8,
+        11, 18, "body:auto:v1", 0, "masked_av")
+except ValueError as exc:
+    assert "not an H3 latent boundary" in str(exc)
+else:
+    raise AssertionError("invalid three-block visual partition was accepted")
+
 # Audio stays on the immediate predecessor unless the Context planner is
 # explicitly unlocked. Once unlocked, one or two exact 40 Hz latent windows
 # may be selected independently from the picture composition.
@@ -728,6 +796,43 @@ try:
     assert audio_latent is full_immediate_audio
     assert composed_state["visual_context_source_segment"]["index"] == 3
     assert composed_state["visual_context_lead_segment"]["index"] == 4
+
+    builder_loads = {3: 0, 4: 0}
+    def builder_loader(path):
+        scene = 4 if "scene_4" in str(path) else 3
+        builder_loads[scene] += 1
+        return composed_loader(path)
+
+    chain._st_load = builder_loader
+    builder_state = chain._visual_context_state({
+        "plan": builder_plan, "index": 5,
+        "previous_frames": scene4_frames,
+        "previous_latent": {
+            "samples": [scene4_video, full_immediate_audio]},
+        "segments": [
+            {"index": scene,
+             "id": builder_plan["shots"][scene - 1]["id"],
+             "checkpoint": "scene_%d.safetensors" % scene,
+             "revision": "r%d" % scene,
+             "checkpoint_sha256": "h%d" % scene}
+            for scene in range(1, 5)
+        ],
+    })
+    builder_frames = builder_state["previous_frames"]
+    builder_video, builder_audio = builder_state[
+        "previous_latent"]["samples"]
+    assert builder_frames.shape[0] == 39
+    assert torch.all(builder_frames[:5] == 3.0)
+    assert torch.all(builder_frames[5:17] == 4.0)
+    assert torch.all(builder_frames[17:] == 3.0)
+    assert builder_video.shape[2] == 12
+    assert builder_audio is full_immediate_audio
+    assert builder_loads == {3: 1, 4: 1}
+    assert [block["source"] for block in builder_state[
+        "visual_context_block_segments"]] == [3, 4, 3]
+    assert [item["index"] for item in builder_state["segments"]] == [
+        1, 2, 3, 4]
+    chain._st_load = composed_loader
 
     same_scene_state = chain._visual_context_state({
         "plan": same_scene_plan, "index": 5,

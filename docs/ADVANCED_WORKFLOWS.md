@@ -123,19 +123,21 @@ tail.
 
 ## Composed visual context
 
-A continuation can use two saved picture histories back to back. In Plan or
-Plan Studio, **Composed context first source** selects the scene placed first;
-**Composed total / split** selects both the native H3 context total and how it
-is divided. The ordinary **Visual context source** supplies the second block
-immediately before the new generation:
+A continuation can use any ordered number of saved picture histories back to
+back. In Plan Studio's **Context → Picture** tab, select the total, the number
+of blocks, and the cumulative H3-native divisions. Every block then exposes
+its own earlier-scene source and exact latent-window selector. The last block
+sits immediately before the new generation:
 
 ```json
 {
   "id": "scene_5",
   "context_length": 39,
-  "visual_context_lead_source": "scene_4",
-  "visual_context_lead_frames": 5,
-  "visual_context_source": "scene_3",
+  "visual_context_blocks": [
+    {"source": "scene_3", "frames": 5},
+    {"source": "scene_4", "frames": 12, "start_frame": 0},
+    {"source": "scene_3", "frames": 22}
+  ],
   "video_blend_frames": 0
 }
 ```
@@ -143,44 +145,45 @@ immediately before the new generation:
 This example constructs one 39-frame visual prefix:
 
 ```text
-scene 4 tail:  5 RGB frames /  2 video-latent steps
-scene 3 tail: 34 RGB frames / 10 video-latent steps
-result:       39 RGB frames / 12 video-latent steps
+scene 3 block:  5 RGB frames / 2 video-latent steps
+scene 4 block: 12 RGB frames / 3 video-latent steps
+scene 3 block: 22 RGB frames / 7 video-latent steps
+result:        39 RGB frames / 12 video-latent steps
 ```
 
-The selector groups every valid ordered split under its resulting total. `39`
-offers `5+34`, `17+22`, `22+17`, and `34+5`; `56` offers both orientations of
-`5+51`, `17+39`, and `22+34`; longer native totals continue the same pattern.
-Choosing one combination writes that total to the scene's `context_length`
-and the first span to `visual_context_lead_frames`.
+The division selectors expose every valid ordered repartition without building
+an enormous combination menu. For example, three blocks within `39` include
+`5+12+22`, `5+17+17`, `5+29+5`, `17+5+17`, `17+17+5`, and `22+12+5`.
+Changing the count starts from a balanced valid repartition; moving each
+division explores all other native layouts.
 
 The blocks are concatenated in their authored order; they are not blended or
 interpolated. Both `22+17` and `17+22` now select source windows on the target
 block's matching temporal phase and concatenate the saved latent crops
 directly. For an inverse layout, the first block's latest aligned crop can end
 before its source movie's physical tail; Plan Studio shows that position.
-Both sources may be any distinct earlier scenes on the active
-branch—the first source does not have to have a lower scene number than the
-second. The composed prefix remains one context, so its normal head trim or AV
-mask uses the selected total exactly once.
+Every source may be any earlier scene on the active branch. Sources do not
+need to be chronologically ordered and the same source can appear more than
+once with independent windows. The composed prefix remains one context, so
+its normal head trim or AV mask uses the selected total exactly once.
 
 Composition changes only picture context. Generated audio remains one complete
 latent tail from the immediately previous timeline scene, so there is no audio
 splice at the internal visual seam and a scene's independent audio-context
 override still works. Final assembly still follows normal scene order and must
 use `video_blend_frames: 0` at this boundary. Checkpoint preflight verifies
-both selected visual revisions plus the immediate audio predecessor when that
+every selected visual revision plus the immediate audio predecessor when that
 audio continuity is active.
 
-The Context tab exposes one independent aligned range for each composed block. The
-second block uses `visual_context_start_frame`; the first block uses
-`visual_context_lead_start_frame`. Either or both may be omitted to use that
-block's latest phase-aligned native crop.
+Each `visual_context_blocks` item may omit `start_frame` to use its latest
+phase-aligned native crop. The released `visual_context_source` and
+`visual_context_lead_*` one/two-block fields remain accepted for existing
+Plans and checkpoints, but the new builder writes only the ordered list.
 
 ## Independent audio context
 
 Plan Studio's **Context** planner keeps Audio locked by default. This preserves
-the established behavior: picture may use one or two selected windows, while
+the established behavior: picture may use one or more selected windows, while
 generated audio remains one continuous tail from the immediately previous
 timeline scene. Existing plans therefore do not change.
 

@@ -39,6 +39,7 @@ import {
     scenePromptSeedMode,
     sceneVisualContextLeadFrames,
     sceneVisualContextLeadSource,
+    sceneVisualContextBlocks,
     sceneVisualContextStartFrame,
     sceneVisualContextSource,
     sceneVideoBlendFrames,
@@ -49,6 +50,10 @@ import {
     sharedPrompt,
     validateH3Length,
     visualContextCompositions,
+    visualContextBoundaryFrames,
+    visualContextDefaultPartition,
+    visualContextMaximumBlocks,
+    visualContextPartitionFromBoundaries,
 } from "../web/h3_chain_plan_core.mjs";
 
 const renamePlan = {
@@ -864,6 +869,40 @@ assert.throws(() => sceneVisualContextStartFrame({
     visual_context_start_frame:10,
 }, 90, 85, 22), /native temporal latent lattice/i);
 assert.equal(contextCompositions.at(-1).total, 243);
+assert.deepEqual(visualContextBoundaryFrames(39), [5, 17, 22, 34]);
+assert.equal(visualContextMaximumBlocks(39), 5);
+assert.deepEqual(visualContextPartitionFromBoundaries(39, [5, 17]), [
+    5, 12, 22,
+]);
+assert.deepEqual(visualContextDefaultPartition(22, 3), [5, 12, 5]);
+const multiContextPlan = structuredClone(nonlinearPlan);
+for (const shot of multiContextPlan.shots) shot.length = 90;
+Object.assign(multiContextPlan.shots[4], {
+    context_length:39,
+    visual_context_blocks:[
+        {source:"one", frames:5},
+        {source:"four", frames:12, start_frame:0},
+        {source:"three", frames:22},
+    ],
+});
+delete multiContextPlan.shots[4].visual_context_source;
+const multiBlocks = sceneVisualContextBlocks(multiContextPlan, 5, 39);
+assert.deepEqual(multiBlocks.map((block) => [
+    block.source, block.frames, block.startFrame,
+]), [[1, 5, null], [4, 12, 0], [3, 22, null]]);
+const multiTiming = calculatePlanTiming(multiContextPlan, {
+    contextLength:39, videoBlendFrames:0, anchorMode:"head",
+    defaultDurationSeconds:5, defaultSteps:10,
+});
+assert.deepEqual(multiTiming.errors, []);
+assert.deepEqual(multiTiming.shots[4].visualContextBlocks.map((block) => [
+    block.source, block.frames,
+]), [[1, 5], [4, 12], [3, 22]]);
+assert.throws(() => sceneVisualContextBlocks({shots:[
+    {id:"one"}, {id:"two", visual_context_blocks:[
+        {source:"one", frames:6}, {source:"one", frames:16},
+    ]},
+]}, 2, 22), /not an H3 latent boundary/i);
 const composedTiming = calculatePlanTiming(composedPlan, {
     contextLength:39, videoBlendFrames:0, anchorMode:"head",
     defaultDurationSeconds:5, defaultSteps:10,

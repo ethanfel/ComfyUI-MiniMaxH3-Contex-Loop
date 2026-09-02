@@ -355,22 +355,33 @@ class CheckpointGraphManager:
 
         visual_frames = max(0, self._integer(record.get("context_length")))
         if visual_frames:
-            source_scene = self._integer(
-                segment.get("visual_context_source_scene"), scene - 1)
-            if source_scene == scene - 1 and not segment.get(
-                    "visual_context_source_revision"):
-                if parent_key in records:
-                    found.append(parent_key)
+            visual_blocks = segment.get("visual_context_blocks")
+            if isinstance(visual_blocks, list):
+                for block in visual_blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    add(block.get("source_scene"),
+                        block.get("source_revision"),
+                        block.get("source_checkpoint_sha256"))
             else:
-                add(source_scene,
-                    segment.get("visual_context_source_revision"),
-                    segment.get("visual_context_source_checkpoint_sha256"))
-            lead_frames = max(0, self._integer(
-                segment.get("visual_context_lead_frames")))
-            if lead_frames:
-                add(segment.get("visual_context_lead_source_scene"),
-                    segment.get("visual_context_lead_source_revision"),
-                    segment.get("visual_context_lead_checkpoint_sha256"))
+                source_scene = self._integer(
+                    segment.get("visual_context_source_scene"), scene - 1)
+                if source_scene == scene - 1 and not segment.get(
+                        "visual_context_source_revision"):
+                    if parent_key in records:
+                        found.append(parent_key)
+                else:
+                    add(source_scene,
+                        segment.get("visual_context_source_revision"),
+                        segment.get(
+                            "visual_context_source_checkpoint_sha256"))
+                lead_frames = max(0, self._integer(
+                    segment.get("visual_context_lead_frames")))
+                if lead_frames:
+                    add(segment.get("visual_context_lead_source_scene"),
+                        segment.get("visual_context_lead_source_revision"),
+                        segment.get(
+                            "visual_context_lead_checkpoint_sha256"))
 
         dependency = record["_metadata"].get("scene_dependency")
         scopes = dependency.get("scopes") if isinstance(dependency, dict) else None

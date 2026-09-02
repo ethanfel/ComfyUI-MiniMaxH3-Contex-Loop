@@ -7,6 +7,7 @@ import {
     sceneContextLength,
     sceneLoRARoute,
     sceneVideoBlendFrames,
+    sceneVisualContextBlocks,
     sceneVisualContextLeadFrames,
     sceneVisualContextLeadSource,
     sceneVisualContextSource,
@@ -248,59 +249,74 @@ export function applyCheckpointRevisionSet(plan, revisions, {
         } else {
             delete shot.audio_context_length;
         }
-        if (Object.hasOwn(revision, "visual_context_source")) {
-            shot.visual_context_source = String(
-                revision.visual_context_source,
+        if (Array.isArray(revision.visual_context_blocks)) {
+            shot.visual_context_blocks = revision.visual_context_blocks.map(
+                (block) => ({
+                    source:String(block?.source ?? ""),
+                    frames:Number(block?.frames),
+                    ...(Object.hasOwn(block ?? {}, "start_frame")
+                        ? {start_frame:Number(block.start_frame)} : {}),
+                }),
             );
-            sceneVisualContextSource(plan, scene);
-        } else {
             delete shot.visual_context_source;
-        }
-        if (Object.hasOwn(revision, "visual_context_start_frame")) {
-            const start = Number(revision.visual_context_start_frame);
-            if (!Number.isInteger(start) || start < 0) {
-                throw new Error(
-                    `Restored scene ${scene} has an invalid visual context start frame.`,
-                );
-            }
-            shot.visual_context_start_frame = start;
-        } else {
             delete shot.visual_context_start_frame;
-        }
-        if (Object.hasOwn(revision, "visual_context_lead_source")) {
-            shot.visual_context_lead_source = String(
-                revision.visual_context_lead_source,
-            );
-            shot.visual_context_lead_frames = Number(
-                revision.visual_context_lead_frames,
-            );
-            const lead = sceneVisualContextLeadSource(plan, scene);
-            const second = sceneVisualContextSource(plan, scene);
-            sceneVisualContextLeadFrames(shot, sceneContextLength(shot));
-            if (lead === second) {
-                throw new Error(
-                    `Restored scene ${scene} uses the same scene for both composed visual context blocks.`,
-                );
-            }
-            if (Object.hasOwn(
-                revision, "visual_context_lead_start_frame",
-            )) {
-                const start = Number(
-                    revision.visual_context_lead_start_frame,
-                );
-                if (!Number.isInteger(start) || start < 0) {
-                    throw new Error(
-                        `Restored scene ${scene} has an invalid composed visual context start frame.`,
-                    );
-                }
-                shot.visual_context_lead_start_frame = start;
-            } else {
-                delete shot.visual_context_lead_start_frame;
-            }
-        } else {
             delete shot.visual_context_lead_source;
             delete shot.visual_context_lead_frames;
             delete shot.visual_context_lead_start_frame;
+            sceneVisualContextBlocks(
+                plan, scene, sceneContextLength(shot),
+            );
+        } else {
+            if (Object.hasOwn(revision, "visual_context_source")) {
+                shot.visual_context_source = String(
+                    revision.visual_context_source,
+                );
+                sceneVisualContextSource(plan, scene);
+            } else {
+                delete shot.visual_context_source;
+            }
+            if (Object.hasOwn(revision, "visual_context_start_frame")) {
+                const start = Number(revision.visual_context_start_frame);
+                if (!Number.isInteger(start) || start < 0) {
+                    throw new Error(
+                        `Restored scene ${scene} has an invalid visual context start frame.`,
+                    );
+                }
+                shot.visual_context_start_frame = start;
+            } else {
+                delete shot.visual_context_start_frame;
+            }
+            if (Object.hasOwn(revision, "visual_context_lead_source")) {
+                shot.visual_context_lead_source = String(
+                    revision.visual_context_lead_source,
+                );
+                shot.visual_context_lead_frames = Number(
+                    revision.visual_context_lead_frames,
+                );
+                sceneVisualContextLeadSource(plan, scene);
+                sceneVisualContextSource(plan, scene);
+                sceneVisualContextLeadFrames(shot, sceneContextLength(shot));
+                if (Object.hasOwn(
+                    revision, "visual_context_lead_start_frame",
+                )) {
+                    const start = Number(
+                        revision.visual_context_lead_start_frame,
+                    );
+                    if (!Number.isInteger(start) || start < 0) {
+                        throw new Error(
+                            `Restored scene ${scene} has an invalid composed visual context start frame.`,
+                        );
+                    }
+                    shot.visual_context_lead_start_frame = start;
+                } else {
+                    delete shot.visual_context_lead_start_frame;
+                }
+            } else {
+                delete shot.visual_context_lead_source;
+                delete shot.visual_context_lead_frames;
+                delete shot.visual_context_lead_start_frame;
+            }
+            delete shot.visual_context_blocks;
         }
         if (Object.hasOwn(revision, "continuation_mode")) {
             shot.continuation_mode = String(revision.continuation_mode);

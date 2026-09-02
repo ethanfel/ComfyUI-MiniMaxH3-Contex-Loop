@@ -475,6 +475,13 @@ export function renamePlanShot(plan, index, requestedId) {
                     candidate[field] = nextId;
                 }
             }
+            for (const block of Array.isArray(
+                candidate?.visual_context_blocks,
+            ) ? candidate.visual_context_blocks : []) {
+                if (String(block?.source ?? "").trim() === previousId) {
+                    block.source = nextId;
+                }
+            }
         }
     }
     return {previousId, id:nextId, changed:true};
@@ -777,6 +784,223 @@ export function sceneVisualContextLeadFrames(shot, contextLength) {
         );
     }
     return resolved;
+}
+
+export function visualContextBoundaryFrames(contextLength) {
+    const total = Number(contextLength);
+    if (!Number.isInteger(total) || total < 1) return Object.freeze([]);
+    const boundaries = [];
+    for (let frame = 1; frame < total; frame += 1) {
+        if (h3NativeFrameBoundaryStep(frame) !== null) boundaries.push(frame);
+    }
+    return Object.freeze(boundaries);
+}
+
+export function visualContextMaximumBlocks(contextLength) {
+    const total = Number(contextLength);
+    if (!Number.isInteger(total) || total < 1) return 0;
+    return visualContextBoundaryFrames(total).length + 1;
+}
+
+export function visualContextPartitionFromBoundaries(
+    contextLength, rawBoundaries,
+) {
+    const total = Number(contextLength);
+    const boundaries = Array.from(rawBoundaries ?? [], Number);
+    if (!Number.isInteger(total) || total < 1) {
+        throw new Error("Visual context partition requires a positive total.");
+    }
+    let previous = 0;
+    const frames = [];
+    const allowed = new Set(visualContextBoundaryFrames(total));
+    for (const boundary of boundaries) {
+        if (!Number.isInteger(boundary) || boundary <= previous
+                || boundary >= total || !allowed.has(boundary)) {
+            throw new Error(
+                `Visual context boundary ${String(boundary)} is not an ordered H3 latent boundary inside ${total} frames.`,
+            );
+        }
+        frames.push(boundary - previous);
+        previous = boundary;
+    }
+    frames.push(total - previous);
+    return Object.freeze(frames);
+}
+
+export function visualContextDefaultPartition(contextLength, blockCount) {
+    const total = Number(contextLength);
+    const count = Number(blockCount);
+    const candidates = visualContextBoundaryFrames(total);
+    if (!Number.isInteger(count) || count < 1
+            || count > candidates.length + 1) {
+        throw new Error(
+            `${total}-frame visual context supports between 1 and ${candidates.length + 1} ordered blocks.`,
+        );
+    }
+    if (count === 1) return Object.freeze([total]);
+    // Choose monotonic H3 boundaries nearest evenly spaced target positions.
+    // This gives a stable, balanced starting point without enumerating the
+    // combinatorial set of every possible N-way partition.
+    const selected = [];
+    let minimumIndex = 0;
+    for (let cut = 1; cut < count; cut += 1) {
+        const remainingCuts = count - cut - 1;
+        const maximumIndex = candidates.length - remainingCuts - 1;
+        const wanted = total * cut / count;
+        let chosen = minimumIndex;
+        for (let index = minimumIndex; index <= maximumIndex; index += 1) {
+            if (Math.abs(candidates[index] - wanted)
+                    < Math.abs(candidates[chosen] - wanted)) chosen = index;
+        }
+        selected.push(candidates[chosen]);
+        minimumIndex = chosen + 1;
+    }
+    return visualContextPartitionFromBoundaries(total, selected);
+}
+
+function visualContextBlockStartValue(
+    value, rawFrames, deliveredFrames, spanFrames, prefixFrames, label,
+) {
+    const holder = {};
+    if (value !== undefined && value !== null
+            && !(typeof value === "string" && !value.trim())) {
+        holder.visual_context_start_frame = value;
+    }
+    try {
+        return sceneVisualContextStartFrame(
+            holder, rawFrames, deliveredFrames, spanFrames, false,
+            prefixFrames,
+        );
+    } catch (error) {
+        throw new Error(`${label}: ${error.message}`);
+    }
+}
+
+export function sceneVisualContextBlocks(plan, index, contextLength) {
+    const shots = plan?.shots;
+    const target = Number(index);
+    const total = Number(contextLength);
+    if (!Array.isArray(shots) || !Number.isInteger(target)
+            || target < 1 || target > shots.length) {
+        throw new Error("Visual context blocks have an invalid target scene.");
+    }
+    if (!Number.isInteger(total) || total < 0) {
+        throw new Error("Visual context blocks require a valid context total.");
+    }
+    const shot = shots[target - 1] ?? {};
+    if (target === 1 || total === 0) {
+        if (Object.hasOwn(shot, "visual_context_blocks")) {
+            throw new Error(
+                "visual_context_blocks requires a scene after scene 1 with positive visual context.",
+            );
+        }
+        return Object.freeze([]);
+    }
+    if (Object.hasOwn(shot, "visual_context_blocks")) {
+        const legacyFields = [
+            "visual_context_source", "visual_context_start_frame",
+            "visual_context_lead_source", "visual_context_lead_frames",
+            "visual_context_lead_start_frame",
+        ].filter((field) => Object.hasOwn(shot, field));
+        if (legacyFields.length) {
+            throw new Error(
+                `visual_context_blocks cannot be combined with legacy fields: ${legacyFields.join(", ")}.`,
+            );
+        }
+        if (!Array.isArray(shot.visual_context_blocks)
+                || !shot.visual_context_blocks.length) {
+            throw new Error(
+                "visual_context_blocks must contain at least one ordered block.",
+            );
+        }
+        const blocks = [];
+        let consumed = 0;
+        for (let offset = 0; offset < shot.visual_context_blocks.length;
+            offset += 1) {
+            const raw = shot.visual_context_blocks[offset];
+            if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+                throw new Error(
+                    `Visual context block ${offset + 1} must be an object.`,
+                );
+            }
+            const frames = Number(raw.frames);
+            if (!Number.isInteger(frames) || frames < 1) {
+                throw new Error(
+                    `Visual context block ${offset + 1} frames must be a positive integer.`,
+                );
+            }
+            const source = resolvePriorSceneSource(
+                plan, target, raw.source,
+                `Visual context block ${offset + 1} source`, true,
+            );
+            const startValue = raw.start_frame;
+            if (startValue !== undefined && startValue !== null
+                    && (!(Number.isInteger(Number(startValue)))
+                        || Number(startValue) < 0)) {
+                throw new Error(
+                    `Visual context block ${offset + 1} start_frame must be a non-negative integer.`,
+                );
+            }
+            consumed += frames;
+            if (consumed < total
+                    && h3NativeFrameBoundaryStep(consumed) === null) {
+                throw new Error(
+                    `Visual context block ${offset + 1} ends at frame ${consumed}, which is not an H3 latent boundary.`,
+                );
+            }
+            blocks.push(Object.freeze({
+                source,
+                sourceId:safeShotId(
+                    shots[source - 1]?.id,
+                    `clip_${String(source).padStart(4, "0")}`,
+                ),
+                frames,
+                startFrame:startValue === undefined || startValue === null
+                    || (typeof startValue === "string" && !startValue.trim())
+                    ? null : Number(startValue),
+            }));
+        }
+        if (consumed !== total) {
+            throw new Error(
+                `Visual context blocks total ${consumed} frames; this scene requires ${total}.`,
+            );
+        }
+        if (total !== 1 && h3NativeFrameBoundaryStep(total) === null) {
+            throw new Error(
+                `${total}-frame visual context does not end on H3's latent lattice.`,
+            );
+        }
+        return Object.freeze(blocks);
+    }
+
+    // Released one/two-block plans remain byte-for-byte unchanged on disk.
+    // Expose them as a list only to the new planner/runtime adapter.
+    const recentSource = sceneVisualContextSource(plan, target);
+    const leadSource = sceneVisualContextLeadSource(plan, target);
+    const leadFrames = leadSource === null
+        ? 0 : sceneVisualContextLeadFrames(shot, total);
+    const result = [];
+    if (leadSource !== null) result.push(Object.freeze({
+        source:leadSource,
+        sourceId:safeShotId(
+            shots[leadSource - 1]?.id,
+            `clip_${String(leadSource).padStart(4, "0")}`,
+        ),
+        frames:leadFrames,
+        startFrame:Object.hasOwn(shot, "visual_context_lead_start_frame")
+            ? Number(shot.visual_context_lead_start_frame) : null,
+    }));
+    result.push(Object.freeze({
+        source:recentSource,
+        sourceId:safeShotId(
+            shots[recentSource - 1]?.id,
+            `clip_${String(recentSource).padStart(4, "0")}`,
+        ),
+        frames:total - leadFrames,
+        startFrame:Object.hasOwn(shot, "visual_context_start_frame")
+            ? Number(shot.visual_context_start_frame) : null,
+    }));
+    return Object.freeze(result);
 }
 
 export function h3NativeFrameBoundaryStep(frame) {
@@ -1178,44 +1402,28 @@ export function calculatePlanTiming(plan, settings = {}) {
         } catch (error) {
             rowErrors.push(error.message);
         }
-        if (index === 1 && Object.hasOwn(
+        if (index === 1 && (Object.hasOwn(
             shot, "visual_context_start_frame",
-        )) {
+        ) || Object.hasOwn(shot, "visual_context_blocks"))) {
             rowErrors.push(
                 "Scene 1 cannot select a saved-scene context window.",
             );
         }
 
         let visualContextSource = index > 1 ? index - 1 : null;
-        try {
-            visualContextSource = sceneVisualContextSource(plan, index);
-        } catch (error) {
-            rowErrors.push(error.message);
-        }
-
         let visualContextLeadSource = null;
         let visualContextLeadFrames = 0;
+        let visualContextBlocks = [];
         try {
-            visualContextLeadSource = sceneVisualContextLeadSource(plan, index);
-            if (visualContextLeadSource !== null) {
-                visualContextLeadFrames = sceneVisualContextLeadFrames(
-                    shot, sceneContext,
-                );
-                if (!visualContextLeadFrames) {
-                    rowErrors.push(
-                        "Composed context lead source requires a phase-safe total/split combination.",
-                    );
-                }
-            } else if (Object.hasOwn(shot, "visual_context_lead_frames")) {
-                rowErrors.push(
-                    "Composed context lead frames require a lead source.",
-                );
-            } else if (Object.hasOwn(
-                shot, "visual_context_lead_start_frame",
-            )) {
-                rowErrors.push(
-                    "Composed context lead start frame requires a lead source.",
-                );
+            visualContextBlocks = sceneVisualContextBlocks(
+                plan, index, sceneContext,
+            );
+            if (visualContextBlocks.length) {
+                visualContextSource = visualContextBlocks.at(-1).source;
+            }
+            if (visualContextBlocks.length === 2) {
+                visualContextLeadSource = visualContextBlocks[0].source;
+                visualContextLeadFrames = visualContextBlocks[0].frames;
             }
         } catch (error) {
             rowErrors.push(error.message);
@@ -1240,12 +1448,11 @@ export function calculatePlanTiming(plan, settings = {}) {
             if (sceneBlendFrames > 0 && anchorMode !== "head") {
                 rowErrors.push("Video blending requires head anchor mode.");
             }
-            if (sceneBlendFrames > 0 && (
-                (visualContextSource !== null
-                    && visualContextSource !== index - 1)
-                || visualContextLeadSource !== null
-                || Object.hasOwn(shot, "visual_context_start_frame")
-                || Object.hasOwn(shot, "visual_context_lead_start_frame")
+            if (index > 1 && sceneBlendFrames > 0 && (
+                visualContextBlocks.length !== 1
+                || visualContextBlocks.some((block) => (
+                    block.source !== index - 1 || block.startFrame !== null
+                ))
             )) {
                 rowErrors.push(
                     "Non-linear, composed, or windowed visual context requires 0 assembly blend frames; the timeline still cuts from the immediately previous scene.",
@@ -1464,6 +1671,7 @@ export function calculatePlanTiming(plan, settings = {}) {
             visualContextLeadFrames,
             visualContextStartFrame:null,
             visualContextLeadStartFrame:null,
+            visualContextBlocks,
             audioContextUnlocked,
             audioContextSource,
             audioContextSourceId: audioContextSource === null ? null
@@ -1507,43 +1715,41 @@ export function calculatePlanTiming(plan, settings = {}) {
 
     for (let offset = 1; offset < rows.length; offset += 1) {
         const target = rows[offset];
-        const source = target.visualContextSource === null ? null
-            : rows[target.visualContextSource - 1];
-        const recentFrames = target.contextLength
-            - target.visualContextLeadFrames;
-        if (source && source.deliveredFrames < recentFrames) {
-            target.errors.push(
-                `Selected second visual source scene ${source.index} delivers fewer than ${recentFrames} required context frames.`,
-            );
-        }
-        if (source) {
-            try {
-                target.visualContextStartFrame = sceneVisualContextStartFrame(
-                    plan.shots[offset], source.rawFrames,
-                    source.deliveredFrames, recentFrames, false,
-                    target.visualContextLeadFrames,
-                );
-            } catch (error) {
-                target.errors.push(error.message);
-            }
-        }
-        const lead = target.visualContextLeadSource === null ? null
-            : rows[target.visualContextLeadSource - 1];
-        if (lead && lead.deliveredFrames < target.visualContextLeadFrames) {
-            target.errors.push(
-                `Selected composed-context lead scene ${lead.index} delivers fewer than ${target.visualContextLeadFrames} required lead frames.`,
-            );
-        }
-        if (lead) {
-            try {
-                target.visualContextLeadStartFrame = sceneVisualContextStartFrame(
-                    plan.shots[offset], lead.rawFrames, lead.deliveredFrames,
-                    target.visualContextLeadFrames, true, 0,
-                );
-            } catch (error) {
-                target.errors.push(error.message);
-            }
-        }
+        let prefixFrames = 0;
+        target.visualContextBlocks = target.visualContextBlocks.map(
+            (block, blockOffset) => {
+                const source = rows[block.source - 1] ?? null;
+                let startFrame = block.startFrame;
+                if (!source) {
+                    target.errors.push(
+                        `Visual context block ${blockOffset + 1} has no source scene.`,
+                    );
+                } else if (source.deliveredFrames < block.frames) {
+                    target.errors.push(
+                        `Visual context block ${blockOffset + 1} source scene ${source.index} delivers fewer than ${block.frames} required frames.`,
+                    );
+                } else {
+                    try {
+                        startFrame = visualContextBlockStartValue(
+                            block.startFrame, source.rawFrames,
+                            source.deliveredFrames, block.frames,
+                            prefixFrames,
+                            `Visual context block ${blockOffset + 1}`,
+                        );
+                    } catch (error) {
+                        target.errors.push(error.message);
+                    }
+                }
+                const resolved = Object.freeze({...block, startFrame});
+                prefixFrames += block.frames;
+                return resolved;
+            },
+        );
+        const source = target.visualContextBlocks.at(-1) ?? null;
+        target.visualContextStartFrame = source?.startFrame ?? null;
+        const lead = target.visualContextBlocks.length === 2
+            ? target.visualContextBlocks[0] : null;
+        target.visualContextLeadStartFrame = lead?.startFrame ?? null;
         if (target.audioContextUnlocked) {
             const audioSource = target.audioContextSource === null ? null
                 : rows[target.audioContextSource - 1];
