@@ -111,9 +111,29 @@ for (const relative of [
 ]) {
     const source = fs.readFileSync(new URL(relative, import.meta.url), "utf8");
     assert.match(source, /import \* as promptCompanionSync/);
+    assert.match(source, /h3_prompt_companion_sync\.mjs\?v=0\.7\.1/);
     assert.match(source, /promptCompanionSync\.publishCompanionPrompt\?\./);
+    assert.match(source, /typeof promptCompanionSync\.planHasNonPromptChanges === "function"/);
     assert.match(source, /planHasNonPromptChanges\(state\.plan, livePlan\)/);
     assert.match(source, /loadPlan\(true\)/);
+}
+
+for (const relative of [
+    "../web/h3_chain_review_final.js",
+    "../web/h3_chain_checkpoint_manager.js",
+]) {
+    const source = fs.readFileSync(new URL(relative, import.meta.url), "utf8");
+    assert.match(source, /h3_prompt_companion_sync\.mjs\?v=0\.7\.1/,
+        "every companion publisher loads the same cache-busted helper revision");
+}
+
+for (const relative of [
+    "../web/h3_chain_scene_prompt_editor.js",
+    "../web/h3_chain_rich_scene_prompt_editor.js",
+]) {
+    const source = fs.readFileSync(new URL(relative, import.meta.url), "utf8");
+    assert.match(source, /typeof promptCompanionSync\.activeSceneIndexAfterRefresh === "function"/,
+        "prompt editors remain usable during a partial browser-cache update");
 }
 
 const reviewSource = fs.readFileSync(

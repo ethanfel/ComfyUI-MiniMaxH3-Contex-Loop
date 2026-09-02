@@ -40,17 +40,26 @@ import {
 } from "./h3_rich_prompt_editor_core.mjs?v=0.7.0";
 import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.7.0";
 import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.7.0";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.1";
 import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
 } from "./h3_project_asset_sync_core.mjs?v=0.7.0";
 
 const {
-    activeSceneIndexAfterRefresh,
-    planHasNonPromptChanges,
     publishCompanionScene,
     rebaseScenePrompt,
 } = promptCompanionSync;
+const activeSceneIndexAfterRefresh =
+    typeof promptCompanionSync.activeSceneIndexAfterRefresh === "function"
+        ? promptCompanionSync.activeSceneIndexAfterRefresh
+        : (_previousPlan, nextPlan, sceneIndex) => Math.min(
+            Math.max(0, Math.trunc(Number(sceneIndex) || 0)),
+            Math.max(0, (nextPlan?.shots?.length ?? 1) - 1),
+        );
+const planHasNonPromptChanges =
+    typeof promptCompanionSync.planHasNonPromptChanges === "function"
+        ? promptCompanionSync.planHasNonPromptChanges
+        : () => true;
 function publishCompanionPrompt(...args) {
     return promptCompanionSync.publishCompanionPrompt?.(...args) ?? 0;
 }

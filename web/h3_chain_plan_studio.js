@@ -110,13 +110,16 @@ import {
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
 } from "./h3_chain_plan_studio_core.mjs?v=0.7.0";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.1";
 
 const {
     connectedPromptEditors,
-    planHasNonPromptChanges,
     publishCompanionScene,
 } = promptCompanionSync;
+const planHasNonPromptChanges =
+    typeof promptCompanionSync.planHasNonPromptChanges === "function"
+        ? promptCompanionSync.planHasNonPromptChanges
+        : () => true;
 function publishCompanionPrompt(...args) {
     return promptCompanionSync.publishCompanionPrompt?.(...args) ?? 0;
 }

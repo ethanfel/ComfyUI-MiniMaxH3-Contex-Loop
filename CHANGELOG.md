@@ -8,7 +8,8 @@ Newest first. This file keeps release history out of the onboarding README.
   prompt-editor companions on stale scene metadata. Selecting a 10x candidate
   now refreshes the complete Plan—including seed, length, steps, context, and
   scene order—while prompt-only edits retain their selection- and undo-safe
-  fast path.
+  fast path. The shared companion module now has an explicit cache revision,
+  with safe fallbacks for partially refreshed browser sessions.
 
 - Added the nightly **Picture Context Builder** to Plan Studio. Scene Context
   now owns picture/audio totals, boundary implementation, and spatial proxy;
