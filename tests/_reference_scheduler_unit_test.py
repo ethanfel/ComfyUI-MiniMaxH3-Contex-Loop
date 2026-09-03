@@ -331,6 +331,76 @@ assert chain._reference_entry_contract({
     "content_hash": "video", "timeline_mode": "sequential",
 })["timeline_mode"] == "sequential"
 
+lazy_restart_descriptor = {
+    "version": chain.LAZY_MOTION_SOURCE_VERSION,
+    "kind": "lazy_motion_path",
+    "path": "/virtual/reference.mp4",
+    "frame_count": 73,
+}
+lazy_restart_calls = []
+original_decode_lazy_video = chain._decode_lazy_motion_video
+original_decode_lazy_audio = chain._decode_lazy_motion_audio
+try:
+    chain._decode_lazy_motion_video = (
+        lambda descriptor, start, end:
+        lazy_restart_calls.append(("video", descriptor, start, end)) or
+        "full-reference-video")
+    chain._decode_lazy_motion_audio = (
+        lambda descriptor, start, end:
+        lazy_restart_calls.append(("audio", descriptor, start, end)) or
+        "full-reference-audio")
+    lazy_restart_video, lazy_restart_audio, lazy_restart_detail = (
+        chain._scheduled_video_reference_slice({
+            "tag": "walk",
+            "value": lazy_restart_descriptor,
+            "audio": lazy_restart_descriptor,
+            "timeline_mode": "restart_each_scene",
+        }, None, 1, 1, 243))
+    assert lazy_restart_video == "full-reference-video"
+    assert lazy_restart_audio == "full-reference-audio"
+    assert [(kind, start, end) for kind, _descriptor, start, end
+            in lazy_restart_calls] == [
+                ("video", 0, 73), ("audio", 0, 73)]
+    assert lazy_restart_detail == "@walk lazy restart frames 0:73"
+finally:
+    chain._decode_lazy_motion_video = original_decode_lazy_video
+    chain._decode_lazy_motion_audio = original_decode_lazy_audio
+
+source_restart_timeline = {"extent": {"frame_count": 91}}
+source_restart_calls = []
+original_is_source_timeline = chain._is_source_timeline
+original_source_timeline_video = chain._source_timeline_scene_video
+original_source_timeline_audio = chain._source_timeline_scene_audio
+try:
+    chain._is_source_timeline = (
+        lambda value: value is source_restart_timeline)
+    chain._source_timeline_scene_video = (
+        lambda timeline, start, end:
+        source_restart_calls.append(("video", timeline, start, end)) or
+        "full-source-video")
+    chain._source_timeline_scene_audio = (
+        lambda timeline, start, end:
+        source_restart_calls.append(("audio", timeline, start, end)) or
+        "full-source-audio")
+    source_restart_video, source_restart_audio, source_restart_detail = (
+        chain._scheduled_video_reference_slice({
+            "tag": "performance",
+            "value": source_restart_timeline,
+            "audio": source_restart_timeline,
+            "timeline_mode": "restart_each_scene",
+        }, None, 1, 1, 243))
+    assert source_restart_video == "full-source-video"
+    assert source_restart_audio == "full-source-audio"
+    assert [(kind, start, end) for kind, _timeline, start, end
+            in source_restart_calls] == [
+                ("video", 0, 91), ("audio", 0, 91)]
+    assert source_restart_detail == (
+        "@performance Source Timeline restart frames 0:91")
+finally:
+    chain._is_source_timeline = original_is_source_timeline
+    chain._source_timeline_scene_video = original_source_timeline_video
+    chain._source_timeline_scene_audio = original_source_timeline_audio
+
 sequential_video = chain.torch.arange(
     700, dtype=chain.torch.float32).reshape(700, 1, 1, 1).expand(-1, 2, 2, 3)
 sequential_audio = {
