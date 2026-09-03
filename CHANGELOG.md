@@ -4,6 +4,15 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Fixed Project Asset Carousel refresh hydration on the published main line:
+  saved assets render immediately from the workflow catalog while the disk
+  catalog refreshes in the background, instead of flashing or remaining
+  empty after a workflow/browser reload.
+- Fixed path-backed video and motion references in `restart_each_scene` mode
+  being cropped or padded to the generated scene length. They now retain
+  their own complete 24 fps reference duration; only `sequential` references
+  use scene-sized timeline windows.
+
 - Corrected the user-visible **Contex Loop** typo to **Context Loop** across
   node titles, Add Node categories, settings, documentation, branding, and
   bundled workflow titles. Serialized node IDs, settings keys, and the public

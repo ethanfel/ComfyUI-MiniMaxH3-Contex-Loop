@@ -2923,7 +2923,8 @@ def _scheduled_video_reference_slice(
     audio = entry.get("audio")
     if timeline_mode == "restart_each_scene":
         if _is_source_timeline(video):
-            source_start, source_end = 0, int(length)
+            source_start = 0
+            source_end = int(video["extent"]["frame_count"])
             decoded_video = _source_timeline_scene_video(
                 video, source_start, source_end)
             decoded_audio = (
@@ -2934,7 +2935,12 @@ def _scheduled_video_reference_slice(
                 "@%s Source Timeline restart frames %d:%d" %
                 (entry.get("tag", "video"), source_start, source_end))
         if _is_lazy_motion_descriptor(video):
-            source_start, source_end = 0, int(length)
+            source_start = 0
+            source_end = int(video.get("frame_count", 0))
+            if source_end < 1:
+                raise ValueError(
+                    "Scheduled video @%s has no usable reference frames." %
+                    entry.get("tag", "video"))
             decoded_video = _decode_lazy_motion_video(
                 video, source_start, source_end)
             decoded_audio = _decode_lazy_motion_audio(

@@ -8,7 +8,8 @@ import {
 } from "./h3_project_asset_editor_core.mjs?v=0.5.68";
 import {
     publishProjectAssetCatalogChanged,
-} from "./h3_project_asset_sync_core.mjs?v=0.5.68";
+    serializedProjectAssetCatalog,
+} from "./h3_project_asset_sync_core.mjs?v=0.5.69";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -364,8 +365,11 @@ function mount(node) {
     dom.serialize = false;
     node.setSize?.([Math.max(node.size?.[0] ?? 680, 760), Math.max(node.size?.[1] ?? 650, 700)]);
 
+    const savedCatalog = serializedProjectAssetCatalog(
+        catalogWidget?.value, runNameInput.value,
+    );
     const state = {
-        catalog: {assets: [], reference_slots: [], folders: []}, selected: "",
+        catalog:savedCatalog ?? {assets: [], reference_slots: [], folders: []}, selected: "",
         filter: "all", folder: "", media: null, bindingSlot: null,
         dragging: "", uploading: false,
         expandedFolders: new Set(Array.isArray(
@@ -1633,6 +1637,28 @@ function mount(node) {
         const selected = allItems().find((asset) => asset.id === state.selected);
         renderPreview(selected); renderEditor(selected);
     }
+    function hydrateSerializedCatalog() {
+        const catalog = serializedProjectAssetCatalog(
+            catalogWidget?.value, project(),
+        );
+        if (!catalog) return false;
+        const currentSignature = `${String(state.catalog?.project ?? "")}\u0000${String(
+            state.catalog?.revision ?? "",
+        )}`;
+        const cachedSignature = `${String(catalog.project ?? "")}\u0000${String(
+            catalog.revision ?? "",
+        )}`;
+        if (currentSignature === cachedSignature
+                && (state.catalog?.assets?.length ?? 0) === catalog.assets.length
+                && (state.catalog?.reference_slots?.length ?? 0) ===
+                    catalog.reference_slots.length) return false;
+        state.catalog = catalog;
+        render();
+        setStatus(
+            `${catalog.assets.length} cached project assets · checking for changes…`,
+        );
+        return true;
+    }
     async function refresh() {
         const requestedProject = project();
         const sequence = ++refreshSequence;
@@ -1876,9 +1902,11 @@ function mount(node) {
         return result;
     };
     node._h3ProjectAssetRefresh = () => {
+        hydrateSerializedCatalog();
         if (!adoptConnectedRunName()) void refresh();
         scheduleGraphRunNameSync();
     };
+    if (savedCatalog) render();
     node._h3ProjectAssetRefresh();
 }
 

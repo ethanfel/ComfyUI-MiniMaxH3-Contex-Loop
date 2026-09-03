@@ -154,5 +154,8 @@ assert.match(source, /h3pa-action-primary/);
 assert.match(source, /h3pa-action-manage/);
 assert.match(source, /publishProjectAssetCatalogChanged/);
 assert.match(source, /publishProjectAssetCatalogChanged\(node, state\.catalog\)/);
+assert.match(source, /serializedProjectAssetCatalog/);
+assert.match(source, /hydrateSerializedCatalog/);
+assert.match(source, /cached project assets/);
 
 console.log("H3 Project Asset Carousel: metadata slots, binding, sources, lazy media, editing, and cleanup pass");
