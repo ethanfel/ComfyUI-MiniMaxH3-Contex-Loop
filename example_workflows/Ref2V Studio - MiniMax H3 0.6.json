@@ -2,7 +2,7 @@
   "id": "158840d8-7fc5-5e78-8fd8-64c8b310f7cd",
   "revision": 0,
   "last_node_id": 42,
-  "last_link_id": 65,
+  "last_link_id": 66,
   "nodes": [
     {
       "id": 1,
@@ -285,7 +285,7 @@
         {
           "name": "plan",
           "type": "H3_CHAIN_PLAN",
-          "link": null
+          "link": 66
         },
         {
           "name": "source_audio",
@@ -1758,7 +1758,7 @@
       "id": 36,
       "type": "MiniMaxH3ChainPlanStudio",
       "pos": [
-        804.0,
+        -564.0,
         2196.0
       ],
       "size": [
@@ -1795,7 +1795,8 @@
           "links": [
             50,
             58,
-            64
+            64,
+            66
           ]
         },
         {
@@ -1856,8 +1857,8 @@
       "id": 37,
       "type": "MiniMaxH3ChainRichScenePromptEditor",
       "pos": [
-        2532.0,
-        2196.0
+        -1640.0,
+        3424.0
       ],
       "size": [
         1088,
@@ -1892,7 +1893,7 @@
       "id": 38,
       "type": "MiniMaxH3ChainPlanModern",
       "pos": [
-        -364.0,
+        -1732.0,
         2196.0
       ],
       "size": [
@@ -1975,7 +1976,7 @@
       "id": 39,
       "type": "MiniMaxH3GenerationProfile",
       "pos": [
-        -892.0,
+        -2260.0,
         2196.0
       ],
       "size": [
@@ -2013,8 +2014,8 @@
       "id": 40,
       "type": "MiniMaxH3ProjectAssetManager",
       "pos": [
-        -2260.0,
-        2196.0
+        -3008.0,
+        3424.0
       ],
       "size": [
         1240,
@@ -2073,8 +2074,8 @@
       "id": 41,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
-        3748.0,
-        2196.0
+        -424.0,
+        3424.0
       ],
       "size": [
         1320,
@@ -2653,6 +2654,14 @@
       16,
       3,
       "H3_TAGGED_REFERENCES"
+    ],
+    [
+      66,
+      36,
+      0,
+      9,
+      0,
+      "H3_CHAIN_PLAN"
     ]
   ],
   "groups": [
@@ -2675,8 +2684,8 @@
       "bounding": [
         -3072.0,
         2100.0,
-        8204.0,
-        1472.0
+        4172.0,
+        2700.0
       ],
       "color": "#3f789e",
       "font_size": 24,

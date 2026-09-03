@@ -2,7 +2,7 @@
   "id": "df2e36ac-eeeb-585c-b160-1815771ebbe9",
   "revision": 0,
   "last_node_id": 44,
-  "last_link_id": 69,
+  "last_link_id": 71,
   "nodes": [
     {
       "id": 1,
@@ -284,7 +284,7 @@
         {
           "name": "plan",
           "type": "H3_CHAIN_PLAN",
-          "link": null
+          "link": 70
         },
         {
           "name": "source_audio",
@@ -1751,7 +1751,7 @@
       "id": 36,
       "type": "MiniMaxH3ChainPlanStudio",
       "pos": [
-        804.0,
+        -564.0,
         2196.0
       ],
       "size": [
@@ -1788,7 +1788,9 @@
           "links": [
             50,
             58,
-            68
+            68,
+            70,
+            71
           ]
         },
         {
@@ -1849,8 +1851,8 @@
       "id": 37,
       "type": "MiniMaxH3ChainRichScenePromptEditor",
       "pos": [
-        2532.0,
-        2196.0
+        -1640.0,
+        3424.0
       ],
       "size": [
         1088,
@@ -1884,7 +1886,7 @@
       "id": 38,
       "type": "MiniMaxH3ChainPlanModern",
       "pos": [
-        -364.0,
+        -1732.0,
         2196.0
       ],
       "size": [
@@ -2066,7 +2068,7 @@
         {
           "name": "plan",
           "type": "H3_CHAIN_PLAN",
-          "link": null
+          "link": 71
         },
         {
           "name": "source_video",
@@ -2116,7 +2118,7 @@
       "id": 41,
       "type": "MiniMaxH3GenerationProfile",
       "pos": [
-        -892.0,
+        -2260.0,
         2196.0
       ],
       "size": [
@@ -2154,8 +2156,8 @@
       "id": 42,
       "type": "MiniMaxH3ProjectAssetManager",
       "pos": [
-        -2260.0,
-        2196.0
+        -3008.0,
+        3424.0
       ],
       "size": [
         1240,
@@ -2214,8 +2216,8 @@
       "id": 43,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
-        3748.0,
-        2196.0
+        -424.0,
+        3424.0
       ],
       "size": [
         1320,
@@ -2826,6 +2828,22 @@
       16,
       3,
       "H3_TAGGED_REFERENCES"
+    ],
+    [
+      70,
+      36,
+      0,
+      9,
+      0,
+      "H3_CHAIN_PLAN"
+    ],
+    [
+      71,
+      36,
+      0,
+      40,
+      0,
+      "H3_CHAIN_PLAN"
     ]
   ],
   "groups": [
@@ -2848,8 +2866,8 @@
       "bounding": [
         -3072.0,
         2100.0,
-        8204.0,
-        1472.0
+        4172.0,
+        2700.0
       ],
       "color": "#3f789e",
       "font_size": 24,

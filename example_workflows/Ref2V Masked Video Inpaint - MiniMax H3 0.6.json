@@ -1495,8 +1495,8 @@
       "id": 31,
       "type": "MiniMaxH3ChainRichScenePromptEditor",
       "pos": [
-        2532.0,
-        3232.0
+        -1640.0,
+        4460.0
       ],
       "size": [
         1088,
@@ -1530,7 +1530,7 @@
       "id": 32,
       "type": "MiniMaxH3ChainPlanModern",
       "pos": [
-        -364.0,
+        -1732.0,
         3232.0
       ],
       "size": [
@@ -1613,7 +1613,7 @@
       "id": 33,
       "type": "MiniMaxH3ChainPlanStudio",
       "pos": [
-        804.0,
+        -564.0,
         3232.0
       ],
       "size": [
@@ -2444,7 +2444,7 @@
       "id": 48,
       "type": "MiniMaxH3GenerationProfile",
       "pos": [
-        -892.0,
+        -2260.0,
         3232.0
       ],
       "size": [
@@ -2482,8 +2482,8 @@
       "id": 49,
       "type": "MiniMaxH3ProjectAssetManager",
       "pos": [
-        -2260.0,
-        3232.0
+        -3008.0,
+        4460.0
       ],
       "size": [
         1240,
@@ -2541,8 +2541,8 @@
       "id": 50,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
-        3748.0,
-        3232.0
+        -424.0,
+        4460.0
       ],
       "size": [
         1320,
@@ -3255,8 +3255,8 @@
       "bounding": [
         -3072.0,
         3136.0,
-        8204.0,
-        1472.0
+        4172.0,
+        2700.0
       ],
       "color": "#3f789e",
       "font_size": 24,

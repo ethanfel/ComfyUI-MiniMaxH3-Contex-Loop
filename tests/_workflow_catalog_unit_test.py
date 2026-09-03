@@ -141,7 +141,8 @@ def validate_layout(workflow: dict) -> None:
             assert not (ax < bx + bw and bx < ax + aw
                         and ay < by + bh and by < ay + ah), (first, second)
     assert {group["title"] for group in workflow["groups"]} <= {
-        "0.6 GENERATION RUNTIME", "0.6 AUTHORING + PROJECT"}
+        "0.6 GENERATION RUNTIME", "0.6 AUTHORING + PROJECT",
+        "0.6 RECOVERY"}
     for group in workflow["groups"]:
         gx, gy, gw, gh = map(float, group["bounding"])
         members = [item for item in rectangles
@@ -220,12 +221,19 @@ def validate_studio(workflow: dict, path: Path) -> None:
     carousel = one(workflow, "MiniMaxH3ProjectAssetManager")
     manager = one(workflow, "MiniMaxH3ChainCheckpointManager")
     plan = one(workflow, "MiniMaxH3ChainPlanModern")
+    loop_start = one(workflow, "MiniMaxH3ChainLoopStart")
     assert origin(workflow, plan, "project_assets") == carousel
     assert origin(workflow, studio, "project_assets") == carousel
     assert origin(workflow, studio, "tagged_references") == carousel
     assert origin(workflow, manager, "plan") == studio
+    assert origin(workflow, loop_start, "plan") == studio
+    for external in nodes(workflow, "MiniMaxH3ChainExternalVideo"):
+        assert origin(workflow, external, "plan") == studio
     assert manager["size"][0] >= 1200 and manager["size"][1] >= 900
     assert carousel["size"][0] >= 760 and carousel["size"][1] >= 700
+    author_group = next(group for group in workflow["groups"]
+                        if group["title"] == "0.6 AUTHORING + PROJECT")
+    assert float(author_group["bounding"][2]) <= 4300
     assert not nodes(workflow, "MiniMaxH3ChainRunManager")
     if path.name.startswith("Ref2V Studio"):
         assert not nodes(workflow, "MiniMaxH3TaggedPictureReference")

@@ -52,6 +52,16 @@ def main() -> None:
             for value in node.get("inputs", []):
                 assert value["name"] in valid_inputs, (
                     path.name, node["type"], value["name"])
+                required = schema.get("required", {}).get(value["name"])
+                if required is not None and value.get("link") is None:
+                    options = (required[1] if len(required) > 1
+                               and isinstance(required[1], dict) else {})
+                    socket_type = required[0]
+                    is_connection = (options.get("forceInput")
+                                     or isinstance(socket_type, str))
+                    assert not is_connection, (
+                        path.name, node["id"], node["type"],
+                        value["name"], "required input is disconnected")
             expected_outputs = list(getattr(node_class, "RETURN_NAMES", ()))
             if expected_outputs:
                 actual_outputs = [value["name"]

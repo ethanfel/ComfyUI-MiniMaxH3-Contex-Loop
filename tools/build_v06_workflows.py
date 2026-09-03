@@ -662,6 +662,20 @@ def _studio_nodes(workflow: dict[str, Any], name: str) -> None:
                   "H3_PROJECT_ASSETS")
     graph.connect(studio, "plan", checkpoint, "plan", "H3_CHAIN_PLAN")
 
+    plan_consumers = {
+        "MiniMaxH3ChainLoopStart", "MiniMaxH3ChainExternalVideo",
+    }
+    for consumer in workflow["nodes"]:
+        if consumer.get("type") not in plan_consumers:
+            continue
+        plan_input = _input(consumer, "plan")
+        plan_origin = None
+        if plan_input and plan_input.get("link") is not None:
+            plan_origin = graph.links[int(plan_input["link"])][1]
+        if plan_origin != studio["id"]:
+            graph.connect(
+                studio, "plan", consumer, "plan", "H3_CHAIN_PLAN")
+
     wrappers = [node for node in workflow["nodes"]
                 if node.get("type") == "MiniMaxH3TaggedReferenceToVideo"]
     for wrapper in wrappers:
@@ -824,11 +838,39 @@ def _layout(workflow: dict[str, Any]) -> None:
         "MiniMaxH3ChainCheckpointManager": 6,
     }
     x = min((float(node["pos"][0]) for node in runtime), default=0)
-    for node in sorted(author, key=lambda value: (order.get(value["type"], 9),
-                                                   value["id"])):
-        width, height = map(float, node["size"][:2])
-        node["pos"] = [x, bottom]
-        x += width + 128
+    if any(node["type"] == "MiniMaxH3ChainPlanStudio" for node in author):
+        # Studio contains several full-size interactive surfaces.  A single
+        # horizontal strip becomes an 8k-wide scavenger hunt, so present it as
+        # a compact two-row dashboard: setup/plan/timeline above, then assets,
+        # prompt editing, and checkpoint review below.
+        top_types = {
+            "Note", "MiniMaxH3GenerationProfile",
+            "MiniMaxH3ChainPlanModern", "MiniMaxH3ChainPlanStudio",
+        }
+        top = sorted(
+            (node for node in author if node["type"] in top_types),
+            key=lambda value: (order.get(value["type"], 9), value["id"]),
+        )
+        lower = sorted(
+            (node for node in author if node["type"] not in top_types),
+            key=lambda value: (order.get(value["type"], 9), value["id"]),
+        )
+        row_x = x
+        for node in top:
+            node["pos"] = [row_x, bottom]
+            row_x += float(node["size"][0]) + 128
+        lower_y = bottom + max(
+            (float(node["size"][1]) for node in top), default=0) + 128
+        row_x = x
+        for node in lower:
+            node["pos"] = [row_x, lower_y]
+            row_x += float(node["size"][0]) + 128
+    else:
+        for node in sorted(author, key=lambda value: (
+                order.get(value["type"], 9), value["id"])):
+            width, _height = map(float, node["size"][:2])
+            node["pos"] = [x, bottom]
+            x += width + 128
     workflow["groups"] = []
     if runtime:
         workflow["groups"].append(_group(1, "0.6 GENERATION RUNTIME",
