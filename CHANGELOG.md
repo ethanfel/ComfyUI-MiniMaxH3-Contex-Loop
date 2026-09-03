@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed path-backed video and motion references in `restart_each_scene` mode
+  being cropped or padded to the generated scene length. They now retain
+  their own complete 24 fps reference duration; only `sequential` references
+  use scene-sized timeline windows.
+
 - Extended **Export PNG Sequence** into an independent picture/audio exporter.
   Its video and audio VAE sockets are now both optional: connect either one for
   PNG-only or WAV-only output, or both for a continuous PNG sequence plus a
