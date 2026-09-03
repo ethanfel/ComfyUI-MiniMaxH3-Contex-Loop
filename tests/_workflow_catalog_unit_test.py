@@ -134,6 +134,12 @@ def validate_layout(workflow: dict) -> None:
         width, height = map(float, node["size"][:2])
         assert width > 0 and height > 0
         rectangles.append((node["id"], node["type"], x, y, width, height))
+    left = min(item[2] for item in rectangles)
+    top = min(item[3] for item in rectangles)
+    right = max(item[2] + item[4] for item in rectangles)
+    bottom = max(item[3] + item[5] for item in rectangles)
+    assert right - left <= 10000, "workflow layout is excessively wide"
+    assert bottom - top <= 4600, "workflow layout is excessively tall"
     for index, first in enumerate(rectangles):
         _, _, ax, ay, aw, ah = first
         for second in rectangles[index + 1:]:
@@ -150,6 +156,13 @@ def validate_layout(workflow: dict) -> None:
                    and item[2] + item[4] <= gx + gw
                    and item[3] + item[5] <= gy + gh]
         assert members, group["title"]
+    groups = {group["title"]: group for group in workflow["groups"]}
+    if {"0.6 AUTHORING + PROJECT", "0.6 GENERATION RUNTIME"} <= groups.keys():
+        author_x, _, author_width, _ = map(
+            float, groups["0.6 AUTHORING + PROJECT"]["bounding"])
+        runtime_x = float(groups["0.6 GENERATION RUNTIME"]["bounding"][0])
+        assert author_x + author_width <= runtime_x, (
+            "authoring must sit directly before the generation runtime")
 
 
 def validate_clean_metadata(workflow: dict) -> None:

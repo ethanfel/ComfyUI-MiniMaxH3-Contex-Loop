@@ -717,15 +717,27 @@ def _studio_nodes(workflow: dict[str, Any], name: str) -> None:
         source_step = (
             f"{next_step}. Import one audio file and assign Source track.\n")
         next_step += 1
-    note = graph.add_node(_node(
-        "Note", "0.6 STUDIO QUICK START", [0, 0], [620, 330], [], [], [
-            "0.6 Studio quick start\n\n"
-            f"1. Open the Project Asset Carousel.\n"
-            + asset_steps + source_step
-            + f"{next_step}. Edit scenes in Production Plan or Plan Studio.\n"
-            + f"{next_step + 1}. Queue; inspect, branch, trim, or restore in "
-              "Checkpoint Manager."
-        ]))
+    quick_start = (
+        "0.6 Studio quick start\n\n"
+        f"1. Open the Project Asset Carousel.\n"
+        + asset_steps + source_step
+        + f"{next_step}. Edit scenes in Production Plan or Plan Studio.\n"
+        + f"{next_step + 1}. Queue; inspect, branch, trim, or restore in "
+          "Checkpoint Manager.")
+    note = next((
+        node for node in workflow["nodes"]
+        if node.get("type") == "Note"
+        and "0.6" in str(node.get("title") or "").upper()
+        and "QUICK START" in str(node.get("title") or "").upper()
+    ), None)
+    if note is None:
+        note = graph.add_node(_node(
+            "Note", "0.6 STUDIO QUICK START", [0, 0], [620, 330], [], [], [
+                quick_start]))
+    else:
+        note["title"] = "0.6 STUDIO QUICK START"
+        note["size"] = [620, 330]
+        note["widgets_values"] = [quick_start]
     note["color"] = "#20354a"
     note["bgcolor"] = "#10202f"
 
@@ -810,67 +822,362 @@ AUTHOR_TYPES = {
 }
 
 
-def _layout(workflow: dict[str, Any]) -> None:
-    author = [node for node in workflow["nodes"]
-              if node["type"] in AUTHOR_TYPES
-              or node.get("title") == "0.6 STUDIO QUICK START"]
-    runtime = [node for node in workflow["nodes"] if node not in author]
-    # Make all inherited runtime rectangles collision-free while retaining the
-    # recognizable left-to-right graph.  Authoring interfaces receive their
-    # own row below the runtime graph.
+SIZE_OVERRIDES = {
+    # These nodes inherit canvas sizes from old executions. Native previews
+    # expanded several of them to more than 1,300 px even though their current
+    # controls need only a compact panel in a clean release workflow.
+    "SamplerCustomAdvanced": (420, 360),
+    "MiniMaxH3ChainCurrent": (520, 420),
+    "MiniMaxH3ChainContext": (440, 340),
+    "MiniMaxH3LoopTrim": (440, 260),
+    "MiniMaxH3ChainSegmentSave": (500, 340),
+    "MiniMaxH3ChainReview": (760, 900),
+    "MiniMaxH3ChainLoopEnd": (440, 340),
+    "MiniMaxH3ChainAssemble": (560, 400),
+    "MiniMaxH3ChainManifestLoad": (440, 240),
+    "MiniMaxH3ChainPreflight": (440, 300),
+}
+
+
+RUNTIME_STAGE_HINTS = {
+    # Models and source media.
+    "UNETLoader": 0, "CLIPLoader": 0, "VAELoader": 0,
+    "LoadImage": 0, "LoadImageMask": 0, "LoadVideo": 0,
+    "VHS_LoadVideo": 0,
+    "SeedVR2LoadDiTModel": 0, "SeedVR2LoadVAEModel": 0,
+    # Chain entry and source selection.
+    "MiniMaxH3ChainLoopStart": 1,
+    "ModelAttentionBackend": 1,
+    "MiniMaxH3SigmaShift": 1,
+    "MiniMaxH3ChainPreflight": 1,
+    "MiniMaxH3ChainFrameIndexSwitch": 1,
+    "MiniMaxH3ChainFirstSceneImage": 1,
+    "MiniMaxH3TaggedPictureReference": 1,
+    "MiniMaxH3TaggedVideoReference": 1,
+    "MiniMaxH3ReferenceVideoPrepare": 1,
+    "MiniMaxH3ContexLoopSourceAVTarget": 1,
+    "MiniMaxH3PatchPriority": 1,
+    "MiniMaxH3ChainUpscaleAdapter": 1,
+    # Scene-local conditioning.
+    "MiniMaxH3ChainCurrent": 2,
+    "MiniMaxH3ChainExternalVideo": 2,
+    "MiniMaxH3ImageToVideo": 2,
+    "MiniMaxH3ReferenceToVideo": 2,
+    "MiniMaxH3TaggedReferenceToVideo": 2,
+    "MiniMaxH3ContexLoopMaskSlice": 2,
+    "MiniMaxH3ContexMaskedTarget": 2,
+    "MiniMaxH3ContexMaskGridPreview": 2,
+    "H3V2VInit": 2,
+    "MiniMaxH3ChainRecoveredAV": 2,
+    "MiniMaxH3ChainUpscaleCurrent": 2,
+    # Sampler preparation.
+    "MiniMaxH3ChainContext": 3,
+    "BasicGuider": 3, "RandomNoise": 3, "KSamplerSelect": 3,
+    "BasicScheduler": 3, "H3InjectSchedule": 3,
+    "H3ConditioningSyncFromLatents": 3,
+    "MiniMaxH3ContexMaskedAVBridge": 3, "DisableNoise": 3,
+    "MiniMaxH3ChainUpscaleReferenceConditioning": 3,
+    "MiniMaxH3UpscaleReferencePromptOverride": 3,
+    # Sampling, decode, and learned processing.
+    "SamplerCustomAdvanced": 4, "VAEDecode": 4,
+    "VAEDecodeAudio": 4, "VAEEncode": 4, "VAEEncodeAudio": 4,
+    "H3AudioRecover": 4, "H3AudioSmear": 4, "H3ExactRecover": 4,
+    "H3JerkOracle": 4, "H3TimeSmear": 4,
+    "MiniMaxH3ChainDeropeContinuity": 4,
+    "MiniMaxH3ChainDeropeFreezeMask": 4,
+    "MiniMaxH3ChainDeropeGuard": 4,
+    "MiniMaxH3ChainPass2Prepare": 4,
+    "MiniMaxH3ChainLatentVideoAdapter": 4,
+    "MinimaxH3LatentUpscaler3D": 4,
+    "SeedVR2DirectVideoUpscaler": 4,
+    "ImageBatchExtendWithOverlap": 4,
+    # Persist, review, and finish.
+    "MiniMaxH3LoopTrim": 5,
+    "MiniMaxH3ChainSegmentSave": 5,
+    "MiniMaxH3ChainUpscaleSegmentSave": 5,
+    "AudioConcat": 5, "TrimAudioDuration": 5,
+    "MiniMaxH3ChainReview": 6,
+    "MiniMaxH3ChainLoopEnd": 6,
+    "MiniMaxH3ChainUpscaleLoopEnd": 6,
+    "MiniMaxH3ChainAssemble": 7,
+    "CreateVideo": 7, "SaveVideo": 7,
+    "PreviewAny": 7, "PreviewImage": 7,
+}
+
+
+def _runtime_stage(node: dict[str, Any], fallback: int) -> int:
+    if node["type"] == "MiniMaxH3ChainManifestLoad":
+        return 6 if int(node.get("mode", 0)) != 0 else 0
+    return RUNTIME_STAGE_HINTS.get(node["type"], fallback)
+
+
+def _is_author_node(node: dict[str, Any]) -> bool:
+    title = str(node.get("title") or "").upper()
+    return (node["type"] in AUTHOR_TYPES
+            or (node["type"] == "Note" and "0.6" in title
+                and "QUICK START" in title))
+
+
+def _normalize_release_node_sizes(nodes: list[dict[str, Any]]) -> None:
+    for node in nodes:
+        override = SIZE_OVERRIDES.get(node["type"])
+        if override is not None:
+            node["size"] = list(override)
+
+
+def _runtime_major_layers(
+        workflow: dict[str, Any], runtime: list[dict[str, Any]]) -> tuple[
+            list[list[dict[str, Any]]], dict[int, set[int]],
+            dict[int, set[int]]]:
+    runtime_by_id = {int(node["id"]): node for node in runtime}
+    successors = {node_id: set() for node_id in runtime_by_id}
+    predecessors = {node_id: set() for node_id in runtime_by_id}
+    for link in workflow["links"]:
+        source, target = int(link[1]), int(link[3])
+        if source not in runtime_by_id or target not in runtime_by_id:
+            continue
+        successors[source].add(target)
+        predecessors[target].add(source)
+
+    major_ids = {
+        node_id for node_id, node in runtime_by_id.items()
+        if node["type"] not in {"Note", "Reroute"}
+    }
+    contracted = {node_id: set() for node_id in major_ids}
+    for source in major_ids:
+        queue = list(successors[source])
+        visited = set()
+        while queue:
+            target = queue.pop(0)
+            if target in visited:
+                continue
+            visited.add(target)
+            if target in major_ids:
+                contracted[source].add(target)
+            elif runtime_by_id[target]["type"] == "Reroute":
+                queue.extend(successors[target])
+
+    indegree = {node_id: 0 for node_id in major_ids}
+    for targets in contracted.values():
+        for target in targets:
+            indegree[target] += 1
+    rank = {node_id: 0 for node_id in major_ids}
+    queue = sorted(
+        (node_id for node_id, count in indegree.items() if count == 0),
+        key=lambda node_id: (
+            float(runtime_by_id[node_id]["pos"][0]),
+            float(runtime_by_id[node_id]["pos"][1]), node_id),
+    )
+    visited = []
+    while queue:
+        source = queue.pop(0)
+        visited.append(source)
+        for target in sorted(contracted[source]):
+            rank[target] = max(rank[target], rank[source] + 1)
+            indegree[target] -= 1
+            if indegree[target] == 0:
+                queue.append(target)
+        queue.sort(key=lambda node_id: (
+            float(runtime_by_id[node_id]["pos"][0]),
+            float(runtime_by_id[node_id]["pos"][1]), node_id))
+
+    # Custom output loops can expose a cycle in an old graph. Keep those nodes
+    # deterministic and nearby instead of failing the release builder.
+    remaining = major_ids - set(visited)
+    if remaining:
+        ordered = sorted(remaining, key=lambda node_id: (
+            float(runtime_by_id[node_id]["pos"][0]),
+            float(runtime_by_id[node_id]["pos"][1]), node_id))
+        base = max(rank.values(), default=0) + 1
+        for offset, node_id in enumerate(ordered):
+            rank[node_id] = base + offset
+
+    max_rank = max(rank.values(), default=0)
+    column_count = min(8, max_rank + 1)
+    compressed_rank = {
+        node_id: (0 if max_rank == 0 else round(
+            rank[node_id] * (column_count - 1) / max_rank))
+        for node_id in major_ids
+    }
+    if not any(node["type"] == "MiniMaxH3ChainUpscaleAdapter"
+               for node in runtime_by_id.values()):
+        compressed_rank = {
+            node_id: _runtime_stage(
+                runtime_by_id[node_id], compressed_rank[node_id])
+            for node_id in major_ids
+        }
+        # Stage hints intentionally stack related controls in one column. If
+        # a workflow variant inserts an extra preparation node, promote only
+        # backward targets into their producer's column so links never run
+        # against the main left-to-right reading direction.
+        for _iteration in range(len(major_ids)):
+            changed = False
+            for source, targets in contracted.items():
+                for target in targets:
+                    if compressed_rank[target] < compressed_rank[source]:
+                        compressed_rank[target] = compressed_rank[source]
+                        changed = True
+            if not changed:
+                break
+    layers: dict[int, list[dict[str, Any]]] = {}
+    for node_id in major_ids:
+        layers.setdefault(compressed_rank[node_id], []).append(
+            runtime_by_id[node_id])
+    return ([sorted(values, key=lambda node: (
+                rank[int(node["id"])], float(node["pos"][1]),
+                float(node["pos"][0]), node["id"]))
+             for _rank, values in sorted(layers.items())],
+            successors, predecessors)
+
+
+def _nearest_major_ids(
+        start: int, adjacency: dict[int, set[int]],
+        runtime_by_id: dict[int, dict[str, Any]]) -> list[int]:
+    queue = list(adjacency.get(start, ()))
+    visited = set()
+    result = []
+    while queue:
+        node_id = queue.pop(0)
+        if node_id in visited:
+            continue
+        visited.add(node_id)
+        node = runtime_by_id[node_id]
+        if node["type"] not in {"Note", "Reroute"}:
+            result.append(node_id)
+        elif node["type"] == "Reroute":
+            queue.extend(adjacency.get(node_id, ()))
+    return result
+
+
+def _place_runtime(
+        workflow: dict[str, Any], runtime: list[dict[str, Any]],
+        start_x: float) -> None:
+    if not runtime:
+        return
+    layers, successors, predecessors = _runtime_major_layers(
+        workflow, runtime)
     placed: list[dict[str, Any]] = []
-    for node in sorted(runtime, key=lambda value: (
-            float(value["pos"][1]), float(value["pos"][0]), value["id"])):
-        node["pos"] = [round(float(node["pos"][0]) / 32) * 32,
-                       round(float(node["pos"][1]) / 32) * 32]
-        _nudge(node, placed)
-        placed.append(node)
-    bottom = max((float(node["pos"][1]) + float(node["size"][1])
-                  for node in runtime), default=0) + 320
+    x = start_x
+    core_bottom = 0.0
+    for layer in layers:
+        y = 0.0
+        width = max(float(node["size"][0]) for node in layer)
+        for node in layer:
+            node["pos"] = [round(x / 32) * 32, round(y / 32) * 32]
+            placed.append(node)
+            y += float(node["size"][1]) + 64
+        core_bottom = max(core_bottom, y - 64)
+        x += width + 160
+    core_right = max(
+        (float(node["pos"][0]) + float(node["size"][0])
+         for node in placed), default=start_x + 2400)
+
+    runtime_by_id = {int(node["id"]): node for node in runtime}
+    reroutes = [node for node in runtime if node["type"] == "Reroute"]
+    for reroute in sorted(reroutes, key=lambda node: node["id"]):
+        node_id = int(reroute["id"])
+        sources = _nearest_major_ids(
+            node_id, predecessors, runtime_by_id)
+        targets = _nearest_major_ids(
+            node_id, successors, runtime_by_id)
+        source_right = max((
+            float(runtime_by_id[value]["pos"][0])
+            + float(runtime_by_id[value]["size"][0])
+            for value in sources), default=start_x)
+        target_left = min((
+            float(runtime_by_id[value]["pos"][0])
+            for value in targets), default=source_right + 160)
+        center_x = ((source_right + target_left) / 2.0
+                    if target_left > source_right + 96
+                    else source_right + 64)
+        centers_y = [
+            float(runtime_by_id[value]["pos"][1])
+            + float(runtime_by_id[value]["size"][1]) / 2.0
+            for value in targets or sources
+        ]
+        center_y = sum(centers_y) / len(centers_y) if centers_y else 0.0
+        reroute["pos"] = [
+            round((center_x - float(reroute["size"][0]) / 2.0) / 32) * 32,
+            round((center_y - float(reroute["size"][1]) / 2.0) / 32) * 32,
+        ]
+        _nudge(reroute, placed)
+        placed.append(reroute)
+
+    core_bottom = max((
+        float(node["pos"][1]) + float(node["size"][1])
+        for node in placed), default=core_bottom)
+
+    notes = [node for node in runtime if node["type"] == "Note"]
+    if notes:
+        row_left = start_x
+        row_right = max(core_right, start_x + 3200)
+        note_x = row_left
+        note_y = core_bottom + 192
+        row_height = 0.0
+        for node in sorted(notes, key=lambda value: (
+                float(value["pos"][0]), float(value["pos"][1]), value["id"])):
+            width, height = map(float, node["size"][:2])
+            if note_x > row_left and note_x + width > row_right:
+                note_x = row_left
+                note_y += row_height + 96
+                row_height = 0.0
+            node["pos"] = [round(note_x / 32) * 32, round(note_y / 32) * 32]
+            note_x += width + 96
+            row_height = max(row_height, height)
+
+
+def _place_author(author: list[dict[str, Any]]) -> float:
+    if not author:
+        return 0.0
     order = {
         "Note": 0,
-        "MiniMaxH3ProjectAssetManager": 1,
-        "MiniMaxH3GenerationProfile": 2,
-        "MiniMaxH3ChainPlanModern": 3,
-        "MiniMaxH3ChainPlanStudio": 4,
+        "MiniMaxH3GenerationProfile": 1,
+        "MiniMaxH3ChainPlanModern": 2,
+        "MiniMaxH3ChainPlanStudio": 3,
+        "MiniMaxH3ProjectAssetManager": 4,
         "MiniMaxH3ChainScenePromptEditor": 5,
         "MiniMaxH3ChainRichScenePromptEditor": 5,
         "MiniMaxH3ChainCheckpointManager": 6,
     }
-    x = min((float(node["pos"][0]) for node in runtime), default=0)
-    if any(node["type"] == "MiniMaxH3ChainPlanStudio" for node in author):
-        # Studio contains several full-size interactive surfaces.  A single
-        # horizontal strip becomes an 8k-wide scavenger hunt, so present it as
-        # a compact two-row dashboard: setup/plan/timeline above, then assets,
-        # prompt editing, and checkpoint review below.
+    has_studio = any(
+        node["type"] == "MiniMaxH3ChainPlanStudio" for node in author)
+    if has_studio:
         top_types = {
             "Note", "MiniMaxH3GenerationProfile",
             "MiniMaxH3ChainPlanModern", "MiniMaxH3ChainPlanStudio",
         }
-        top = sorted(
-            (node for node in author if node["type"] in top_types),
-            key=lambda value: (order.get(value["type"], 9), value["id"]),
-        )
-        lower = sorted(
-            (node for node in author if node["type"] not in top_types),
-            key=lambda value: (order.get(value["type"], 9), value["id"]),
-        )
-        row_x = x
-        for node in top:
-            node["pos"] = [row_x, bottom]
-            row_x += float(node["size"][0]) + 128
-        lower_y = bottom + max(
-            (float(node["size"][1]) for node in top), default=0) + 128
-        row_x = x
-        for node in lower:
-            node["pos"] = [row_x, lower_y]
-            row_x += float(node["size"][0]) + 128
+        rows = [
+            sorted((node for node in author if node["type"] in top_types),
+                   key=lambda node: (order.get(node["type"], 9), node["id"])),
+            sorted((node for node in author if node["type"] not in top_types),
+                   key=lambda node: (order.get(node["type"], 9), node["id"])),
+        ]
     else:
-        for node in sorted(author, key=lambda value: (
-                order.get(value["type"], 9), value["id"])):
-            width, _height = map(float, node["size"][:2])
-            node["pos"] = [x, bottom]
-            x += width + 128
+        rows = [sorted(author, key=lambda node: (
+            order.get(node["type"], 9), node["id"]))]
+    y = 0.0
+    right = 0.0
+    for row in rows:
+        x = 0.0
+        row_height = 0.0
+        for node in row:
+            node["pos"] = [round(x / 32) * 32, round(y / 32) * 32]
+            x += float(node["size"][0]) + 96
+            row_height = max(row_height, float(node["size"][1]))
+        right = max(right, x - 96)
+        y += row_height + 96
+    return right
+
+
+def _layout(workflow: dict[str, Any]) -> None:
+    _normalize_release_node_sizes(workflow["nodes"])
+    author = [node for node in workflow["nodes"] if _is_author_node(node)]
+    runtime = [node for node in workflow["nodes"] if node not in author]
+    # Put authoring first, then a dependency-layered runtime beside it. This
+    # matches the way the graph is used and avoids the detached lower island
+    # created by the inherited 0.5 canvas coordinates.
+    author_right = _place_author(author)
+    _place_runtime(workflow, runtime, author_right + (320 if author else 0))
     workflow["groups"] = []
     if runtime:
         workflow["groups"].append(_group(1, "0.6 GENERATION RUNTIME",

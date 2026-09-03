@@ -8,8 +8,8 @@
       "id": 1,
       "type": "VHS_LoadVideo",
       "pos": [
-        -1792,
-        -608
+        0,
+        640
       ],
       "size": [
         320,
@@ -93,8 +93,8 @@
       "id": 2,
       "type": "VHS_LoadVideo",
       "pos": [
-        -1792,
-        -64
+        0,
+        1024
       ],
       "size": [
         320,
@@ -178,8 +178,8 @@
       "id": 3,
       "type": "UNETLoader",
       "pos": [
-        -1088,
-        -1312
+        0,
+        0
       ],
       "size": [
         390,
@@ -210,8 +210,8 @@
       "id": 4,
       "type": "CLIPLoader",
       "pos": [
-        -1088,
-        -1148.0
+        0,
+        160
       ],
       "size": [
         390,
@@ -243,8 +243,8 @@
       "id": 5,
       "type": "VAELoader",
       "pos": [
-        -1088,
-        -964.0
+        0,
+        352
       ],
       "size": [
         390,
@@ -276,8 +276,8 @@
       "id": 6,
       "type": "VAELoader",
       "pos": [
-        -1088,
-        -810.0
+        0,
+        512
       ],
       "size": [
         390,
@@ -308,8 +308,8 @@
       "id": 7,
       "type": "MiniMaxH3SigmaShift",
       "pos": [
-        -576,
-        -1312
+        544,
+        0
       ],
       "size": [
         300,
@@ -347,8 +347,8 @@
       "id": 8,
       "type": "MiniMaxH3ImageToVideo",
       "pos": [
-        -544,
-        -672
+        1024,
+        0
       ],
       "size": [
         520,
@@ -411,8 +411,8 @@
       "id": 9,
       "type": "MiniMaxH3ContexMaskedAVBridge",
       "pos": [
-        96,
-        -640
+        1696,
+        608
       ],
       "size": [
         430,
@@ -524,8 +524,8 @@
       "id": 10,
       "type": "RandomNoise",
       "pos": [
-        640,
-        -1184
+        1696,
+        0
       ],
       "size": [
         250,
@@ -556,8 +556,8 @@
       "id": 11,
       "type": "BasicGuider",
       "pos": [
-        1056,
-        -864
+        1696,
+        448
       ],
       "size": [
         270,
@@ -596,8 +596,8 @@
       "id": 12,
       "type": "KSamplerSelect",
       "pos": [
-        1056,
-        -1184
+        1696,
+        160
       ],
       "size": [
         270,
@@ -627,8 +627,8 @@
       "id": 13,
       "type": "BasicScheduler",
       "pos": [
-        1056,
-        -1056
+        1696,
+        288
       ],
       "size": [
         270,
@@ -666,12 +666,12 @@
       "id": 14,
       "type": "SamplerCustomAdvanced",
       "pos": [
-        1408,
-        -928
+        2272,
+        0
       ],
       "size": [
-        320,
-        190
+        420,
+        360
       ],
       "flags": {},
       "order": 13,
@@ -727,8 +727,8 @@
       "id": 15,
       "type": "VAEDecode",
       "pos": [
-        1824,
-        -992
+        2272,
+        416
       ],
       "size": [
         260,
@@ -767,8 +767,8 @@
       "id": 16,
       "type": "VAEDecodeAudio",
       "pos": [
-        1824,
-        -800
+        2272,
+        576
       ],
       "size": [
         260,
@@ -807,8 +807,8 @@
       "id": 17,
       "type": "TrimAudioDuration",
       "pos": [
-        2176,
-        -800
+        2848,
+        0
       ],
       "size": [
         260,
@@ -845,8 +845,8 @@
       "id": 18,
       "type": "AudioConcat",
       "pos": [
-        2528,
-        -864
+        2848,
+        160
       ],
       "size": [
         260,
@@ -887,8 +887,8 @@
       "id": 19,
       "type": "AudioConcat",
       "pos": [
-        2880,
-        -864
+        2848,
+        352
       ],
       "size": [
         260,
@@ -929,8 +929,8 @@
       "id": 20,
       "type": "ImageBatchExtendWithOverlap",
       "pos": [
-        2176,
-        -480
+        2272,
+        736
       ],
       "size": [
         380,
@@ -991,8 +991,8 @@
       "id": 21,
       "type": "ImageBatchExtendWithOverlap",
       "pos": [
-        2624,
-        -480
+        2272,
+        960
       ],
       "size": [
         380,
@@ -1053,8 +1053,8 @@
       "id": 22,
       "type": "CreateVideo",
       "pos": [
-        3168,
-        -512
+        3264,
+        0
       ],
       "size": [
         280,
@@ -1104,8 +1104,8 @@
       "id": 23,
       "type": "SaveVideo",
       "pos": [
-        3552,
-        -512
+        3264,
+        160
       ],
       "size": [
         520,
@@ -1159,8 +1159,8 @@
       "id": 24,
       "type": "Note",
       "pos": [
-        -1792,
-        352
+        0,
+        1536
       ],
       "size": [
         720,
@@ -1460,10 +1460,10 @@
       "id": 1,
       "title": "0.6 GENERATION RUNTIME",
       "bounding": [
-        -1856.0,
-        -1408.0,
-        5992.0,
-        2272.0
+        -64.0,
+        -96.0,
+        3912.0,
+        2144.0
       ],
       "color": "#744c8c",
       "font_size": 24,

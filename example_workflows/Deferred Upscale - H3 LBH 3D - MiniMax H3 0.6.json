@@ -8,8 +8,8 @@
       "id": 1,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
-        -2688.0,
-        1696.0
+        0,
+        0
       ],
       "size": [
         1376,
@@ -39,8 +39,8 @@
       "id": 2,
       "type": "MiniMaxH3ChainUpscaleAdapter",
       "pos": [
-        -448,
-        416
+        1696,
+        832
       ],
       "size": [
         544,
@@ -99,8 +99,8 @@
       "id": 3,
       "type": "MiniMaxH3ChainUpscaleCurrent",
       "pos": [
-        416,
-        -320
+        2400,
+        128
       ],
       "size": [
         544,
@@ -224,8 +224,8 @@
       "id": 4,
       "type": "UNETLoader",
       "pos": [
-        -1824,
-        -384
+        1696,
+        0
       ],
       "size": [
         352,
@@ -256,8 +256,8 @@
       "id": 5,
       "type": "ModelAttentionBackend",
       "pos": [
-        -1408,
-        -384
+        2400,
+        0
       ],
       "size": [
         288,
@@ -293,8 +293,8 @@
       "id": 6,
       "type": "MiniMaxH3SigmaShift",
       "pos": [
-        -704,
-        -384
+        3104,
+        0
       ],
       "size": [
         320,
@@ -333,8 +333,8 @@
       "id": 7,
       "type": "CLIPLoader",
       "pos": [
-        -1824,
-        -160
+        1696,
+        320
       ],
       "size": [
         352,
@@ -366,8 +366,8 @@
       "id": 8,
       "type": "VAELoader",
       "pos": [
-        -1824,
-        32.0
+        1696,
+        672
       ],
       "size": [
         352,
@@ -398,8 +398,8 @@
       "id": 9,
       "type": "MiniMaxH3UpscaleReferencePromptOverride",
       "pos": [
-        1024,
-        512.0
+        1696,
+        1344
       ],
       "size": [
         544,
@@ -472,8 +472,8 @@
       "id": 10,
       "type": "MiniMaxH3ChainUpscaleReferenceConditioning",
       "pos": [
-        1024,
-        128
+        3104,
+        640
       ],
       "size": [
         544,
@@ -599,8 +599,8 @@
       "id": 11,
       "type": "RandomNoise",
       "pos": [
-        1056,
-        -128
+        3104,
+        480
       ],
       "size": [
         288,
@@ -640,8 +640,8 @@
       "id": 12,
       "type": "BasicScheduler",
       "pos": [
-        1056,
-        -352
+        3104,
+        1024
       ],
       "size": [
         480,
@@ -680,8 +680,8 @@
       "id": 13,
       "type": "MinimaxH3LatentUpscaler3D",
       "pos": [
-        1600,
-        -160
+        3104,
+        224
       ],
       "size": [
         448,
@@ -732,8 +732,8 @@
       "id": 14,
       "type": "H3ConditioningSyncFromLatents",
       "pos": [
-        2080,
-        192
+        3104,
+        1216
       ],
       "size": [
         512,
@@ -829,8 +829,8 @@
       "id": 15,
       "type": "MiniMaxH3ChainPass2Prepare",
       "pos": [
-        2176,
-        -96
+        3808,
+        0
       ],
       "size": [
         320,
@@ -905,8 +905,8 @@
       "id": 16,
       "type": "BasicGuider",
       "pos": [
-        2624,
-        32
+        3808,
+        192
       ],
       "size": [
         288,
@@ -945,8 +945,8 @@
       "id": 17,
       "type": "DisableNoise",
       "pos": [
-        2592,
-        -128
+        1696,
+        512
       ],
       "size": [
         320,
@@ -974,8 +974,8 @@
       "id": 18,
       "type": "KSamplerSelect",
       "pos": [
-        2624,
-        -288
+        1696,
+        160
       ],
       "size": [
         288,
@@ -1005,12 +1005,12 @@
       "id": 19,
       "type": "SamplerCustomAdvanced",
       "pos": [
-        3072,
-        -32
+        4288,
+        0
       ],
       "size": [
-        384,
-        544
+        420,
+        360
       ],
       "flags": {},
       "order": 18,
@@ -1067,8 +1067,8 @@
       "id": 20,
       "type": "VAEDecode",
       "pos": [
-        3520,
-        -32
+        4864,
+        0
       ],
       "size": [
         256,
@@ -1108,8 +1108,8 @@
       "id": 21,
       "type": "MiniMaxH3ChainUpscaleSegmentSave",
       "pos": [
-        3936,
-        -32
+        4864,
+        160
       ],
       "size": [
         448,
@@ -1159,8 +1159,8 @@
       "id": 22,
       "type": "MiniMaxH3ChainUpscaleLoopEnd",
       "pos": [
-        4512,
-        -64
+        5472,
+        0
       ],
       "size": [
         448,
@@ -1230,12 +1230,12 @@
       "id": 23,
       "type": "MiniMaxH3ChainAssemble",
       "pos": [
-        5184,
-        -32
+        6080,
+        0
       ],
       "size": [
-        992,
-        672
+        560,
+        400
       ],
       "flags": {},
       "order": 22,
@@ -1279,8 +1279,8 @@
       "id": 24,
       "type": "Note",
       "pos": [
-        -2688,
-        -96
+        1696,
+        1792
       ],
       "size": [
         704,
@@ -1303,8 +1303,8 @@
       "id": 25,
       "type": "Note",
       "pos": [
-        416,
-        832.0
+        2496,
+        1792
       ],
       "size": [
         2016,
@@ -1643,10 +1643,10 @@
       "id": 1,
       "title": "0.6 GENERATION RUNTIME",
       "bounding": [
-        -2752.0,
-        -480.0,
-        8992.0,
-        1920.0
+        1632.0,
+        -96.0,
+        5072.0,
+        3296.0
       ],
       "color": "#744c8c",
       "font_size": 24,
@@ -1656,8 +1656,8 @@
       "id": 2,
       "title": "0.6 AUTHORING + PROJECT",
       "bounding": [
-        -2752.0,
-        1600.0,
+        -64.0,
+        -96.0,
         1504.0,
         1248.0
       ],

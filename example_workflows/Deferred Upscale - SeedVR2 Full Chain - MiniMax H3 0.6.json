@@ -8,8 +8,8 @@
       "id": 1,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
-        -1824.0,
-        1440.0
+        0,
+        0
       ],
       "size": [
         1376,
@@ -39,8 +39,8 @@
       "id": 2,
       "type": "VAELoader",
       "pos": [
-        -1824,
-        -192
+        1696,
+        928
       ],
       "size": [
         416,
@@ -70,8 +70,8 @@
       "id": 3,
       "type": "MiniMaxH3ChainLatentVideoAdapter",
       "pos": [
-        -448,
-        64
+        2304,
+        0
       ],
       "size": [
         544,
@@ -132,8 +132,8 @@
       "id": 4,
       "type": "SeedVR2LoadDiTModel",
       "pos": [
-        -448,
-        -960
+        1696,
+        0
       ],
       "size": [
         448,
@@ -176,8 +176,8 @@
       "id": 5,
       "type": "SeedVR2LoadVAEModel",
       "pos": [
-        64,
-        -960
+        1696,
+        416
       ],
       "size": [
         448,
@@ -224,8 +224,8 @@
       "id": 6,
       "type": "SeedVR2DirectVideoUpscaler",
       "pos": [
-        640,
-        64
+        2304,
+        512
       ],
       "size": [
         640,
@@ -291,8 +291,8 @@
       "id": 7,
       "type": "SaveVideo",
       "pos": [
-        1408,
-        64
+        3104,
+        0
       ],
       "size": [
         448,
@@ -322,8 +322,8 @@
       "id": 8,
       "type": "Note",
       "pos": [
-        1408,
-        480
+        1696,
+        1472
       ],
       "size": [
         896,
@@ -397,10 +397,10 @@
       "id": 1,
       "title": "0.6 GENERATION RUNTIME",
       "bounding": [
-        -1888.0,
-        -1056.0,
-        4256.0,
-        2240.0
+        1632.0,
+        -96.0,
+        1984.0,
+        2272.0
       ],
       "color": "#744c8c",
       "font_size": 24,
@@ -410,8 +410,8 @@
       "id": 2,
       "title": "0.6 AUTHORING + PROJECT",
       "bounding": [
-        -1888.0,
-        1344.0,
+        -64.0,
+        -96.0,
         1504.0,
         1248.0
       ],

@@ -1,15 +1,15 @@
 {
   "id": "c7beb0df-df26-5bbd-a981-85d75e20f54e",
   "revision": 0,
-  "last_node_id": 44,
+  "last_node_id": 43,
   "last_link_id": 65,
   "nodes": [
     {
       "id": 1,
       "type": "UNETLoader",
       "pos": [
-        -2048,
-        -864.0
+        4256,
+        0
       ],
       "size": [
         352,
@@ -41,8 +41,8 @@
       "id": 2,
       "type": "CLIPLoader",
       "pos": [
-        -2048,
-        -576.0
+        4256,
+        160
       ],
       "size": [
         352,
@@ -75,8 +75,8 @@
       "id": 3,
       "type": "KSamplerSelect",
       "pos": [
-        1888,
-        128
+        6016,
+        0
       ],
       "size": [
         288,
@@ -107,8 +107,8 @@
       "id": 4,
       "type": "VAELoader",
       "pos": [
-        -2048,
-        -384.0
+        4256,
+        352
       ],
       "size": [
         352,
@@ -139,8 +139,8 @@
       "id": 5,
       "type": "VAELoader",
       "pos": [
-        -2048,
-        -224.0
+        4256,
+        512
       ],
       "size": [
         352,
@@ -171,8 +171,8 @@
       "id": 6,
       "type": "Note",
       "pos": [
-        -2112,
-        -1344
+        5088,
+        1824
       ],
       "size": [
         1248,
@@ -197,8 +197,8 @@
       "id": 7,
       "type": "Note",
       "pos": [
-        -3008,
-        -1088
+        4256,
+        1824
       ],
       "size": [
         736,
@@ -223,8 +223,8 @@
       "id": 8,
       "type": "Reroute",
       "pos": [
-        512,
-        -358.0
+        4928,
+        672
       ],
       "size": [
         75,
@@ -260,8 +260,8 @@
       "id": 9,
       "type": "Reroute",
       "pos": [
-        512,
-        -268.0
+        5568,
+        1184.0
       ],
       "size": [
         75,
@@ -296,8 +296,8 @@
       "id": 10,
       "type": "MiniMaxH3ChainLoopStart",
       "pos": [
-        -544,
-        -256
+        4800,
+        0
       ],
       "size": [
         352,
@@ -361,8 +361,8 @@
       "id": 11,
       "type": "Reroute",
       "pos": [
-        1216,
-        -416
+        5280,
+        1184.0
       ],
       "size": [
         75,
@@ -398,8 +398,8 @@
       "id": 12,
       "type": "Reroute",
       "pos": [
-        2560,
-        -326.0
+        5568,
+        1274.0
       ],
       "size": [
         75,
@@ -434,12 +434,12 @@
       "id": 13,
       "type": "MiniMaxH3ChainCurrent",
       "pos": [
-        32,
-        -178.0
+        5312,
+        0
       ],
       "size": [
-        480,
-        512
+        520,
+        420
       ],
       "flags": {},
       "order": 12,
@@ -567,12 +567,12 @@
       "id": 14,
       "type": "MiniMaxH3ChainAssemble",
       "pos": [
-        5632,
-        416
+        8800,
+        0
       ],
       "size": [
-        448,
-        256
+        560,
+        400
       ],
       "flags": {},
       "order": 13,
@@ -613,8 +613,8 @@
       "id": 15,
       "type": "Reroute",
       "pos": [
-        2560,
-        -416
+        5568,
+        1364.0
       ],
       "size": [
         75,
@@ -649,8 +649,8 @@
       "id": 16,
       "type": "RandomNoise",
       "pos": [
-        1888,
-        -64
+        6016,
+        160
       ],
       "size": [
         288,
@@ -691,8 +691,8 @@
       "id": 17,
       "type": "MiniMaxH3ImageToVideo",
       "pos": [
-        640,
-        -256
+        5312,
+        736
       ],
       "size": [
         544,
@@ -790,12 +790,12 @@
       "id": 18,
       "type": "MiniMaxH3ChainContext",
       "pos": [
-        1312,
-        -256
+        6016,
+        512
       ],
       "size": [
-        352,
-        288
+        440,
+        340
       ],
       "flags": {},
       "order": 17,
@@ -873,8 +873,8 @@
       "id": 19,
       "type": "MiniMaxH3SigmaShift",
       "pos": [
-        -1024,
-        -864.0
+        4800,
+        384
       ],
       "size": [
         320,
@@ -912,8 +912,8 @@
       "id": 20,
       "type": "Reroute",
       "pos": [
-        512,
-        -448
+        5536,
+        1454.0
       ],
       "size": [
         75,
@@ -948,8 +948,8 @@
       "id": 21,
       "type": "Reroute",
       "pos": [
-        1792,
-        -448
+        5536,
+        1544.0
       ],
       "size": [
         75,
@@ -985,8 +985,8 @@
       "id": 22,
       "type": "BasicGuider",
       "pos": [
-        1888,
-        -256
+        6016,
+        928
       ],
       "size": [
         288,
@@ -1026,8 +1026,8 @@
       "id": 23,
       "type": "BasicScheduler",
       "pos": [
-        1888,
-        288
+        6016,
+        320
       ],
       "size": [
         288,
@@ -1074,12 +1074,12 @@
       "id": 24,
       "type": "SamplerCustomAdvanced",
       "pos": [
-        2272,
-        -236.0
+        6624,
+        0
       ],
       "size": [
-        320,
-        657.4117647058823
+        420,
+        360
       ],
       "flags": {},
       "order": 23,
@@ -1138,8 +1138,8 @@
       "id": 25,
       "type": "VAEDecode",
       "pos": [
-        2624,
-        485.4117647058823
+        6624,
+        416
       ],
       "size": [
         256,
@@ -1179,8 +1179,8 @@
       "id": 26,
       "type": "VAEDecodeAudio",
       "pos": [
-        2624,
-        645.4117647058823
+        6624,
+        576
       ],
       "size": [
         256,
@@ -1220,12 +1220,12 @@
       "id": 27,
       "type": "MiniMaxH3LoopTrim",
       "pos": [
-        2912,
-        -256
+        7200,
+        0
       ],
       "size": [
-        384,
-        224
+        440,
+        260
       ],
       "flags": {},
       "order": 26,
@@ -1313,12 +1313,12 @@
       "id": 28,
       "type": "MiniMaxH3ChainSegmentSave",
       "pos": [
-        3328,
-        32.0
+        7200,
+        320
       ],
       "size": [
-        384,
-        288
+        500,
+        340
       ],
       "flags": {},
       "order": 27,
@@ -1378,12 +1378,12 @@
       "id": 29,
       "type": "MiniMaxH3ChainAssemble",
       "pos": [
-        5184,
-        -256
+        8800,
+        448
       ],
       "size": [
-        608,
-        480
+        560,
+        400
       ],
       "flags": {},
       "order": 28,
@@ -1424,8 +1424,8 @@
       "id": 30,
       "type": "ModelAttentionBackend",
       "pos": [
-        -1664,
-        -704.0
+        4800,
+        256
       ],
       "size": [
         288,
@@ -1462,8 +1462,8 @@
       "id": 31,
       "type": "MiniMaxH3ChainRichScenePromptEditor",
       "pos": [
-        -1640.0,
-        4460.0
+        1344,
+        1184
       ],
       "size": [
         1088,
@@ -1498,8 +1498,8 @@
       "id": 32,
       "type": "MiniMaxH3ChainPlanModern",
       "pos": [
-        -1732.0,
-        3232.0
+        1216,
+        0
       ],
       "size": [
         1040,
@@ -1581,8 +1581,8 @@
       "id": 33,
       "type": "MiniMaxH3ChainPlanStudio",
       "pos": [
-        -564.0,
-        3232.0
+        2336,
+        0
       ],
       "size": [
         1600,
@@ -1680,12 +1680,12 @@
       "id": 34,
       "type": "MiniMaxH3ChainManifestLoad",
       "pos": [
-        5216,
-        416
+        7872,
+        0
       ],
       "size": [
-        352,
-        224
+        440,
+        240
       ],
       "flags": {},
       "order": 33,
@@ -1740,8 +1740,8 @@
       "id": 35,
       "type": "Note",
       "pos": [
-        5184,
-        736
+        6432,
+        1824
       ],
       "size": [
         832,
@@ -1766,12 +1766,12 @@
       "id": 36,
       "type": "MiniMaxH3ChainLoopEnd",
       "pos": [
-        4704,
-        -256
+        7872,
+        1280
       ],
       "size": [
-        352,
-        320
+        440,
+        340
       ],
       "flags": {},
       "order": 35,
@@ -1839,12 +1839,12 @@
       "id": 37,
       "type": "MiniMaxH3ChainReview",
       "pos": [
-        3744,
-        384.0
+        7872,
+        320
       ],
       "size": [
-        864,
-        1120
+        760,
+        900
       ],
       "flags": {},
       "order": 36,
@@ -1906,34 +1906,34 @@
       "id": 38,
       "type": "Note",
       "pos": [
-        3136,
-        1568.0
+        0,
+        0
       ],
       "size": [
-        576,
-        1344
+        620,
+        330
       ],
       "flags": {},
       "order": 37,
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "I2V 0.6 QUICK START",
+      "title": "0.6 STUDIO QUICK START",
       "properties": {
         "Node name for S&R": "Note"
       },
       "widgets_values": [
-        "I2V 0.6 QUICK START\n\nSelect the courier arrival image and keep Frame Gate connected: it applies Picture 1 only to scene 1. Select installed H3 model/VAE files, edit the Plan, then queue."
+        "0.6 Studio quick start\n\n1. Open the Project Asset Carousel.\n2. Keep h3_v06_courier_greenhouse_arrival.png selected in the opening Load Image node.\n3. Use the Carousel for additional project references when needed.\n4. Edit scenes in Production Plan or Plan Studio.\n5. Queue; inspect, branch, trim, or restore in Checkpoint Manager."
       ],
-      "color": "#432f66",
-      "bgcolor": "rgba(24,24,27,.9)"
+      "color": "#20354a",
+      "bgcolor": "#10202f"
     },
     {
       "id": 39,
       "type": "LoadImage",
       "pos": [
-        -1216,
-        -256
+        4256,
+        672
       ],
       "size": [
         384,
@@ -1970,8 +1970,8 @@
       "id": 40,
       "type": "MiniMaxH3ChainFirstSceneImage",
       "pos": [
-        640,
-        192.0
+        5312,
+        480
       ],
       "size": [
         480,
@@ -2032,8 +2032,8 @@
       "id": 41,
       "type": "MiniMaxH3GenerationProfile",
       "pos": [
-        -2260.0,
-        3232.0
+        704,
+        0
       ],
       "size": [
         400,
@@ -2070,8 +2070,8 @@
       "id": 42,
       "type": "MiniMaxH3ProjectAssetManager",
       "pos": [
-        -3008.0,
-        4460.0
+        0,
+        1184
       ],
       "size": [
         1240,
@@ -2129,8 +2129,8 @@
       "id": 43,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
-        -424.0,
-        4460.0
+        2528,
+        1184
       ],
       "size": [
         1320,
@@ -2161,32 +2161,6 @@
       "widgets_values": [
         ""
       ]
-    },
-    {
-      "id": 44,
-      "type": "Note",
-      "pos": [
-        -3008.0,
-        3232.0
-      ],
-      "size": [
-        620,
-        330
-      ],
-      "flags": {},
-      "order": 43,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "title": "0.6 STUDIO QUICK START",
-      "properties": {
-        "Node name for S&R": "Note"
-      },
-      "widgets_values": [
-        "0.6 Studio quick start\n\n1. Open the Project Asset Carousel.\n2. Keep h3_v06_courier_greenhouse_arrival.png selected in the opening Load Image node.\n3. Use the Carousel for additional project references when needed.\n4. Edit scenes in Production Plan or Plan Studio.\n5. Queue; inspect, branch, trim, or restore in Checkpoint Manager."
-      ],
-      "color": "#20354a",
-      "bgcolor": "#10202f"
     }
   ],
   "links": [
@@ -2716,10 +2690,10 @@
       "id": 1,
       "title": "0.6 GENERATION RUNTIME",
       "bounding": [
-        -3072.0,
-        -1440.0,
-        9216.0,
-        4416.0
+        4192.0,
+        -96.0,
+        5232.0,
+        3136.0
       ],
       "color": "#744c8c",
       "font_size": 24,
@@ -2729,10 +2703,10 @@
       "id": 2,
       "title": "0.6 AUTHORING + PROJECT",
       "bounding": [
-        -3072.0,
-        3136.0,
-        4172.0,
-        2700.0
+        -64.0,
+        -96.0,
+        4064.0,
+        2656.0
       ],
       "color": "#3f789e",
       "font_size": 24,

@@ -8,8 +8,8 @@
       "id": 1,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
-        -2880.0,
-        1792.0
+        0,
+        0
       ],
       "size": [
         1376,
@@ -39,8 +39,8 @@
       "id": 2,
       "type": "MiniMaxH3ChainUpscaleAdapter",
       "pos": [
-        -576,
-        0
+        1696,
+        832
       ],
       "size": [
         544,
@@ -99,8 +99,8 @@
       "id": 3,
       "type": "MiniMaxH3ChainUpscaleCurrent",
       "pos": [
-        96,
-        0
+        1696,
+        1792
       ],
       "size": [
         544,
@@ -230,8 +230,8 @@
       "id": 4,
       "type": "UNETLoader",
       "pos": [
-        -2048,
-        -704
+        1696,
+        0
       ],
       "size": [
         352,
@@ -262,8 +262,8 @@
       "id": 5,
       "type": "ModelAttentionBackend",
       "pos": [
-        -1632,
-        -704
+        1696,
+        1664
       ],
       "size": [
         288,
@@ -299,8 +299,8 @@
       "id": 6,
       "type": "MiniMaxH3SigmaShift",
       "pos": [
-        -928,
-        -704
+        2400,
+        0
       ],
       "size": [
         320,
@@ -338,8 +338,8 @@
       "id": 7,
       "type": "CLIPLoader",
       "pos": [
-        -2048,
-        -544
+        1696,
+        160
       ],
       "size": [
         352,
@@ -371,8 +371,8 @@
       "id": 8,
       "type": "VAELoader",
       "pos": [
-        -1632,
-        -544
+        1696,
+        352
       ],
       "size": [
         352,
@@ -406,8 +406,8 @@
       "id": 9,
       "type": "MiniMaxH3ChainUpscaleReferenceConditioning",
       "pos": [
-        2240,
-        512
+        3648,
+        704
       ],
       "size": [
         544,
@@ -533,8 +533,8 @@
       "id": 10,
       "type": "RandomNoise",
       "pos": [
-        -736,
-        -480.0
+        2400,
+        224
       ],
       "size": [
         288,
@@ -574,8 +574,8 @@
       "id": 11,
       "type": "MinimaxH3LatentUpscaler3D",
       "pos": [
-        2688,
-        0
+        3040,
+        1056
       ],
       "size": [
         448,
@@ -625,8 +625,8 @@
       "id": 12,
       "type": "BasicGuider",
       "pos": [
-        3392,
-        512
+        4352,
+        288
       ],
       "size": [
         288,
@@ -665,8 +665,8 @@
       "id": 13,
       "type": "KSamplerSelect",
       "pos": [
-        -384,
-        -544
+        1696,
+        672
       ],
       "size": [
         288,
@@ -696,12 +696,12 @@
       "id": 14,
       "type": "SamplerCustomAdvanced",
       "pos": [
-        4000,
-        0
+        4352,
+        448
       ],
       "size": [
-        384,
-        544
+        420,
+        360
       ],
       "flags": {},
       "order": 13,
@@ -757,7 +757,7 @@
       "id": 15,
       "type": "VAEDecode",
       "pos": [
-        4480,
+        5024,
         0
       ],
       "size": [
@@ -797,8 +797,8 @@
       "id": 16,
       "type": "MiniMaxH3ChainUpscaleSegmentSave",
       "pos": [
-        6368,
-        0
+        5568,
+        256
       ],
       "size": [
         448,
@@ -854,7 +854,7 @@
       "id": 17,
       "type": "MiniMaxH3ChainUpscaleLoopEnd",
       "pos": [
-        6880,
+        6208,
         0
       ],
       "size": [
@@ -925,12 +925,12 @@
       "id": 18,
       "type": "MiniMaxH3ChainAssemble",
       "pos": [
-        7392,
-        0
+        6208,
+        448
       ],
       "size": [
-        992,
-        672
+        560,
+        400
       ],
       "flags": {},
       "order": 17,
@@ -974,8 +974,8 @@
       "id": 19,
       "type": "Note",
       "pos": [
-        -2880,
-        -704
+        1696,
+        2656
       ],
       "size": [
         720,
@@ -998,8 +998,8 @@
       "id": 20,
       "type": "Note",
       "pos": [
-        4480,
-        768
+        2496,
+        2656
       ],
       "size": [
         2496,
@@ -1022,8 +1022,8 @@
       "id": 21,
       "type": "H3ConditioningSyncFromLatents",
       "pos": [
-        2816,
-        896.0
+        4352,
+        0
       ],
       "size": [
         512,
@@ -1119,8 +1119,8 @@
       "id": 22,
       "type": "MiniMaxH3UpscaleReferencePromptOverride",
       "pos": [
-        2240,
-        1184.0
+        1696,
+        1344
       ],
       "size": [
         544,
@@ -1193,8 +1193,8 @@
       "id": 23,
       "type": "VAELoader",
       "pos": [
-        -1184,
-        -480.0
+        1696,
+        512
       ],
       "size": [
         400,
@@ -1229,8 +1229,8 @@
       "id": 24,
       "type": "VAEDecode",
       "pos": [
-        768,
-        0
+        2400,
+        384
       ],
       "size": [
         400,
@@ -1270,8 +1270,8 @@
       "id": 25,
       "type": "VAEDecodeAudio",
       "pos": [
-        768,
-        182.0
+        2400,
+        576
       ],
       "size": [
         400,
@@ -1312,8 +1312,8 @@
       "id": 26,
       "type": "H3JerkOracle",
       "pos": [
-        768,
-        364.0
+        2400,
+        736
       ],
       "size": [
         400,
@@ -1401,8 +1401,8 @@
       "id": 27,
       "type": "MiniMaxH3ChainDeropeGuard",
       "pos": [
-        1248,
-        352
+        2400,
+        1600
       ],
       "size": [
         480,
@@ -1464,7 +1464,7 @@
       "id": 28,
       "type": "H3TimeSmear",
       "pos": [
-        1792,
+        3040,
         0
       ],
       "size": [
@@ -1549,8 +1549,8 @@
       "id": 29,
       "type": "VAEEncode",
       "pos": [
-        2240,
-        0
+        3040,
+        384
       ],
       "size": [
         400,
@@ -1590,8 +1590,8 @@
       "id": 30,
       "type": "H3AudioSmear",
       "pos": [
-        1792,
-        384.0
+        3040,
+        576
       ],
       "size": [
         400,
@@ -1637,8 +1637,8 @@
       "id": 31,
       "type": "VAEEncodeAudio",
       "pos": [
-        2240,
-        182.0
+        3040,
+        1312
       ],
       "size": [
         400,
@@ -1678,8 +1678,8 @@
       "id": 32,
       "type": "MiniMaxH3ChainDeropeContinuity",
       "pos": [
-        2688,
-        256
+        3648,
+        0
       ],
       "size": [
         448,
@@ -1725,8 +1725,8 @@
       "id": 33,
       "type": "MiniMaxH3ChainDeropeFreezeMask",
       "pos": [
-        1792,
-        624.0
+        3040,
+        800
       ],
       "size": [
         400,
@@ -1776,8 +1776,8 @@
       "id": 34,
       "type": "H3V2VInit",
       "pos": [
-        3200,
-        0
+        3648,
+        224
       ],
       "size": [
         400,
@@ -1844,8 +1844,8 @@
       "id": 35,
       "type": "H3InjectSchedule",
       "pos": [
-        32,
-        -544
+        2400,
+        1312
       ],
       "size": [
         400,
@@ -1885,7 +1885,7 @@
       "id": 36,
       "type": "VAEDecodeAudio",
       "pos": [
-        4480,
+        5024,
         160
       ],
       "size": [
@@ -1926,8 +1926,8 @@
       "id": 37,
       "type": "H3ExactRecover",
       "pos": [
-        4928,
-        0
+        5024,
+        352
       ],
       "size": [
         400,
@@ -1974,8 +1974,8 @@
       "id": 38,
       "type": "H3AudioRecover",
       "pos": [
-        4928,
-        216.0
+        5024,
+        576
       ],
       "size": [
         400,
@@ -2029,8 +2029,8 @@
       "id": 39,
       "type": "VAEEncode",
       "pos": [
-        5376,
-        0
+        5024,
+        896
       ],
       "size": [
         400,
@@ -2070,8 +2070,8 @@
       "id": 40,
       "type": "VAEEncodeAudio",
       "pos": [
-        5376,
-        184.0
+        5024,
+        1088
       ],
       "size": [
         400,
@@ -2111,7 +2111,7 @@
       "id": 41,
       "type": "MiniMaxH3ChainRecoveredAV",
       "pos": [
-        5856,
+        5568,
         0
       ],
       "size": [
@@ -2767,10 +2767,10 @@
       "id": 1,
       "title": "0.6 GENERATION RUNTIME",
       "bounding": [
-        -2944.0,
-        -800.0,
-        11392.0,
-        2336.0
+        1632.0,
+        -96.0,
+        5200.0,
+        4608.0
       ],
       "color": "#744c8c",
       "font_size": 24,
@@ -2780,8 +2780,8 @@
       "id": 2,
       "title": "0.6 AUTHORING + PROJECT",
       "bounding": [
-        -2944.0,
-        1696.0,
+        -64.0,
+        -96.0,
         1504.0,
         1248.0
       ],

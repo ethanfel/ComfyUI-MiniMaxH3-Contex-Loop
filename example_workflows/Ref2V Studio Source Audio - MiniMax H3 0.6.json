@@ -1,15 +1,15 @@
 {
   "id": "30567df5-a70f-5b36-8af2-5a24ebbcf017",
   "revision": 0,
-  "last_node_id": 42,
+  "last_node_id": 41,
   "last_link_id": 67,
   "nodes": [
     {
       "id": 1,
       "type": "UNETLoader",
       "pos": [
-        -2048,
-        -928
+        4256,
+        0
       ],
       "size": [
         352,
@@ -41,8 +41,8 @@
       "id": 2,
       "type": "CLIPLoader",
       "pos": [
-        -2048,
-        -640.0
+        4256,
+        160
       ],
       "size": [
         352,
@@ -75,8 +75,8 @@
       "id": 3,
       "type": "KSamplerSelect",
       "pos": [
-        2144,
-        128
+        6080,
+        0
       ],
       "size": [
         288,
@@ -107,8 +107,8 @@
       "id": 4,
       "type": "VAELoader",
       "pos": [
-        -2048,
-        -448.0
+        4256,
+        352
       ],
       "size": [
         352,
@@ -139,8 +139,8 @@
       "id": 5,
       "type": "VAELoader",
       "pos": [
-        -2048,
-        -288.0
+        4256,
+        512
       ],
       "size": [
         352,
@@ -172,8 +172,8 @@
       "id": 6,
       "type": "Note",
       "pos": [
-        -3008,
-        -1088
+        4256,
+        1824
       ],
       "size": [
         736,
@@ -198,8 +198,8 @@
       "id": 7,
       "type": "Reroute",
       "pos": [
-        512,
-        -358.0
+        4896,
+        608.0
       ],
       "size": [
         75,
@@ -235,8 +235,8 @@
       "id": 8,
       "type": "Reroute",
       "pos": [
-        512,
-        -268.0
+        5600,
+        1088.0
       ],
       "size": [
         75,
@@ -271,8 +271,8 @@
       "id": 9,
       "type": "MiniMaxH3ChainLoopStart",
       "pos": [
-        -288,
-        -256
+        4768,
+        0
       ],
       "size": [
         352,
@@ -285,7 +285,7 @@
         {
           "name": "plan",
           "type": "H3_CHAIN_PLAN",
-          "link": 67
+          "link": 66
         },
         {
           "name": "source_audio",
@@ -342,8 +342,8 @@
       "id": 10,
       "type": "Reroute",
       "pos": [
-        1216,
-        -416
+        5312,
+        1088.0
       ],
       "size": [
         75,
@@ -379,8 +379,8 @@
       "id": 11,
       "type": "Reroute",
       "pos": [
-        2560,
-        -326.0
+        5600,
+        1178.0
       ],
       "size": [
         75,
@@ -415,12 +415,12 @@
       "id": 12,
       "type": "MiniMaxH3ChainCurrent",
       "pos": [
-        288,
-        -178.0
+        5280,
+        0
       ],
       "size": [
-        480,
-        512
+        520,
+        420
       ],
       "flags": {},
       "order": 11,
@@ -552,12 +552,12 @@
       "id": 13,
       "type": "MiniMaxH3ChainAssemble",
       "pos": [
-        5888,
-        416
+        8864,
+        0
       ],
       "size": [
-        448,
-        256
+        560,
+        400
       ],
       "flags": {},
       "order": 12,
@@ -598,8 +598,8 @@
       "id": 14,
       "type": "Reroute",
       "pos": [
-        2560,
-        -416
+        5600,
+        1268.0
       ],
       "size": [
         75,
@@ -634,8 +634,8 @@
       "id": 15,
       "type": "RandomNoise",
       "pos": [
-        2144,
-        -64
+        6080,
+        160
       ],
       "size": [
         288,
@@ -676,8 +676,8 @@
       "id": 16,
       "type": "MiniMaxH3TaggedReferenceToVideo",
       "pos": [
-        896,
-        -256
+        5280,
+        480
       ],
       "size": [
         640,
@@ -705,7 +705,7 @@
         {
           "name": "references",
           "type": "H3_TAGGED_REFERENCES",
-          "link": 66
+          "link": 67
         },
         {
           "name": "state",
@@ -821,12 +821,12 @@
       "id": 17,
       "type": "MiniMaxH3ChainContext",
       "pos": [
-        1568,
-        352.0
+        6080,
+        320
       ],
       "size": [
-        352,
-        288
+        440,
+        340
       ],
       "flags": {},
       "order": 16,
@@ -904,8 +904,8 @@
       "id": 18,
       "type": "MiniMaxH3SigmaShift",
       "pos": [
-        -1024,
-        -928
+        4768,
+        384
       ],
       "size": [
         320,
@@ -943,8 +943,8 @@
       "id": 19,
       "type": "Reroute",
       "pos": [
-        512,
-        -448
+        5536,
+        1358.0
       ],
       "size": [
         75,
@@ -979,8 +979,8 @@
       "id": 20,
       "type": "Reroute",
       "pos": [
-        1792,
-        -448
+        5536,
+        1448.0
       ],
       "size": [
         75,
@@ -1016,8 +1016,8 @@
       "id": 21,
       "type": "BasicGuider",
       "pos": [
-        2144,
-        -256
+        6080,
+        928
       ],
       "size": [
         288,
@@ -1057,8 +1057,8 @@
       "id": 22,
       "type": "BasicScheduler",
       "pos": [
-        2144,
-        288
+        6080,
+        736
       ],
       "size": [
         288,
@@ -1105,12 +1105,12 @@
       "id": 23,
       "type": "SamplerCustomAdvanced",
       "pos": [
-        2528,
-        -236.0
+        6688,
+        0
       ],
       "size": [
-        320,
-        384
+        420,
+        360
       ],
       "flags": {},
       "order": 22,
@@ -1169,8 +1169,8 @@
       "id": 24,
       "type": "VAEDecode",
       "pos": [
-        2880,
-        212.0
+        6688,
+        416
       ],
       "size": [
         256,
@@ -1210,8 +1210,8 @@
       "id": 25,
       "type": "VAEDecodeAudio",
       "pos": [
-        2880,
-        372.0
+        6688,
+        576
       ],
       "size": [
         256,
@@ -1251,12 +1251,12 @@
       "id": 26,
       "type": "MiniMaxH3LoopTrim",
       "pos": [
-        3168,
-        -256
+        7264,
+        0
       ],
       "size": [
-        384,
-        224
+        440,
+        260
       ],
       "flags": {},
       "order": 25,
@@ -1344,12 +1344,12 @@
       "id": 27,
       "type": "MiniMaxH3ChainSegmentSave",
       "pos": [
-        3584,
-        32.0
+        7264,
+        320
       ],
       "size": [
-        384,
-        288
+        500,
+        340
       ],
       "flags": {},
       "order": 26,
@@ -1409,12 +1409,12 @@
       "id": 28,
       "type": "MiniMaxH3ChainAssemble",
       "pos": [
-        5440,
-        -256
+        8864,
+        448
       ],
       "size": [
-        608,
-        480
+        560,
+        400
       ],
       "flags": {},
       "order": 27,
@@ -1455,8 +1455,8 @@
       "id": 29,
       "type": "ModelAttentionBackend",
       "pos": [
-        -1664,
-        -768.0
+        4768,
+        256
       ],
       "size": [
         288,
@@ -1493,12 +1493,12 @@
       "id": 30,
       "type": "MiniMaxH3ChainManifestLoad",
       "pos": [
-        5472,
-        416
+        7936,
+        0
       ],
       "size": [
-        352,
-        224
+        440,
+        240
       ],
       "flags": {},
       "order": 29,
@@ -1559,8 +1559,8 @@
       "id": 31,
       "type": "Note",
       "pos": [
-        5440,
-        736
+        5760,
+        1824
       ],
       "size": [
         832,
@@ -1585,8 +1585,8 @@
       "id": 32,
       "type": "Note",
       "pos": [
-        3136,
-        532.0
+        5088,
+        1824
       ],
       "size": [
         576,
@@ -1611,12 +1611,12 @@
       "id": 33,
       "type": "MiniMaxH3ChainReview",
       "pos": [
-        4000,
-        384.0
+        7936,
+        320
       ],
       "size": [
-        864,
-        1120
+        760,
+        900
       ],
       "flags": {},
       "order": 32,
@@ -1678,12 +1678,12 @@
       "id": 34,
       "type": "MiniMaxH3ChainLoopEnd",
       "pos": [
-        4960,
-        -256
+        7936,
+        1280
       ],
       "size": [
-        352,
-        320
+        440,
+        340
       ],
       "flags": {},
       "order": 33,
@@ -1751,34 +1751,34 @@
       "id": 35,
       "type": "Note",
       "pos": [
-        -2112,
-        -1376
+        0,
+        0
       ],
       "size": [
-        1248,
-        320
+        620,
+        330
       ],
       "flags": {},
       "order": 34,
       "mode": 0,
       "inputs": [],
       "outputs": [],
-      "title": "REF2V STUDIO 0.6 QUICK START",
+      "title": "0.6 STUDIO QUICK START",
       "properties": {
         "Node name for S&R": "Note"
       },
       "widgets_values": [
-        "REF2V STUDIO 0.6 QUICK START\n\nImport both courier images through Project Asset Carousel. Assign Picture and tags courier_arrival / greenhouse_delivery. Use Plan Studio for timeline edits and Checkpoint Manager for takes, trims, and branch restoration."
+        "0.6 Studio quick start\n\n1. Open the Project Asset Carousel.\n2. Import h3_v06_courier_greenhouse_arrival.png; tag courier_arrival (Picture).\n3. Import h3_v06_courier_greenhouse_delivery.png; tag greenhouse_delivery (Picture).\n4. Import one audio file and assign Source track.\n5. Edit scenes in Production Plan or Plan Studio.\n6. Queue; inspect, branch, trim, or restore in Checkpoint Manager."
       ],
-      "color": "#432f66",
-      "bgcolor": "rgba(24,24,27,.9)"
+      "color": "#20354a",
+      "bgcolor": "#10202f"
     },
     {
       "id": 36,
       "type": "MiniMaxH3ChainPlanStudio",
       "pos": [
-        -564.0,
-        2196.0
+        2336,
+        0
       ],
       "size": [
         1600,
@@ -1815,7 +1815,7 @@
             50,
             58,
             65,
-            67
+            66
           ]
         },
         {
@@ -1876,8 +1876,8 @@
       "id": 37,
       "type": "MiniMaxH3ChainRichScenePromptEditor",
       "pos": [
-        -1640.0,
-        3424.0
+        1344,
+        1184
       ],
       "size": [
         1088,
@@ -1912,8 +1912,8 @@
       "id": 38,
       "type": "MiniMaxH3ChainPlanModern",
       "pos": [
-        -1732.0,
-        2196.0
+        1216,
+        0
       ],
       "size": [
         1040,
@@ -1995,8 +1995,8 @@
       "id": 39,
       "type": "MiniMaxH3GenerationProfile",
       "pos": [
-        -2260.0,
-        2196.0
+        704,
+        0
       ],
       "size": [
         400,
@@ -2033,8 +2033,8 @@
       "id": 40,
       "type": "MiniMaxH3ProjectAssetManager",
       "pos": [
-        -3008.0,
-        3424.0
+        0,
+        1184
       ],
       "size": [
         1240,
@@ -2058,7 +2058,7 @@
           "type": "H3_TAGGED_REFERENCES",
           "links": [
             63,
-            66
+            67
           ]
         },
         {
@@ -2093,8 +2093,8 @@
       "id": 41,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
-        -424.0,
-        3424.0
+        2528,
+        1184
       ],
       "size": [
         1320,
@@ -2125,32 +2125,6 @@
       "widgets_values": [
         ""
       ]
-    },
-    {
-      "id": 42,
-      "type": "Note",
-      "pos": [
-        -3008.0,
-        2196.0
-      ],
-      "size": [
-        620,
-        330
-      ],
-      "flags": {},
-      "order": 41,
-      "mode": 0,
-      "inputs": [],
-      "outputs": [],
-      "title": "0.6 STUDIO QUICK START",
-      "properties": {
-        "Node name for S&R": "Note"
-      },
-      "widgets_values": [
-        "0.6 Studio quick start\n\n1. Open the Project Asset Carousel.\n2. Import h3_v06_courier_greenhouse_arrival.png; tag courier_arrival (Picture).\n3. Import h3_v06_courier_greenhouse_delivery.png; tag greenhouse_delivery (Picture).\n4. Import one audio file and assign Source track.\n5. Edit scenes in Production Plan or Plan Studio.\n6. Queue; inspect, branch, trim, or restore in Checkpoint Manager."
-      ],
-      "color": "#20354a",
-      "bgcolor": "#10202f"
     }
   ],
   "links": [
@@ -2676,19 +2650,19 @@
     ],
     [
       66,
-      40,
-      1,
-      16,
-      3,
-      "H3_TAGGED_REFERENCES"
-    ],
-    [
-      67,
       36,
       0,
       9,
       0,
       "H3_CHAIN_PLAN"
+    ],
+    [
+      67,
+      40,
+      1,
+      16,
+      3,
+      "H3_TAGGED_REFERENCES"
     ]
   ],
   "groups": [
@@ -2696,10 +2670,10 @@
       "id": 1,
       "title": "0.6 GENERATION RUNTIME",
       "bounding": [
-        -3072.0,
-        -1472.0,
-        9472.0,
-        3412.0
+        4192.0,
+        -96.0,
+        5296.0,
+        3328.0
       ],
       "color": "#744c8c",
       "font_size": 24,
@@ -2709,10 +2683,10 @@
       "id": 2,
       "title": "0.6 AUTHORING + PROJECT",
       "bounding": [
-        -3072.0,
-        2100.0,
-        4172.0,
-        2700.0
+        -64.0,
+        -96.0,
+        4064.0,
+        2656.0
       ],
       "color": "#3f789e",
       "font_size": 24,
