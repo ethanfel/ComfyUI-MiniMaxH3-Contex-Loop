@@ -24,6 +24,14 @@ export function serializedProjectAssetCatalog(value, requestedProject = "") {
     };
 }
 
+export function serializedProjectAssetIdentity(runNameValue, catalogValue) {
+    const configured = String(runNameValue ?? "").trim();
+    if (configured && configured !== "h3_project") return configured;
+    const catalog = serializedProjectAssetCatalog(catalogValue);
+    const catalogProject = String(catalog?.project ?? "").trim();
+    return catalogProject === "h3_project" ? "" : catalogProject;
+}
+
 export function publishProjectAssetCatalogChanged(manager, catalog) {
     const project = String(catalog?.project ?? "").trim();
     const revision = String(catalog?.revision ?? "").trim();
