@@ -88,6 +88,22 @@ class FakeDynamicPrompt:
 def main():
     package, chain = load_package()
 
+    segment_prompt = {
+        "26": {"class_type": "MiniMaxH3ChainSegmentSave", "inputs": {}},
+        "27": {"class_type": "MiniMaxH3ChainReview", "inputs": {
+            "segment": ["26", 0],
+        }},
+    }
+    assert chain._has_downstream_review_gate(
+        FakeDynamicPrompt(segment_prompt), "26")
+    segment_prompt["27"]["inputs"]["segment"] = ["26", 1]
+    assert not chain._has_downstream_review_gate(
+        FakeDynamicPrompt(segment_prompt), "26")
+    segment_prompt["27"]["class_type"] = "MiniMaxH3ChainLoopEnd"
+    segment_prompt["27"]["inputs"]["segment"] = ["26", 0]
+    assert not chain._has_downstream_review_gate(
+        FakeDynamicPrompt(segment_prompt), "26")
+
     cleanup_input = chain.MiniMaxH3ChainLoopEnd.INPUT_TYPES()[
         "optional"]["between_scene_cleanup"]
     assert cleanup_input[0] == ["off", "unload_models", "fresh_scene"]

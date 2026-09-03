@@ -981,6 +981,42 @@ def _downstream_reference_compliance(
     return "soft" if "soft" in modes else "disabled"
 
 
+def _has_downstream_review_gate(dynprompt: Any, unique_id: Any) -> bool:
+    """Return whether this Segment Save directly feeds an H3 Review Gate.
+
+    Segment Save persists the same video that Review Gate presents.  Sending
+    an additional native video-preview payload from the saver duplicates that
+    media in the canvas, has no audio, and can force the saver node to expand
+    to the preview's dimensions.  Dynamic prompt IDs are intentionally
+    inspected here so recursive chain iterations behave like the visible
+    graph as well as the initial execution.
+    """
+    if dynprompt is None or unique_id is None:
+        return False
+    try:
+        node_ids = list(dynprompt.all_node_ids())
+    except (AttributeError, TypeError):
+        try:
+            original = dynprompt.get_original_prompt()
+            node_ids = list(original) if isinstance(original, dict) else []
+        except (AttributeError, TypeError):
+            return False
+    for node_id in node_ids:
+        try:
+            node = dynprompt.get_node(node_id)
+        except Exception:
+            continue
+        if (not isinstance(node, dict)
+                or node.get("class_type") != "MiniMaxH3ChainReview"):
+            continue
+        inputs = node.get("inputs")
+        link = inputs.get("segment") if isinstance(inputs, dict) else None
+        if (is_link(link) and str(link[0]) == str(unique_id)
+                and str(link[1]) == "0"):
+            return True
+    return False
+
+
 def _skipped_reference_result(
         previous: Any, label: str, reason: Any) -> tuple[Any, str, str]:
     try:
@@ -19263,6 +19299,8 @@ class MiniMaxH3ChainSegmentSave:
             "hidden": {
                 "prompt": "PROMPT",
                 "extra_pnginfo": "EXTRA_PNGINFO",
+                "dynprompt": "DYNPROMPT",
+                "unique_id": "UNIQUE_ID",
             },
         }
 
@@ -19285,7 +19323,7 @@ class MiniMaxH3ChainSegmentSave:
 
     def save(self, state, images, sampled_latent, audio=None,
              images_with_overlap=None, denoised_latent=None,
-             prompt=None, extra_pnginfo=None):
+             prompt=None, extra_pnginfo=None, dynprompt=None, unique_id=None):
         if _st_save is None:
             raise RuntimeError("safetensors is required for H3 chain checkpoints.")
         plan = state["plan"]
@@ -19948,18 +19986,16 @@ class MiniMaxH3ChainSegmentSave:
                    published_segment, published_checkpoint, audio_status,
                    blend_status, retained))
         _LOG.info("H3 Chain %s", status)
-        return {
-            "ui": {
-                "text": [status],
-                # Match ComfyUI's native PreviewVideo output.  Its jobs API
-                # recognizes video files under ``images`` with the animated
-                # marker; the non-standard plural ``videos`` key is omitted
-                # from the global Media Assets panel.
+        ui = {"text": [status]}
+        if not _has_downstream_review_gate(dynprompt, unique_id):
+            # Standalone Segment Save keeps ComfyUI's normal, resizable native
+            # video preview.  A connected Review Gate owns the audiovisual
+            # preview instead, so avoid rendering this silent duplicate.
+            ui.update({
                 "images": [_video_output_item(published_segment)],
                 "animated": (True,),
-            },
-            "result": (segment, status),
-        }
+            })
+        return {"ui": ui, "result": (segment, status)}
 
 
 def _review_video(plan: dict[str, Any], segment: dict[str, Any],
