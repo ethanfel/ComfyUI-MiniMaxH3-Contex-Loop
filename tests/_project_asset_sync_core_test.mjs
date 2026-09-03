@@ -5,6 +5,7 @@ import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
     publishProjectAssetCatalogChanged,
     serializedProjectAssetCatalog,
+    serializedProjectAssetIdentity,
 } from "../web/h3_project_asset_sync_core.mjs";
 
 const serializedCatalog = serializedProjectAssetCatalog(JSON.stringify({
@@ -17,6 +18,17 @@ assert.equal(serializedProjectAssetCatalog("not json", "episode"), null);
 assert.equal(serializedProjectAssetCatalog(JSON.stringify({
     project:"other", assets:[], reference_slots:[],
 }), "episode"), null);
+assert.equal(serializedProjectAssetIdentity("episode", ""), "episode");
+assert.equal(serializedProjectAssetIdentity("h3_project", JSON.stringify({
+    project:"restored-run", assets:[], reference_slots:[],
+})), "restored-run");
+assert.equal(serializedProjectAssetIdentity("", JSON.stringify({
+    project:"restored-run", assets:[], reference_slots:[],
+})), "restored-run");
+assert.equal(serializedProjectAssetIdentity("", "not json"), "");
+assert.equal(serializedProjectAssetIdentity("h3_project", JSON.stringify({
+    project:"h3_project", assets:[], reference_slots:[],
+})), "");
 
 const originalCustomEvent = globalThis.CustomEvent;
 const originalDispatchEvent = globalThis.dispatchEvent;

@@ -9,7 +9,8 @@ import {
 import {
     publishProjectAssetCatalogChanged,
     serializedProjectAssetCatalog,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.0";
+    serializedProjectAssetIdentity,
+} from "./h3_project_asset_sync_core.mjs?v=0.6.1";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -312,13 +313,11 @@ function mount(node) {
     ).replace(/[^A-Za-z0-9_-]/g, "_")}`;
     projectSuggestions.id = projectSuggestionId;
     runNameInput.setAttribute("list", projectSuggestionId);
-    const savedRunName = String(runNameWidget?.value ?? "").trim();
-    const connectedRunName = downstreamPlanRunName(node);
-    runNameInput.value = (
-        savedRunName && savedRunName !== "h3_project"
-            ? savedRunName
-            : (connectedRunName || (savedRunName === "h3_project" ? "" : savedRunName))
+    const savedRunName = serializedProjectAssetIdentity(
+        runNameWidget?.value, catalogWidget?.value,
     );
+    const connectedRunName = downstreamPlanRunName(node);
+    runNameInput.value = savedRunName || connectedRunName;
     if (runNameWidget && runNameWidget.value !== runNameInput.value) {
         runNameWidget.value = runNameInput.value;
         runNameWidget.callback?.(runNameInput.value);
@@ -1715,11 +1714,40 @@ function mount(node) {
         const selected = allItems().find((asset) => asset.id === state.selected);
         renderPreview(selected); renderEditor(selected);
     }
-    function hydrateSerializedCatalog() {
-        const catalog = serializedProjectAssetCatalog(
-            catalogWidget?.value, project(),
+    function restoreConfiguredProjectIdentity() {
+        const configuredProject = serializedProjectAssetIdentity(
+            runNameWidget?.value, catalogWidget?.value,
         );
-        if (!catalog) return false;
+        const changed = project() !== configuredProject;
+        if (changed) {
+            refreshSequence += 1;
+            runNameInput.value = configuredProject;
+        }
+        if (runNameWidget && runNameWidget.value !== configuredProject) {
+            // Old workflows may only carry the project in catalog_json.
+            runNameWidget.value = configuredProject;
+        }
+        return {configuredProject, changed};
+    }
+    function hydrateSerializedCatalog({fromConfiguration = false} = {}) {
+        const restored = fromConfiguration
+            ? restoreConfiguredProjectIdentity()
+            : {configuredProject: project(), changed: false};
+        const catalog = serializedProjectAssetCatalog(
+            catalogWidget?.value, restored.configuredProject,
+        );
+        if (!catalog) {
+            if (restored.changed) {
+                stopMedia();
+                state.selected = "";
+                state.catalog = {
+                    project: restored.configuredProject,
+                    assets: [], reference_slots: [], folders: [],
+                };
+                render();
+            }
+            return false;
+        }
         const currentSignature = `${String(state.catalog?.project ?? "")}\u0000${String(
             state.catalog?.revision ?? "",
         )}`;
@@ -2015,13 +2043,13 @@ function mount(node) {
         void refresh();
         return result;
     };
-    node._h3ProjectAssetRefresh = () => {
-        hydrateSerializedCatalog();
+    node._h3ProjectAssetRefresh = ({fromConfiguration = false} = {}) => {
+        hydrateSerializedCatalog({fromConfiguration});
         if (!adoptConnectedRunName()) void refresh();
         scheduleGraphRunNameSync();
     };
     if (savedCatalog) render();
-    node._h3ProjectAssetRefresh();
+    node._h3ProjectAssetRefresh({fromConfiguration: true});
 }
 
 app.registerExtension({
@@ -2036,19 +2064,25 @@ app.registerExtension({
         const configured = nodeClass.prototype.onConfigure;
         nodeClass.prototype.onConfigure = function () {
             const result = configured?.apply(this, arguments);
-            setTimeout(() => this._h3ProjectAssetRefresh?.(), 0); return result;
+            setTimeout(() => this._h3ProjectAssetRefresh?.({
+                fromConfiguration: true,
+            }), 0); return result;
         };
         const graphConfigured = nodeClass.prototype.onGraphConfigured;
         nodeClass.prototype.onGraphConfigured = function () {
             const result = graphConfigured?.apply(this, arguments);
-            setTimeout(() => this._h3ProjectAssetRefresh?.(), 0); return result;
+            setTimeout(() => this._h3ProjectAssetRefresh?.({
+                fromConfiguration: true,
+            }), 0); return result;
         };
     },
     async nodeCreated(node) { if (nodeType(node) === NODE_NAME) mount(node); },
     async afterConfigureGraph() {
         for (const node of app.graph?._nodes ?? []) {
             if (nodeType(node) === NODE_NAME) {
-                setTimeout(() => node._h3ProjectAssetRefresh?.(), 0);
+                setTimeout(() => node._h3ProjectAssetRefresh?.({
+                    fromConfiguration: true,
+                }), 0);
             }
         }
     },

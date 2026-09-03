@@ -173,5 +173,10 @@ assert.match(source, /publishProjectAssetCatalogChanged\(node, state\.catalog\)/
 assert.match(source, /serializedProjectAssetCatalog/);
 assert.match(source, /hydrateSerializedCatalog/);
 assert.match(source, /cached project assets/);
+assert.match(source, /serializedProjectAssetIdentity/);
+assert.match(source, /function restoreConfiguredProjectIdentity\(\)/);
+assert.match(source, /refreshSequence \+= 1;\s*runNameInput\.value = configuredProject/);
+assert.match(source, /node\._h3ProjectAssetRefresh\(\{fromConfiguration: true\}\)/);
+assert.match(source, /_h3ProjectAssetRefresh\?\.\(\{\s*fromConfiguration: true/);
 
 console.log("H3 Project Asset Carousel: metadata slots, binding, sources, lazy media, editing, and cleanup pass");
