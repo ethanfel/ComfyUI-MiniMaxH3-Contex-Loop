@@ -4,6 +4,17 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added workflow ownership for Carousel-backed projects. The first workflow
+  that opens a Run becomes its writer and maintains a liveness heartbeat;
+  other tabs and computers connected to that server remain read-only until the
+  owner releases it or **Force ownership** explicitly fences the previous
+  workflow. Backend checks protect asset edits, prompt history, editorial
+  state, checkpoint/review operations, generation start, and checkpoint
+  publication. Ownership proofs are session-only and are scrubbed from saved
+  Plan, API-prompt, workflow, and deferred-review recovery archives. Read-only
+  workflows can still inspect, preview, export, assemble, and fork the project
+  into a new Run.
+
 - Added **MiniMax H3 Pending Review**, an optional one-wire Review Gate mode.
   It generates the complete candidate batch, stores a durable pending-review
   record beside the existing immutable checkpoints, and stops cleanly instead

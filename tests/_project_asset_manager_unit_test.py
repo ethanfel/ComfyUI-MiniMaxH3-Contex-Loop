@@ -56,6 +56,8 @@ def main():
         "run_name"][1]["default"] == ""
     assert "tagged_references" in (
         chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"])
+    assert "ownership_json" in (
+        chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"])
     assert chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"][
         "upscale_model"][1]["lazy"] is True
     assert "operation_json" in (
@@ -161,6 +163,60 @@ def main():
         assert studio_timeline["fingerprints"]["timeline"] == (
             timeline["fingerprints"]["timeline"])
 
+        claimed = chain.claim_project_ownership(
+            folder_paths.get_output_directory(), "episode",
+            "asset-manager-owner-1234567890", "Asset workflow")
+        read_only_record = chain.MiniMaxH3ProjectAssetManager().build(
+            "episode", "", "512", "timestamped_video")[0]
+        assert "_project_ownership" not in read_only_record
+        read_only_plan = chain.MiniMaxH3ChainPlan().build(
+            json.dumps({"shots": [{"id": "one", "prompt": "Use @hero."}]}),
+            "wrong_name", "", 960, 544, 22, "video", "head", "disabled",
+            "generated_audio", 22, 15.0, 20, 0, 18,
+            project_assets=read_only_record,
+        )[0]
+        try:
+            chain._require_plan_write(read_only_plan, "queue generation")
+        except chain.ProjectOwnershipError as exc:
+            assert "read-only" in str(exc)
+        else:
+            raise AssertionError(
+                "read-only Carousel unexpectedly authorized generation")
+        protected_operation = json.dumps({
+            "mode": "model", "project": "episode",
+            "asset_id": hero_result["asset"]["id"],
+            "crop": {"x": 0, "y": 0, "width": 80, "height": 48},
+            "target": {"width": 160, "height": 96},
+            "operation_id": "protected-upscale",
+        })
+        try:
+            chain.MiniMaxH3ProjectAssetManager().build(
+                "episode", "", "512", "timestamped_video",
+                operation_json=protected_operation,
+                upscale_model=object())
+        except chain.ProjectOwnershipError as exc:
+            assert "read-only" in str(exc)
+        else:
+            raise AssertionError(
+                "read-only Carousel accepted an asset mutation")
+        owner_proof = {
+            "owner_id": "asset-manager-owner-1234567890",
+            "epoch": claimed["epoch"],
+        }
+        owned_record = chain.MiniMaxH3ProjectAssetManager().build(
+            "episode", "", "512", "timestamped_video",
+            ownership_json=json.dumps(owner_proof))[0]
+        assert owned_record["_project_ownership"] == {
+            **owner_proof, "run_name": "episode"}
+        owned_plan = chain.MiniMaxH3ChainPlan().build(
+            json.dumps({"shots": [{"id": "one", "prompt": "Use @hero."}]}),
+            "wrong_name", "", 960, 544, 22, "video", "head", "disabled",
+            "generated_audio", 22, 15.0, 20, 0, 18,
+            project_assets=owned_record,
+        )[0]
+        assert owned_plan["_project_ownership"] == owned_record[
+            "_project_ownership"]
+
         template_record, template_refs, _token, _timeline, template_status = (
             chain.MiniMaxH3ProjectAssetManager().build(
                 "template_only", "", "512", "timestamped_video",
@@ -235,6 +291,14 @@ def main():
                 return chain.torch.nn.functional.interpolate(
                     tensor, scale_factor=2, mode="nearest")
 
+        class TakeoverUpscaleModel(FakeUpscaleModel):
+            def __call__(self, tensor):
+                chain.claim_project_ownership(
+                    folder_paths.get_output_directory(), "episode",
+                    "asset-manager-takeover-1234567890",
+                    "Takeover workflow", force=True)
+                return super().__call__(tensor)
+
         upscaled = chain._project_asset_model_upscale(
             Image.new("RGBA", (10, 6), (10, 20, 30, 128)),
             FakeUpscaleModel())
@@ -245,8 +309,29 @@ def main():
             "crop": {"x": 5, "y": 4, "width": 50, "height": 30},
             "target": {"width": 120, "height": 72},
         }
+        fenced_operation = {
+            **model_operation,
+            "operation_id": "unit-model-fenced",
+            "tag": "hero_model_fenced",
+        }
+        try:
+            chain._execute_project_asset_model_operation(
+                store, "episode", fenced_operation, TakeoverUpscaleModel(),
+                json.dumps(owner_proof))
+        except chain.ProjectOwnershipError as exc:
+            assert "stale workflow" in str(exc)
+        else:
+            raise AssertionError(
+                "forced takeover did not fence an in-flight asset publish")
+        assert store.operation_asset(
+            "episode", fenced_operation["operation_id"]) is None
+        reclaimed = chain.claim_project_ownership(
+            folder_paths.get_output_directory(), "episode",
+            owner_proof["owner_id"], "Asset workflow", force=True)
+        owner_proof["epoch"] = reclaimed["epoch"]
         model_variant = chain._execute_project_asset_model_operation(
-            store, "episode", model_operation, FakeUpscaleModel())
+            store, "episode", model_operation, FakeUpscaleModel(),
+            json.dumps(owner_proof))
         assert model_variant["asset"]["metadata"]["width"] == 120
         assert model_variant["asset"]["transform"]["kind"] == (
             "model_upscale_crop")

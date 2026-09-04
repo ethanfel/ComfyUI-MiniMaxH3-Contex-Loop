@@ -1,5 +1,6 @@
 import {app} from "/scripts/app.js";
 import {api} from "/scripts/api.js";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.2";
 import {
     MAX_SHOTS,
     makeShot,
@@ -998,11 +999,12 @@ function mount(node) {
         const suffix = new URLSearchParams(query).toString();
         const response = await api.fetchApi(
             `/minimax_h3_context_loop/prompt-history${suffix ? `?${suffix}` : ""}`,
-            body == null ? undefined : {
+            body == null ? undefined : await projectMutationOptions(node,
+                body.run_name ?? query.run_name ?? "", {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify(body),
-            },
+            }),
         );
         let payload = {};
         try {

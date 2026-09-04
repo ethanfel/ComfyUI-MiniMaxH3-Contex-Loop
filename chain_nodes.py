@@ -142,6 +142,14 @@ from .checkpoint_manager import (
     checkpoint_revision_token,
     checkpoint_run_lock,
 )
+from .project_ownership import (
+    ProjectOwnershipError,
+    claim_project_ownership,
+    heartbeat_project_ownership,
+    ownership_status,
+    release_project_ownership,
+    require_project_ownership,
+)
 
 
 _LOG = logging.getLogger("minimax_h3_context_loop.chain")
@@ -178,6 +186,57 @@ PLAN_STUDIO_THUMBNAIL_WIDTH = 320
 _PLAN_STUDIO_SOURCE_PREVIEWS: dict[str, dict[str, Any]] = {}
 _PLAN_STUDIO_PREVIEW_BUILD_LOOP: asyncio.AbstractEventLoop | None = None
 _PLAN_STUDIO_PREVIEW_BUILD_GATE: asyncio.Semaphore | None = None
+
+
+def _project_ownership_proof(value: Any) -> dict[str, Any] | None:
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError as exc:
+            raise ValueError(
+                "H3 workflow ownership proof is invalid JSON.") from exc
+    if not isinstance(value, dict):
+        return None
+    owner_id = str(value.get("owner_id") or "").strip()
+    try:
+        epoch = int(value.get("epoch"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("H3 workflow ownership epoch is invalid.") from exc
+    if not owner_id:
+        raise ValueError("H3 workflow ownership id is missing.")
+    return {"owner_id": owner_id, "epoch": epoch}
+
+
+def _request_project_ownership(request: Any) -> dict[str, Any] | None:
+    headers = getattr(request, "headers", {}) or {}
+    owner_id = str(headers.get("X-H3-Workflow-Owner") or "").strip()
+    epoch = str(headers.get("X-H3-Ownership-Epoch") or "").strip()
+    if not owner_id and not epoch:
+        return None
+    return _project_ownership_proof({"owner_id": owner_id, "epoch": epoch})
+
+
+def _require_project_write(run_name: Any, proof: Any,
+                           operation: str) -> dict[str, Any] | None:
+    return require_project_ownership(
+        _output_root(), _safe_name(run_name, ""),
+        _project_ownership_proof(proof), operation)
+
+
+def _require_plan_write(plan: Any, operation: str) -> None:
+    if not isinstance(plan, dict):
+        raise ValueError("H3 project mutation requires a valid Plan.")
+    _require_project_write(
+        plan.get("run_name"), plan.get("_project_ownership"), operation)
+
+
+def _archivable_plan(plan: dict[str, Any]) -> dict[str, Any]:
+    """Clone a Plan without its ephemeral workflow fencing proof."""
+    archived = dict(plan)
+    archived.pop("_project_ownership", None)
+    return archived
 _PLAN_STUDIO_PREVIEW_BUILD_TASKS: dict[str, asyncio.Task[str]] = {}
 _PLAN_STUDIO_THUMBNAIL_BUILD_LOOP: asyncio.AbstractEventLoop | None = None
 _PLAN_STUDIO_THUMBNAIL_BUILD_GATE: asyncio.Semaphore | None = None
@@ -9162,6 +9221,11 @@ def _matching_plan_node_ids(api_prompt: Any,
     candidates: list[tuple[str, dict[str, Any]]] = []
     exact: list[tuple[str, dict[str, Any]]] = []
     for node_id, node in document.items():
+        if (isinstance(node, dict) and
+                node.get("class_type") == "MiniMaxH3ProjectAssetManager"):
+            inputs = node.get("inputs")
+            if isinstance(inputs, dict):
+                inputs["ownership_json"] = ""
         if (not isinstance(node, dict) or node.get("class_type") not in
                 ("MiniMaxH3ChainPlan", "MiniMaxH3ChainPlanModern")):
             continue
@@ -9180,11 +9244,28 @@ def _matching_plan_node_ids(api_prompt: Any,
     return document, {node_id for node_id, _inputs in selected}
 
 
+def _strip_workflow_ownership(value: Any) -> None:
+    """Blank transient Carousel ownership in root and subgraph workflows."""
+    if isinstance(value, list):
+        for item in value:
+            _strip_workflow_ownership(item)
+        return
+    if not isinstance(value, dict):
+        return
+    if value.get("type") == "MiniMaxH3ProjectAssetManager":
+        widgets = value.get("widgets_values")
+        if isinstance(widgets, list) and len(widgets) > 5:
+            widgets[5] = ""
+    for item in value.values():
+        _strip_workflow_ownership(item)
+
+
 def _patched_workflow(workflow: Any, plan: dict[str, Any],
                       plan_node_ids: set[str]) -> Any:
     document = _json_document(workflow)
     if not isinstance(document, dict):
         return None
+    _strip_workflow_ownership(document)
     nodes = document.get("nodes")
     if not isinstance(nodes, list):
         return document
@@ -9223,7 +9304,7 @@ def _write_run_archives(plan: dict[str, Any], api_prompt: Any = None,
     another segment without hidden metadata.
     """
     paths = _run_archive_paths(plan)
-    archived_plan = dict(plan)
+    archived_plan = _archivable_plan(plan)
     archived_plan["format"] = "h3_chain_plan_archive_v1"
     archived_plan["editor_plan"] = _effective_editor_plan(plan)
     _atomic_json(paths["plan"], archived_plan)
@@ -14474,6 +14555,7 @@ class MiniMaxH3ChainExternalVideo:
 
     def prepare(self, plan, source_frames=None, source_fps=24.0,
                 prepend_original=True, source_audio=None, source_video=None):
+        _require_plan_write(plan, "prepare existing-video project artifacts")
         source_frames, source_audio, source_fps, input_route = (
             _resolve_video_inputs(
                 source_video, source_frames, source_audio, source_fps,
@@ -15422,6 +15504,11 @@ class MiniMaxH3ChainPlan:
             plan = dict(plan)
             plan["source_timeline"] = _source_timeline_recovery_record(
                 project["source_timeline"])
+        if project is not None and isinstance(
+                project.get("_project_ownership"), dict):
+            plan = dict(plan)
+            plan["_project_ownership"] = dict(
+                project["_project_ownership"])
         return (plan, plan["summary"], len(plan["shots"]),
                 plan["compatibility"]["width"],
                 plan["compatibility"]["height"],
@@ -17390,6 +17477,7 @@ class MiniMaxH3ChainPlanStudio:
             editorial = _normalize_run_editorial(
                 editorial, plan.get("run_name"))
         plan = _alternate_take_plan(plan, editorial)
+        _require_plan_write(plan, "update the Plan Studio presentation")
         alternate = _alternate_take_descriptor(plan)
         if alternate is not None:
             start_clip = int(alternate["scene"])
@@ -17612,7 +17700,7 @@ def _project_asset_model_upscale(image: Any, upscale_model: Any) -> Any:
 
 def _execute_project_asset_model_operation(
         store: ProjectAssetStore, run_name: str, operation: dict[str, Any],
-        upscale_model: Any) -> dict[str, Any]:
+        upscale_model: Any, ownership_proof: Any = None) -> dict[str, Any]:
     operation_project = str(operation.get("project") or "").strip()
     if (operation_project
             and _safe_name(operation_project, "") != _safe_name(run_name, "")):
@@ -17642,6 +17730,11 @@ def _execute_project_asset_model_operation(
         run_name, "%s_model_variant.png" % parent.get("tag", "asset"))
     try:
         rendered.save(temporary, format="PNG")
+        # Model execution can outlive a browser ownership takeover. Recheck
+        # the fencing epoch immediately before publishing the derived asset;
+        # a stale workflow may finish compute but cannot alter the catalog.
+        _require_project_write(
+            run_name, ownership_proof, "publish an upscaled image variant")
         return store.register_derived_image(
             run_name, operation.get("asset_id"), temporary,
             tag=operation.get("tag", ""),
@@ -17705,6 +17798,14 @@ class MiniMaxH3ProjectAssetManager:
                                "H3 generation."}),
             },
             "optional": {
+                "ownership_json": ("STRING", {
+                    "default": "", "multiline": False,
+                    "dynamicPrompts": False,
+                    "tooltip": "Ephemeral workflow ownership proof. The "
+                               "Carousel maintains it only in this browser "
+                               "session and "
+                               "it is deliberately excluded from saved "
+                               "workflow and recovery metadata."}),
                 "tagged_references": (TAGGED_REFERENCE_TYPE, {
                     "tooltip": "Optional migration/template input. The "
                                "carousel reads tag, media kind, role, and "
@@ -17746,24 +17847,31 @@ class MiniMaxH3ProjectAssetManager:
         "references are decoded during sampling.")
 
     @classmethod
-    def IS_CHANGED(cls, run_name, catalog_json="", operation_json="", **_kwargs):
+    def IS_CHANGED(cls, run_name, catalog_json="", operation_json="",
+                   ownership_json="", **_kwargs):
         try:
             catalog = ProjectAssetStore(
                 _input_root(), _output_root()).load(run_name)
-            return "%s:%s" % (
+            return "%s:%s:%s" % (
                 str(catalog.get("revision") or ""),
                 hashlib.sha256(str(operation_json or "").encode(
+                    "utf-8")).hexdigest(),
+                hashlib.sha256(str(ownership_json or "").encode(
                     "utf-8")).hexdigest())
         except Exception:
-            return "%s:%s" % (str(catalog_json or ""), operation_json or "")
+            return "%s:%s:%s" % (
+                str(catalog_json or ""), operation_json or "",
+                ownership_json or "")
 
     def check_lazy_status(
             self, run_name, catalog_json="", semantic_anchor_size="512",
             semantic_anchor_mode="timestamped_video",
             tagged_references=None, operation_json="",
+            ownership_json="",
             upscale_model=_LAZY_INPUT_MISSING):
         del catalog_json, semantic_anchor_size
         del semantic_anchor_mode, tagged_references
+        del ownership_json
         operation = _project_asset_pending_operation(operation_json)
         if operation is not None:
             try:
@@ -17780,14 +17888,31 @@ class MiniMaxH3ProjectAssetManager:
     def build(self, run_name, catalog_json="", semantic_anchor_size="512",
               semantic_anchor_mode="timestamped_video",
               tagged_references=None, operation_json="",
+              ownership_json="",
               upscale_model=_LAZY_INPUT_MISSING):
         del catalog_json  # Disk catalog is authoritative; widget is UI state.
+        # Carousel is an OUTPUT_NODE so it can run asset-only upscale jobs.
+        # Its ordinary catalog build must remain readable when another
+        # workflow owns the Run; downstream write nodes receive no proof and
+        # enforce the lock themselves. Only actual Carousel mutations below
+        # require a current fencing proof.
+        ownership = None
+        can_write = True
+        try:
+            ownership = _require_project_write(
+                run_name, ownership_json, "change project assets")
+        except ProjectOwnershipError:
+            can_write = False
         store = ProjectAssetStore(_input_root(), _output_root())
         operation = _project_asset_pending_operation(operation_json)
         completed_operation = ""
         if operation is not None:
             result = store.operation_asset(
                 run_name, operation.get("operation_id", ""))
+            if result is None and not can_write:
+                _require_project_write(
+                    run_name, ownership_json,
+                    "create an upscaled image variant")
             if (result is None and
                     (upscale_model is _LAZY_INPUT_MISSING
                      or upscale_model is None)):
@@ -17795,10 +17920,11 @@ class MiniMaxH3ProjectAssetManager:
                     "Connect a core UPSCALE_MODEL before using Model upscale.")
             if result is None:
                 result = _execute_project_asset_model_operation(
-                    store, run_name, operation, upscale_model)
+                    store, run_name, operation, upscale_model,
+                    ownership_json)
             completed_operation = str(
                 (result.get("asset") or {}).get("id") or "")
-        if tagged_references is not None:
+        if tagged_references is not None and can_write:
             store.sync_reference_slots(
                 run_name,
                 _project_asset_reference_templates(tagged_references))
@@ -17924,6 +18050,8 @@ class MiniMaxH3ProjectAssetManager:
             "source_timeline_asset_id": (
                 str(source_entries[0]["id"]) if source_entries else ""),
         }
+        if ownership is not None:
+            record["_project_ownership"] = ownership
         unresolved = len(catalog.get("reference_slots", []))
         status = (
             "%s: %d native, %d semantic, %d unassigned, source track %s; %s"
@@ -18012,6 +18140,7 @@ class MiniMaxH3ChainRunManager:
     def passthrough(self, plan, archive_images, archive_audio, archive_video,
                     asset_bindings_json, source_timeline=None,
                     tagged_references=None, **_assets):
+        _require_plan_write(plan, "archive Run Manager project assets")
         if tagged_references is not None:
             _tagged_reference_entries(tagged_references)
             _reference_semantic_anchor_bundle(tagged_references)
@@ -18319,6 +18448,7 @@ class MiniMaxH3ChainLoopStart:
               source_timeline=None,
               initial_state=None):
         if initial_state is None:
+            _require_plan_write(plan, "queue or resume generation")
             alternate = _alternate_take_descriptor(plan)
             if alternate is not None:
                 start_clip = int(alternate["scene"])
@@ -18462,6 +18592,10 @@ class MiniMaxH3ChainCurrent:
 
     def current(self, state, source_audio=None, align_audio_reference=False):
         plan = state["plan"]
+        # Check at every recursive scene boundary. A forced takeover that
+        # occurred after Loop Start therefore stops before prompt-history or
+        # model work for the next scene can begin.
+        _require_plan_write(plan, "begin scene generation")
         index = int(state["index"])
         shot = plan["shots"][index - 1]
         source_timeline = state.get("source_timeline")
@@ -19386,6 +19520,7 @@ class MiniMaxH3ChainSegmentSave:
         if _st_save is None:
             raise RuntimeError("safetensors is required for H3 chain checkpoints.")
         plan = state["plan"]
+        _require_plan_write(plan, "publish a scene checkpoint")
         index = int(state["index"])
         shot = plan["shots"][index - 1]
         compatibility = plan["compatibility"]
@@ -20013,6 +20148,11 @@ class MiniMaxH3ChainSegmentSave:
             # This metadata replacement is the transaction's commit point. Until
             # it succeeds, resume keeps referencing the previous immutable pair.
             with checkpoint_run_lock(_output_root(), plan["run_name"]):
+                # Force ownership may have happened while the segment video or
+                # checkpoint was being encoded. Fence again at the canonical
+                # pointer commit; the finally block removes this stale job's
+                # immutable candidate artifacts if the proof was superseded.
+                _require_plan_write(plan, "publish a scene checkpoint")
                 _atomic_json(published_metadata, metadata)
                 if alternate_take is None:
                     _atomic_json(paths["metadata"], metadata)
@@ -20342,7 +20482,7 @@ def _persist_deferred_review(
         "scene": int(public["clip_index"]),
         "created_at": datetime.now(timezone.utc).isoformat(
             timespec="seconds").replace("+00:00", "Z"),
-        "plan": plan,
+        "plan": _archivable_plan(plan),
         "candidates": candidates,
         "public": public,
     }
@@ -20888,6 +21028,7 @@ class MiniMaxH3ChainReview:
         if not enabled and not defer_completed_batch:
             status = "review bypassed for clip %d" % index
             return {"ui": {"text": [status]}, "result": (segment, status)}
+        _require_plan_write(plan, "create or change a scene review")
         if PromptServer is None or web is None:
             raise RuntimeError("H3 Chain Review requires ComfyUI's prompt server.")
 
@@ -21198,6 +21339,11 @@ class MiniMaxH3ChainReview:
                 "timeout_seconds": 0.0,
                 "server_now": time.time(),
             })
+            # Preparing/muxing the candidate preview can take long enough for
+            # another workflow to force ownership in the meantime. Fence the
+            # actual pending-review publication, not only gate entry.
+            _require_plan_write(
+                plan, "publish a pending scene review")
             _persist_deferred_review(plan, payload, candidates)
             PromptServer.instance.send_sync(
                 "minimax_h3_context_loop_review", dict(payload),
@@ -21246,6 +21392,11 @@ class MiniMaxH3ChainReview:
             if not future.done():
                 future.cancel()
 
+        # A Review Gate may remain open for hours. A forced ownership transfer
+        # must invalidate its eventual decision before candidate activation,
+        # pruning, Plan archival, or partial assembly can touch the project.
+        _require_plan_write(
+            plan, "apply a scene review decision")
         action = decision["action"]
         if action == "next_candidate":
             next_seed = int(decision["seed"])
@@ -21648,6 +21799,7 @@ class MiniMaxH3ChainLoopEnd:
     def end(self, flow, state, images, sampled_latent, segment,
             between_scene_cleanup="off", dynprompt=None, unique_id=None):
         plan = state["plan"]
+        _require_plan_write(plan, "advance or finish the scene loop")
         index = int(state["index"])
         if int(segment.get("index", -1)) != index:
             raise ValueError("H3 Chain End received the wrong segment for clip %d."
@@ -21692,6 +21844,11 @@ class MiniMaxH3ChainLoopEnd:
         alternate_take = _alternate_take_descriptor(plan)
         if alternate_take is not None:
             public_alternate = _public_segment(segment)
+            # Publishing the alternate updates final-cut state. Recheck at
+            # that commit boundary in case ownership changed after this Loop
+            # End invocation began.
+            _require_plan_write(
+                plan, "publish an accepted alternate take")
             editorial = _select_editorial_alternate(plan, public_alternate)
             values = list(state.get("segments", [])) + [public_alternate]
             manifest = _manifest_from_segments(plan, values, complete=False)
@@ -21773,6 +21930,10 @@ class MiniMaxH3ChainLoopEnd:
                 manifest_path = os.path.join(
                     _run_dir(plan), "partial",
                     "through_clip_%04d.manifest.json" % end_clip)
+            # Recursive execution and cleanup can leave a sizeable interval
+            # between the entry check and final manifest publication.
+            _require_plan_write(
+                plan, "publish the scene-loop manifest")
             _atomic_json(manifest_path, manifest)
         manifest_json = json.dumps(manifest, ensure_ascii=False, indent=2,
                                    sort_keys=True)
@@ -21867,12 +22028,24 @@ class MiniMaxH3ChainManifestLoad:
                 _run_dir(prepared_plan), "partial",
                 "through_clip_%04d.manifest.json" % saved_count)
             kind = "partial"
-        _atomic_json(manifest_path, manifest)
+        manifest_persisted = True
+        try:
+            _require_plan_write(
+                prepared_plan, "rewrite a reconstructed recovery manifest")
+        except ProjectOwnershipError:
+            # Recovery inspection and export remain safe from a non-owner.
+            # Return the verified in-memory manifest without letting a stale
+            # workflow change even this derived project file.
+            manifest_persisted = False
+        if manifest_persisted:
+            _atomic_json(manifest_path, manifest)
         manifest_json = json.dumps(
             manifest, ensure_ascii=False, indent=2, sort_keys=True)
         status = "loaded and verified %s manifest through clip %d/%d from %s" % (
             kind, saved_count, len(prepared_plan["shots"]),
             _run_dir(prepared_plan))
+        if not manifest_persisted:
+            status += "; read-only workflow, disk manifest left unchanged"
         return (manifest, manifest_json, status)
 
 
@@ -25674,6 +25847,10 @@ async def _submit_candidate_batch_command(request):
         return web.json_response(
             {"error": "This H3 candidate batch is no longer running."},
             status=404)
+    rejection = _project_write_rejection(
+        request, entry.get("run_name", ""), "change candidate review state")
+    if rejection is not None:
+        return rejection
     action = str(body.get("action") or "")
     if action == "finalize":
         command = entry.get("command")
@@ -25821,6 +25998,11 @@ async def _submit_review_decision(request):
     if pending is None:
         return web.json_response(
             {"error": "This H3 review is no longer pending."}, status=404)
+    rejection = _project_write_rejection(
+        request, pending.get("public", {}).get("run_name", ""),
+        "change review state")
+    if rejection is not None:
+        return rejection
     future = pending["future"]
     if future.done():
         return web.json_response(
@@ -26062,6 +26244,10 @@ async def _submit_deferred_review(request):
             status=400)
     try:
         run_name = _safe_name(body.get("run_name", ""), "")
+        rejection = _project_write_rejection(
+            request, run_name, "finalize a pending review")
+        if rejection is not None:
+            return rejection
         document, path = _load_deferred_review(
             run_name, body.get("token"))
         action = str(body.get("action") or "")
@@ -26483,6 +26669,10 @@ async def _restore_checkpoint_revisions(request):
         run_name = _safe_name(body.get("run_name", ""), "")
         if not run_name:
             raise ValueError("A non-empty H3 chain run_name is required.")
+        rejection = _project_write_rejection(
+            request, run_name, "activate checkpoint revisions")
+        if rejection is not None:
+            return rejection
         activate_only = body.get("activate_only") is True
         scope_start_scene = int(body.get("scope_start_scene", 1))
         scope_end_scene = int(body.get("scope_end_scene", MAX_SHOTS))
@@ -26742,6 +26932,11 @@ async def _attribute_checkpoint_revision(request):
         return web.json_response(
             {"error": "Checkpoint candidate attribution requires a JSON object."},
             status=400)
+    rejection = _project_write_rejection(
+        request, body.get("run_name", ""),
+        "attribute a checkpoint candidate")
+    if rejection is not None:
+        return rejection
     try:
         payload = await asyncio.to_thread(
             CheckpointGraphManager(_output_root()).attribute,
@@ -26762,6 +26957,15 @@ async def _delete_checkpoint_revision(request):
         return web.json_response(
             {"error": "Checkpoint revision deletion requires JSON."},
             status=400)
+    if not isinstance(body, dict):
+        return web.json_response({
+            "error": "Checkpoint revision deletion requires a JSON object.",
+        }, status=400)
+    rejection = _project_write_rejection(
+        request, body.get("run_name", ""),
+        "delete a checkpoint revision")
+    if rejection is not None:
+        return rejection
     try:
         payload = CheckpointGraphManager(_output_root()).delete(
             body.get("run_name"), body.get("scene"), body.get("revision"),
@@ -27082,6 +27286,14 @@ async def _update_run_editorial(request):
     except (json.JSONDecodeError, TypeError):
         return web.json_response(
             {"error": "H3 run editorial data requires JSON."}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response({
+            "error": "H3 run editorial data requires a JSON object.",
+        }, status=400)
+    rejection = _project_write_rejection(
+        request, body.get("run_name", ""), "update the final cut")
+    if rejection is not None:
+        return rejection
     try:
         payload = await asyncio.to_thread(_save_run_editorial_document, body)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
@@ -27150,6 +27362,10 @@ async def _delete_complete_run_folder(request):
         return web.json_response(
             {"error": "Complete run-folder deletion requires a JSON object."},
             status=400)
+    rejection = _project_write_rejection(
+        request, body.get("run_name", ""), "delete the complete run folder")
+    if rejection is not None:
+        return rejection
     try:
         payload = await asyncio.to_thread(
             _delete_run_folder, body.get("run_name"), body.get("snapshot"),
@@ -27196,6 +27412,10 @@ async def _update_prompt_history(request):
             {"error": "The prompt-history request must contain a JSON object."},
             status=400)
     action = str(body.get("action") or "")
+    rejection = _project_write_rejection(
+        request, body.get("run_name", ""), "change prompt history")
+    if rejection is not None:
+        return rejection
     store = PromptHistoryStore(_output_root())
     try:
         if action == "save":
@@ -27265,6 +27485,10 @@ async def _save_run_assets(request):
     if not isinstance(body, dict):
         return web.json_response(
             {"error": "The asset request must contain a JSON object."}, status=400)
+    rejection = _project_write_rejection(
+        request, body.get("run_name", ""), "archive run assets")
+    if rejection is not None:
+        return rejection
     try:
         payload = await asyncio.to_thread(
             RunAssetStore(_output_root(), _input_root()).save,
@@ -27939,6 +28163,10 @@ async def _project_asset_upload(request):
         if upload is None:
             raise ValueError("Upload request contains no file.")
         project = fields.get("project", "")
+        rejection = _project_write_rejection(
+            request, project, "upload a project asset")
+        if rejection is not None:
+            return rejection
         filename = upload.filename or "asset"
         store = _project_asset_store()
         temporary = store.upload_path(project, filename)
@@ -27974,6 +28202,10 @@ async def _project_asset_import(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset import request must be a JSON object.")
+        rejection = _project_write_rejection(
+            request, body.get("project", ""), "import a project asset")
+        if rejection is not None:
+            return rejection
         store = _project_asset_store()
         source = str(body.get("source") or "input").strip().lower()
         if source == "input":
@@ -28015,6 +28247,10 @@ async def _project_asset_update(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset update request must be a JSON object.")
+        rejection = _project_write_rejection(
+            request, body.get("project", ""), "update a project asset")
+        if rejection is not None:
+            return rejection
         result = await asyncio.to_thread(
             _project_asset_store().update,
             body.get("project", ""), body.get("asset_id"),
@@ -28029,6 +28265,10 @@ async def _project_asset_duplicate(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset duplication request must be a JSON object.")
+        rejection = _project_write_rejection(
+            request, body.get("project", ""), "duplicate a project asset")
+        if rejection is not None:
+            return rejection
         result = await asyncio.to_thread(
             _project_asset_store().duplicate,
             body.get("project", ""), body.get("asset_id"),
@@ -28046,6 +28286,10 @@ async def _project_asset_duplicate_project(request):
         if not isinstance(body, dict):
             raise ValueError(
                 "Asset-project duplication request must be a JSON object.")
+        # This is a read-only operation on the source project: the store
+        # refuses an existing destination Run and copies into a brand-new
+        # project tree.  Keep it available as the safe fork path for a
+        # workflow that does not own the source.
         result = await asyncio.to_thread(
             _project_asset_store().duplicate_project,
             body.get("project", ""), body.get("new_project", ""))
@@ -28061,6 +28305,10 @@ async def _project_asset_derive(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Image variant request must be a JSON object.")
+        rejection = _project_write_rejection(
+            request, body.get("project", ""), "create an image variant")
+        if rejection is not None:
+            return rejection
         result = await asyncio.to_thread(
             _project_asset_store().derive_image,
             body.get("project", ""), body.get("asset_id"),
@@ -28084,6 +28332,10 @@ async def _project_asset_folder(request):
         store = _project_asset_store()
         action = str(body.get("action") or "").strip().lower()
         project = body.get("project", "")
+        rejection = _project_write_rejection(
+            request, project, "%s a project folder" % (action or "modify"))
+        if rejection is not None:
+            return rejection
         if action == "create":
             result = await asyncio.to_thread(
                 store.create_folder, project, body.get("name"),
@@ -28111,6 +28363,10 @@ async def _project_asset_reorder(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset reorder request must be a JSON object.")
+        rejection = _project_write_rejection(
+            request, body.get("project", ""), "reorder project assets")
+        if rejection is not None:
+            return rejection
         result = await asyncio.to_thread(
             _project_asset_store().reorder,
             body.get("project", ""), body.get("asset_ids"))
@@ -28124,10 +28380,121 @@ async def _project_asset_delete(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset deletion request must be a JSON object.")
+        rejection = _project_write_rejection(
+            request, body.get("project", ""), "delete a project asset")
+        if rejection is not None:
+            return rejection
         result = await asyncio.to_thread(
             _project_asset_store().delete,
             body.get("project", ""), body.get("asset_id"))
         return web.json_response(result)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
+def _project_write_rejection(request: Any, run_name: Any,
+                             operation: str) -> Any:
+    # Let each route retain its established missing-run validation. Ownership
+    # can only be resolved after the route has an actual project identity.
+    if not _safe_name(run_name, ""):
+        return None
+    try:
+        _require_project_write(
+            run_name, _request_project_ownership(request), operation)
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc),
+            "code": "h3_project_read_only",
+            "run_name": _safe_name(run_name, ""),
+        }, status=423)
+    return None
+
+
+def _publish_project_ownership(payload: dict[str, Any]) -> None:
+    if PromptServer is None or getattr(PromptServer, "instance", None) is None:
+        return
+    try:
+        PromptServer.instance.send_sync(
+            "minimax_h3_project_ownership", payload)
+    except Exception as exc:
+        _LOG.debug("Could not publish H3 project ownership: %s", exc)
+
+
+def _fence_inflight_project_work(run_name: Any) -> None:
+    """Wake live gates and discard candidate control state after takeover."""
+    normalized = _safe_name(run_name, "")
+    if not normalized:
+        return
+    for token, entry in list(_ACTIVE_CANDIDATE_BATCHES.items()):
+        if _safe_name(entry.get("run_name"), "") == normalized:
+            _ACTIVE_CANDIDATE_BATCHES.pop(token, None)
+    for token, pending in list(_PENDING_REVIEWS.items()):
+        public = pending.get("public")
+        if (not isinstance(public, dict) or
+                _safe_name(public.get("run_name"), "") != normalized):
+            continue
+        _PENDING_REVIEWS.pop(token, None)
+        future = pending.get("future")
+        loop = pending.get("loop")
+        if future is None or future.done():
+            continue
+
+        def reject(waiter=future, run=normalized):
+            if not waiter.done():
+                waiter.set_exception(ProjectOwnershipError(
+                    "Project %s was taken over by another workflow while "
+                    "this review was waiting." % run))
+
+        if loop is not None and hasattr(loop, "call_soon_threadsafe"):
+            loop.call_soon_threadsafe(reject)
+        else:
+            reject()
+
+
+async def _project_ownership_command(request):
+    try:
+        body = await request.json()
+        if not isinstance(body, dict):
+            raise ValueError(
+                "Project ownership request must be a JSON object.")
+        run_name = _safe_name(body.get("run_name"), "")
+        if not run_name:
+            raise ValueError("A non-empty H3 chain run_name is required.")
+        action = str(body.get("action") or "status").strip().lower()
+        owner_id = body.get("owner_id", "")
+        if action == "status":
+            payload = ownership_status(_output_root(), run_name, owner_id)
+        elif action in ("claim", "force"):
+            before = ownership_status(_output_root(), run_name, owner_id)
+            payload = claim_project_ownership(
+                _output_root(), run_name, owner_id,
+                body.get("owner_label", "Workflow"),
+                force=action == "force")
+            if (action == "force" and payload.get("owned_by_requester")
+                    and (not before.get("owned_by_requester") or int(
+                        payload.get("epoch", -1)) != int(
+                            before.get("epoch", -1)))):
+                _fence_inflight_project_work(run_name)
+        elif action == "heartbeat":
+            payload = heartbeat_project_ownership(
+                _output_root(), run_name, owner_id, body.get("epoch"),
+                body.get("owner_label", "Workflow"))
+        elif action == "release":
+            payload = release_project_ownership(
+                _output_root(), run_name, owner_id, body.get("epoch"))
+        else:
+            raise ValueError(
+                "Project ownership action must be status, claim, heartbeat, "
+                "force, or release.")
+        # Status polling and heartbeats must not echo into another status
+        # broadcast loop. Only ownership transitions need to wake other tabs.
+        if action in ("claim", "force", "release"):
+            _publish_project_ownership(payload)
+        return web.json_response(payload, headers={"Cache-Control": "no-store"})
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+        }, status=423)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
 
@@ -28165,6 +28532,9 @@ async def _project_asset_media(request):
 
 if (PromptServer is not None and web is not None and
         getattr(PromptServer, "instance", None) is not None):
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/project-ownership")(
+            _project_ownership_command)
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/review")(_submit_review_decision)
     PromptServer.instance.routes.post(

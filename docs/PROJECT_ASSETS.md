@@ -60,6 +60,37 @@ first; browser requests cannot import arbitrary filesystem paths.
 
 Only references used by the current scene are decoded during sampling.
 
+## Workflow ownership
+
+Opening a Run in Project Asset Carousel claims its write ownership for the
+current workflow. The owner row reports one of three states:
+
+- **Owner: this workflow** — generation and project changes are allowed.
+- **Read-only here** — another open workflow owns the Run. Preview, browsing,
+  recovery inspection, assembly, exports, and duplication into a new Run
+  remain available, but mutations of the protected Run are rejected by the
+  server.
+- **Ownership is available** — the previous owner released the Run; click
+  **Take ownership**.
+
+Use **Force ownership** only when intentionally moving work to this workflow.
+It advances the Run's fencing epoch immediately: a stale tab, queued job, or
+long render can no longer publish a checkpoint after the takeover. **Release**
+leaves the Run protected but ownerless so another workflow can claim it.
+An expired heartbeat is shown as stale but never transfers ownership by
+itself; explicit Force ownership is required. This prevents a sleeping or
+temporarily disconnected tab from losing its lock merely because another
+workflow was opened.
+
+The server stores only a digest and fencing epoch in
+`output/h3_chains/.project_ownership/<run_name>.json`. Keeping the fence outside
+the deletable render folder means **Delete complete Run** cannot silently
+unprotect the input-side project assets it intentionally preserves. The actual
+workflow proof is ephemeral browser-session state and is removed from the
+Run's saved workflow, API-prompt, Plan, and deferred-review archives. An older
+project remains compatible and becomes protected the first time the nightly
+Carousel opens it.
+
 ## Edit a picture
 
 **Edit / upscale** creates a new PNG variant; it never overwrites the source.

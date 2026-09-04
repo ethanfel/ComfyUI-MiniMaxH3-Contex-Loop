@@ -16,6 +16,7 @@ import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
 } from "./h3_plan_restore_core.mjs?v=0.7.0";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.2";
 
 const NODE_NAME = "MiniMaxH3ChainRunManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -624,7 +625,7 @@ function mount(node) {
         try {
             const response = await api.fetchApi(
                 "/minimax_h3_context_loop/run-assets",
-                {
+                await projectMutationOptions(node, runName, {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
@@ -634,7 +635,7 @@ function mount(node) {
                         archive_audio: Boolean(widgetByName(node, "archive_audio")?.value),
                         archive_video: Boolean(widgetByName(node, "archive_video")?.value),
                     }),
-                },
+                }),
             );
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);

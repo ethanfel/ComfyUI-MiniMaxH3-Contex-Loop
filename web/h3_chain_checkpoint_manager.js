@@ -23,6 +23,7 @@ import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
 } from "./h3_plan_restore_core.mjs?v=0.7.0";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.2";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -152,6 +153,12 @@ async function jsonRequest(path, options = {}) {
     if (!response.ok) throw Object.assign(
         new Error(payload.error || `HTTP ${response.status}`), {payload});
     return payload;
+}
+
+async function mutationRequest(node, runName, path, options = {}) {
+    return await jsonRequest(
+        path, await projectMutationOptions(node, runName, options),
+    );
 }
 
 function injectStyles() {
@@ -1141,7 +1148,7 @@ function mount(node) {
         }
         setBusy(true, "Deleting the complete run folder…");
         try {
-            const payload = await jsonRequest(
+            const payload = await mutationRequest(node, runName,
                 "/minimax_h3_context_loop/run-folder/delete", {
                     method:"POST", headers:{"Content-Type":"application/json"},
                     body:JSON.stringify({run_name:runName,
@@ -1271,7 +1278,7 @@ function mount(node) {
         if (!confirmed) return;
         setBusy(true, "Attributing saved candidate to branch…");
         try {
-            const payload = await jsonRequest(
+            const payload = await mutationRequest(node, state.runName,
                 "/minimax_h3_context_loop/checkpoint-revisions/attribute", {
                     method:"POST", headers:{"Content-Type":"application/json"},
                     body:JSON.stringify({
@@ -1344,7 +1351,7 @@ function mount(node) {
                     !widget(connectedNode(node, START_NAME), "start_clip")) {
                 throw new Error("Could not find the connected H3 Chain Loop Start node.");
             }
-            const restored = await jsonRequest(
+            const restored = await mutationRequest(node, state.runName,
                 "/minimax_h3_context_loop/checkpoint-revisions/restore", {
                     method:"POST", headers:{"Content-Type":"application/json"},
                     body:JSON.stringify({
@@ -1396,7 +1403,7 @@ function mount(node) {
             ? "Rolling active checkpoint branch back…"
             : "Promoting selected checkpoint lineage…");
         try {
-            const payload = await jsonRequest(
+            const payload = await mutationRequest(node, state.runName,
                 "/minimax_h3_context_loop/checkpoint-revisions/restore", {
                     method:"POST", headers:{"Content-Type":"application/json"},
                     body:JSON.stringify({
@@ -1439,7 +1446,7 @@ function mount(node) {
         if (!confirmed) return;
         setBusy(true, "Deleting staged revision files…");
         try {
-            const payload = await jsonRequest(
+            const payload = await mutationRequest(node, state.runName,
                 "/minimax_h3_context_loop/checkpoint-revisions/delete", {
                     method:"POST", headers:{"Content-Type":"application/json"},
                     body:JSON.stringify({run_name:state.runName, scene:record.scene,

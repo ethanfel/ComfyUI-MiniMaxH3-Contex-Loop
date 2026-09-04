@@ -23,6 +23,7 @@ import {
     reviewPlanScenePrompt,
     reviewSeed,
 } from "./h3_chain_review_core.mjs?v=0.7.0";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.2";
 
 const NODE_NAME = "MiniMaxH3ChainReview";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -537,7 +538,9 @@ async function activateAcceptedCandidate(reviewNode, submittedReview, body) {
         };
     }
     const activationResponse = await api.fetchApi(
-        "/minimax_h3_context_loop/checkpoint-revisions/restore", {
+        "/minimax_h3_context_loop/checkpoint-revisions/restore",
+        await projectMutationOptions(
+            reviewNode, submittedReview.run_name, {
             method: "POST",
             headers: {"Content-Type": "application/json"},
             body: JSON.stringify({
@@ -546,7 +549,7 @@ async function activateAcceptedCandidate(reviewNode, submittedReview, body) {
                 revisions,
                 activate_only: true,
             }),
-        },
+        }),
     );
     const activation = await activationResponse.json().catch(() => ({}));
     if (!activationResponse.ok) {
@@ -601,7 +604,9 @@ async function activateAcceptedCandidate(reviewNode, submittedReview, body) {
     let cleanupWarning = "";
     try {
         const finalizeResponse = await api.fetchApi(
-            "/minimax_h3_context_loop/review-candidate-batch", {
+            "/minimax_h3_context_loop/review-candidate-batch",
+            await projectMutationOptions(
+                reviewNode, submittedReview.run_name, {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({
@@ -609,7 +614,7 @@ async function activateAcceptedCandidate(reviewNode, submittedReview, body) {
                     action: "finalize",
                     candidate_revision: body.candidate_revision,
                 }),
-            },
+            }),
         );
         const finalize = await finalizeResponse.json().catch(() => ({}));
         if (!finalizeResponse.ok) {
@@ -1281,8 +1286,7 @@ function mount(node) {
         renderCandidateDots();
         renderCandidateProgress();
         if (current?.candidate_batch_active && current?.token) {
-            void api.fetchApi(
-                "/minimax_h3_context_loop/review-candidate-batch", {
+            void projectMutationOptions(node, current.run_name, {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
@@ -1290,8 +1294,9 @@ function mount(node) {
                         action: "update",
                         candidate_revisions: [...keptCandidateRevisions],
                     }),
-                },
-            ).then(async (response) => {
+                }).then((options) => api.fetchApi(
+                    "/minimax_h3_context_loop/review-candidate-batch", options,
+                )).then(async (response) => {
                 if (response.ok) return;
                 const body = await response.json().catch(() => ({}));
                 throw new Error(body.error || `HTTP ${response.status}`);
@@ -1409,7 +1414,8 @@ function mount(node) {
             );
             if (!confirmed) return;
             const response = await api.fetchApi(
-                "/minimax_h3_context_loop/checkpoint-revisions/delete", {
+                "/minimax_h3_context_loop/checkpoint-revisions/delete",
+                await projectMutationOptions(node, context.runName, {
                     method: "POST",
                     headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
@@ -1418,7 +1424,7 @@ function mount(node) {
                         revision: revision.revision,
                         snapshot: preview.snapshot,
                     }),
-                },
+                }),
             );
             const body = await response.json();
             if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
@@ -1566,7 +1572,8 @@ function mount(node) {
             let restoredPolicyInputs = runBody.policy_inputs;
             if (selections.length) {
                 const response = await api.fetchApi(
-                    "/minimax_h3_context_loop/checkpoint-revisions/restore", {
+                    "/minimax_h3_context_loop/checkpoint-revisions/restore",
+                    await projectMutationOptions(node, context.runName, {
                         method: "POST",
                         headers: {"Content-Type": "application/json"},
                         body: JSON.stringify({
@@ -1577,7 +1584,7 @@ function mount(node) {
                                 revision: item.revision,
                             })),
                         }),
-                    },
+                    }),
                 );
                 const body = await response.json();
                 if (!response.ok) throw new Error(
@@ -1690,18 +1697,20 @@ function mount(node) {
             candidate_revisions: [...keptCandidateRevisions],
         };
         const prepareResponse = await api.fetchApi(
-            "/minimax_h3_context_loop/deferred-review", {
+            "/minimax_h3_context_loop/deferred-review",
+            await projectMutationOptions(node, submittedReview.run_name, {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({...requestBody, action: "prepare"}),
-            },
+            }),
         );
         const prepared = await prepareResponse.json();
         if (!prepareResponse.ok) {
             throw new Error(prepared.error || `HTTP ${prepareResponse.status}`);
         }
         const restoreResponse = await api.fetchApi(
-            "/minimax_h3_context_loop/checkpoint-revisions/restore", {
+            "/minimax_h3_context_loop/checkpoint-revisions/restore",
+            await projectMutationOptions(node, prepared.run_name, {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({
@@ -1715,18 +1724,19 @@ function mount(node) {
                     activate_only: true,
                     revisions: prepared.resume_revisions,
                 }),
-            },
+            }),
         );
         const restored = await restoreResponse.json();
         if (!restoreResponse.ok) {
             throw new Error(restored.error || `HTTP ${restoreResponse.status}`);
         }
         const finalizeResponse = await api.fetchApi(
-            "/minimax_h3_context_loop/deferred-review", {
+            "/minimax_h3_context_loop/deferred-review",
+            await projectMutationOptions(node, submittedReview.run_name, {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({...requestBody, action: "finalize"}),
-            },
+            }),
         );
         const finalized = await finalizeResponse.json();
         if (!finalizeResponse.ok) {
@@ -1817,7 +1827,8 @@ function mount(node) {
                 action === "stop" ? "Sending stop decision…" : "Sending retry decision…";
             const response = await api.fetchApi(candidateBatchAction
                 ? "/minimax_h3_context_loop/review-candidate-batch"
-                : "/minimax_h3_context_loop/review", {
+                : "/minimax_h3_context_loop/review",
+                await projectMutationOptions(node, submittedReview.run_name, {
                 method: "POST",
                 headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({
@@ -1832,7 +1843,7 @@ function mount(node) {
                         ? submittedCandidate?.revision ?? "" : "",
                     candidate_revisions: [...keptCandidateRevisions],
                 }),
-            });
+            }));
             const body = await response.json();
             if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
             if (candidateBatchAction) {

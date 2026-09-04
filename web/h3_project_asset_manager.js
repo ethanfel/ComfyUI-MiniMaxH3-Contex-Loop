@@ -11,6 +11,10 @@ import {
     serializedProjectAssetCatalog,
     serializedProjectAssetIdentity,
 } from "./h3_project_asset_sync_core.mjs?v=0.7.1";
+import {
+    projectMutationOptions,
+    registerProjectOwnership,
+} from "./h3_project_ownership.mjs?v=0.7.2";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const PLAN_TYPES = new Set([
@@ -159,6 +163,7 @@ function injectStyles() {
         .h3pa-button{padding:6px 9px;border:1px solid var(--border-color,#566174);border-radius:6px;
           background:var(--comfy-input-bg,#20242d);color:inherit;cursor:pointer}.h3pa-button:hover{border-color:#79a9ff}
         .h3pa-status{min-height:18px;color:#9eabc0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+        .h3pa-ownership .h3pa-status{flex:1 1 auto;min-width:0}.h3pa-ownership .h3pa-button{flex:0 0 auto}
         .h3pa-tabs{display:flex;gap:5px;overflow-x:auto;align-items:center;flex:0 0 auto}.h3pa-tab.active{background:#284d7e;border-color:#70a9ff}
         .h3pa-folder-tools{display:flex;gap:5px;align-items:center;margin-left:auto;padding-left:7px;border-left:1px solid #465064;flex:0 0 auto}.h3pa-folder-tools select{max-width:190px;min-width:110px;padding:6px 8px;border:1px solid var(--border-color,#566174);border-radius:6px;background:var(--comfy-input-bg,#151820);color:inherit}
         .h3pa-stage{flex:1 1 auto;min-height:230px;display:grid;grid-template-columns:minmax(0,1fr) 260px;gap:10px;overflow:hidden}
@@ -297,9 +302,19 @@ function mount(node) {
     const runNameWidget = widget(node, "run_name");
     const catalogWidget = widget(node, "catalog_json");
     const operationWidget = widget(node, "operation_json");
+    const ownershipWidget = widget(node, "ownership_json");
     const semanticSize = widget(node, "semantic_anchor_size");
     const semanticMode = widget(node, "semantic_anchor_mode");
-    [runNameWidget, catalogWidget, operationWidget, semanticSize, semanticMode].forEach(collapseWidget);
+    [runNameWidget, catalogWidget, operationWidget, ownershipWidget,
+        semanticSize, semanticMode].forEach(collapseWidget);
+    if (ownershipWidget) {
+        ownershipWidget.value = "";
+        // ComfyUI deliberately separates workflow persistence
+        // (widget.serialize) from API-prompt inclusion
+        // (widget.options.serialize). The proof must take the latter path
+        // only: execution needs it, saved workflows must not retain it.
+        ownershipWidget.serialize = false;
+    }
 
     const root = el("div", "h3pa-root");
     const top = el("div", "h3pa-row");
@@ -362,6 +377,13 @@ function mount(node) {
         button("Refresh", () => refresh()), fileInput,
     );
     const status = el("div", "h3pa-status", "Loading project assets…");
+    const ownershipRow = el("div", "h3pa-row h3pa-ownership");
+    const ownershipStatus = el("span", "h3pa-status", "Checking workflow ownership…");
+    const forceOwnership = button("Force ownership", () => {},
+        "Invalidate the previous workflow owner and make this workflow the only project writer.");
+    const releaseOwnership = button("Release", () => {},
+        "Release this project's workflow ownership. The next workflow must claim it before writing.");
+    ownershipRow.append(ownershipStatus, forceOwnership, releaseOwnership);
     const tabs = el("div", "h3pa-tabs");
     const stage = el("div", "h3pa-stage");
     const preview = el("div", "h3pa-preview");
@@ -369,7 +391,7 @@ function mount(node) {
     stage.append(preview, editor);
     const carousel = el("div", "h3pa-carousel");
     carousel.title = "Drop one or more image, video, or audio files here to create project assets immediately.";
-    root.append(top, status, tabs, stage, carousel);
+    root.append(top, ownershipRow, status, tabs, stage, carousel);
     const dom = node.addDOMWidget("project_asset_carousel", "div", root, {
         serialize: false, hideOnZoom: false, getMinHeight: () => 560,
     });
@@ -390,6 +412,62 @@ function mount(node) {
         previewMode: previewSelect.value === "full" ? "full" : "light",
     };
     const project = () => String(runNameInput.value || "").trim();
+    function showOwnership(payload) {
+        const proof = ownership.proof();
+        if (ownershipWidget) ownershipWidget.value = proof
+            ? JSON.stringify(proof) : "";
+        if (!payload) {
+            ownershipStatus.textContent = project()
+                ? "Checking workflow ownership…" : "No project selected.";
+            forceOwnership.hidden = true;
+            releaseOwnership.hidden = true;
+            return;
+        }
+        if (payload.owned_by_requester) {
+            ownershipStatus.textContent = "Owner: this workflow · project writes enabled";
+            ownershipStatus.style.color = "#8fe1a7";
+            forceOwnership.hidden = true;
+            releaseOwnership.hidden = false;
+        } else {
+            const owner = payload.owner_label || "another workflow";
+            ownershipStatus.textContent = payload.available
+                ? "Ownership is available; claim before writing."
+                : payload.expired
+                    ? `Read-only here · stale owner: ${owner} · Force to take over`
+                    : `Read-only here · owner: ${owner}`;
+            ownershipStatus.style.color = payload.available ? "#e7c879" : "#ffad8f";
+            forceOwnership.hidden = false;
+            forceOwnership.textContent = payload.available ? "Take ownership" : "Force ownership";
+            releaseOwnership.hidden = true;
+        }
+    }
+    const ownership = registerProjectOwnership(node, showOwnership);
+    forceOwnership.onclick = async () => {
+        if (!project()) return;
+        if (ownership.status && !ownership.status.available
+                && !window.confirm(
+                    `Force ownership of ${project()}?\n\n` +
+                    "The previous workflow will immediately become read-only, including any render that has not published its checkpoint yet.",
+                )) return;
+        try {
+            await ownership.force();
+            setStatus(`This workflow now owns ${project()}.`);
+        } catch (error) { setStatus(error.message, true); }
+    };
+    releaseOwnership.onclick = async () => {
+        try {
+            await ownership.release();
+            setStatus(`Released ownership of ${project()}.`);
+        } catch (error) { setStatus(error.message, true); }
+    };
+    async function mutationRequest(route, options = {}, runName = project()) {
+        if (ownership.runName !== String(runName || "").trim()) {
+            await ownership.select(runName);
+        }
+        return await jsonRequest(
+            route, await projectMutationOptions(node, runName, options),
+        );
+    }
     let refreshSequence = 0;
     const graphSyncTimers = new Set();
     function setStatus(text, error = false) {
@@ -491,7 +569,7 @@ function mount(node) {
     async function folderRequest(body, success) {
         try {
             setStatus("Saving asset folders…");
-            const result = await jsonRequest(
+            const result = await mutationRequest(
                 "/minimax_h3_context_loop/project-assets/folder", {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({project: project(), ...body}),
@@ -677,7 +755,7 @@ function mount(node) {
     async function updateAsset(asset, changes, options = {}) {
         try {
             setStatus(`Updating ${promptTag(asset)}…`);
-            const result = await jsonRequest(
+            const result = await mutationRequest(
                 "/minimax_h3_context_loop/project-assets/update", {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({project: project(), asset_id: asset.id, changes}),
@@ -691,7 +769,7 @@ function mount(node) {
     async function reorderAssets(assetIds) {
         try {
             setStatus("Saving asset order…");
-            const result = await jsonRequest(
+            const result = await mutationRequest(
                 "/minimax_h3_context_loop/project-assets/reorder", {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({project: project(), asset_ids: assetIds}),
@@ -720,7 +798,7 @@ function mount(node) {
         const previousIndex = previous.findIndex((item) => item.id === asset.id);
         try {
             setStatus(`Deleting ${promptTag(asset)}…`);
-            const result = await jsonRequest(
+            const result = await mutationRequest(
                 "/minimax_h3_context_loop/project-assets/delete", {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({project: project(), asset_id: asset.id}),
@@ -737,7 +815,7 @@ function mount(node) {
     async function duplicateAsset(asset) {
         try {
             setStatus(`Duplicating ${promptTag(asset)}…`);
-            const result = await jsonRequest(
+            const result = await mutationRequest(
                 "/minimax_h3_context_loop/project-assets/duplicate", {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({project: project(), asset_id: asset.id}),
@@ -770,7 +848,7 @@ function mount(node) {
         state.duplicatingProject = true;
         try {
             setStatus(`Duplicating ${sourceProject} assets into ${newProject}…`);
-            const result = await jsonRequest(
+            const result = await mutationRequest(
                 "/minimax_h3_context_loop/project-assets/duplicate-project", {
                     method: "POST", headers: {"Content-Type": "application/json"},
                     body: JSON.stringify({
@@ -908,7 +986,7 @@ function mount(node) {
             try {
                 save.disabled = true; modelButton.disabled = true;
                 cropStatus.textContent = "Creating full-resolution variant…";
-                const result = await jsonRequest(
+                const result = await mutationRequest(
                     "/minimax_h3_context_loop/project-assets/derive", {
                         method: "POST", headers: {"Content-Type": "application/json"},
                         body: JSON.stringify({...payload, resample: resample.value}),
@@ -1779,6 +1857,7 @@ function mount(node) {
         }
         try {
             setStatus(`Loading ${requestedProject}…`);
+            await ownership.select(requestedProject);
             const catalog = await jsonRequest(
                 `/minimax_h3_context_loop/project-assets?project=${encodeURIComponent(requestedProject)}`,
             );
@@ -1817,7 +1896,7 @@ function mount(node) {
         }
     }
     async function importAsset(body) {
-        const result = await jsonRequest(
+        const result = await mutationRequest(
             "/minimax_h3_context_loop/project-assets/import", {
                 method: "POST", headers: {"Content-Type": "application/json"},
                 body: JSON.stringify({project: project(), ...body}),
@@ -1858,7 +1937,7 @@ function mount(node) {
                     + `${files.length > 1 ? ` (${index + 1}/${files.length})` : ""}…`,
                 );
                 try {
-                    lastResult = await jsonRequest(
+                    lastResult = await mutationRequest(
                         "/minimax_h3_context_loop/project-assets/upload",
                         {method: "POST", body: data},
                     );
@@ -2010,6 +2089,7 @@ function mount(node) {
     }
     runNameInput.addEventListener("input", () => {
         refreshSequence += 1;
+        void ownership.select("");
         const draft = String(runNameInput.value || "");
         if (runNameWidget) {
             runNameWidget.value = draft;
@@ -2047,6 +2127,7 @@ function mount(node) {
         for (const timer of graphSyncTimers) clearTimeout(timer);
         graphSyncTimers.clear();
         dropController.abort();
+        ownership.dispose();
         stopMedia();
         return removed?.apply(this, arguments);
     };

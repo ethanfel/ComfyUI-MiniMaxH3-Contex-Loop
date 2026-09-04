@@ -111,6 +111,7 @@ import {
     timedLyricAtSecond,
 } from "./h3_chain_plan_studio_core.mjs?v=0.7.0";
 import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.1";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.2";
 
 const {
     connectedPromptEditors,
@@ -1213,7 +1214,10 @@ function mount(node) {
             try {
                 const response = await api.fetchApi(
                     "/minimax_h3_context_loop/editorial",
-                    {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(payload)},
+                    await projectMutationOptions(node, payload.run_name, {
+                        method:"POST", headers:{"Content-Type":"application/json"},
+                        body:JSON.stringify(payload),
+                    }),
                 );
                 if (!response.ok) {
                     const detail = await response.json().catch(() => ({}));
@@ -1269,7 +1273,12 @@ function mount(node) {
         const suffix = new URLSearchParams(query).toString();
         const response = await api.fetchApi(
             `/minimax_h3_context_loop/prompt-history${suffix ? `?${suffix}` : ""}`,
-            body == null ? undefined : {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)},
+            body == null ? undefined : await projectMutationOptions(
+                node, body.run_name ?? runName(), {
+                    method:"POST", headers:{"Content-Type":"application/json"},
+                    body:JSON.stringify(body),
+                },
+            ),
         );
         let payload = {};
         try { payload = await response.json(); } catch (_error) {}

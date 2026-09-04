@@ -125,6 +125,53 @@ def main():
             assert "completed manifest through clip 3/3" in complete_status
             complete_path = pathlib.Path(chain._manifest_path(plan))
             assert json.loads(complete_path.read_text())["clip_count"] == 3
+
+            # A non-owner may inspect and export reconstructed recovery state,
+            # but it must not rewrite even the derived manifest on disk.
+            claimed = chain.claim_project_ownership(
+                temporary, plan["run_name"],
+                "manifest-owner-1234567890", "Owning workflow")
+            sentinel = {"sentinel": "leave this manifest untouched"}
+            complete_path.write_text(json.dumps(sentinel), encoding="utf-8")
+            read_only, _read_only_json, read_only_status = (
+                chain.MiniMaxH3ChainManifestLoad().load(plan))
+            assert read_only["clip_count"] == 3
+            assert "read-only workflow" in read_only_status
+            assert json.loads(complete_path.read_text()) == sentinel
+
+            owner_plan = dict(plan)
+            owner_plan["_project_ownership"] = {
+                "owner_id": "manifest-owner-1234567890",
+                "epoch": claimed["epoch"],
+            }
+            chain.MiniMaxH3ChainManifestLoad().load(owner_plan)
+            assert json.loads(complete_path.read_text())["clip_count"] == 3
+
+            assert "_project_ownership" not in chain._archivable_plan(
+                owner_plan)
+            api_prompt = {
+                "7": {
+                    "class_type": "MiniMaxH3ProjectAssetManager",
+                    "inputs": {"ownership_json": "secret proof"},
+                },
+            }
+            sanitized_prompt, _plan_ids = chain._matching_plan_node_ids(
+                api_prompt, plan)
+            assert sanitized_prompt["7"]["inputs"]["ownership_json"] == ""
+            workflow = {
+                "nodes": [{
+                    "type": "MiniMaxH3ProjectAssetManager",
+                    "widgets_values": ["run", "{}", "512", "mode", "", "secret"],
+                }],
+                "definitions": {"subgraphs": [{"nodes": [{
+                    "type": "MiniMaxH3ProjectAssetManager",
+                    "widgets_values": ["run", "{}", "512", "mode", "", "nested"],
+                }]}]},
+            }
+            chain._strip_workflow_ownership(workflow)
+            assert workflow["nodes"][0]["widgets_values"][5] == ""
+            assert (workflow["definitions"]["subgraphs"][0]["nodes"][0]
+                    ["widgets_values"][5] == "")
         finally:
             chain._load_resume_state = original_loader
 
