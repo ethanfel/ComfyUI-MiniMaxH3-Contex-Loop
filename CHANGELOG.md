@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Checkpoint Manager hiding the safe rollback operation for an earlier
+  checkpoint that was already on the active branch. It now offers **Roll
+  active branch back**, retires later active pointers in one operation, and
+  keeps all immutable revisions. The deletion inspector now distinguishes
+  this non-destructive rollback from leaf-by-leaf permanent deletion.
+
 - Hardened Scene Prompt Editor and Rich Scene Prompt Editor workflow teardown.
   Closing a workflow now cancels pending Plan propagation, prompt analysis,
   history saves, timers, and listeners without repainting or mutating a graph

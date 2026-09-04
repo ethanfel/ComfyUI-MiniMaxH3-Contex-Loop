@@ -5,6 +5,7 @@ import fs from "node:fs";
 import {
     checkpointBranchRows,
     checkpointChapterBranchRows,
+    checkpointActivationMode,
     checkpointDeletionTitle,
     checkpointDependencyText,
     checkpointProjectLineage,
@@ -85,6 +86,32 @@ assert.equal(
     "selecting an alternate branch serializes its complete lineage",
 );
 assert.equal(checkpointSelectionJson(payload, "", payload.revisions[2]), "");
+const rollbackPayload = {
+    revisions: [
+        {scene:1, scene_id:"one", revision:a, active:true, ready:true},
+        {scene:2, scene_id:"two", revision:b, active:true, ready:true,
+            parent:{scene:1, revision:a}},
+        {scene:3, scene_id:"three", revision:d, active:true, ready:true,
+            parent:{scene:2, revision:b}},
+        {scene:2, scene_id:"two_alt", revision:c, active:false, ready:true,
+            parent:{scene:1, revision:a}},
+    ],
+};
+assert.equal(
+    checkpointActivationMode(rollbackPayload, rollbackPayload.revisions[0]),
+    "rollback",
+    "an earlier active checkpoint can retire its later active pointers",
+);
+assert.equal(
+    checkpointActivationMode(rollbackPayload, rollbackPayload.revisions[2]),
+    "current",
+    "the current active tip does not need activation",
+);
+assert.equal(
+    checkpointActivationMode(rollbackPayload, rollbackPayload.revisions[3]),
+    "activate",
+    "an inactive branch remains a normal activation",
+);
 const chapterTwo = {id:"chapter_2", start:3, end:3};
 assert.deepEqual(
     checkpointRevisionLineage(payload, payload.revisions[4], chapterTwo),
@@ -169,7 +196,9 @@ assert.match(source, /retired_scope_pointers/);
 assert.match(source, /prepareResume\(resumeScene\)/);
 assert.match(source, /snapshot:plan\.snapshot/);
 assert.match(source, /window\.confirm/);
-assert.match(source, /Delete dependent leaves first/);
+assert.match(source, /Permanent deletion is blocked by dependent revisions/);
+assert.match(source, /Roll active branch back/);
+assert.match(source, /clears later active pointers but keeps every saved take/);
 assert.match(source, /shared, kept/);
 assert.match(source, /checkpointRevisionKey\(revision\.scene, revision\.revision\)/);
 assert.match(source, /`shared ×\$\{sharedCount\}`/);
