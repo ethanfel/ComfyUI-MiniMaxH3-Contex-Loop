@@ -241,6 +241,7 @@ TRANSITION_POLICY_TYPE = "H3_TRANSITION_POLICY"
 CHAIN_POLICY_TYPE = "H3_CHAIN_POLICY"
 LIP_SYNC_OPTIONS_TYPE = "H3_LIP_SYNC_OPTIONS"
 PREFLIGHT_TYPE = "H3_PREFLIGHT_REPORT"
+REVIEW_DISPOSITION_TYPE = "H3_REVIEW_DISPOSITION"
 BOUNDARY_ANCHOR_PREPASS_TYPE = "H3_BOUNDARY_ANCHOR_PREPASS"
 BOUNDARY_ANCHORS_TYPE = "H3_BOUNDARY_ANCHORS"
 REFERENCE_SCHEDULE_VERSION = 1
@@ -20163,6 +20164,17 @@ def _review_candidate_target(value: Any) -> int:
     return target
 
 
+def _deferred_review_enabled(value: Any) -> bool:
+    if value is None:
+        return False
+    if not isinstance(value, dict):
+        raise ValueError(
+            "H3 Pending Review must come from MiniMax H3 Pending Review.")
+    if value.get("version") != 1:
+        raise ValueError("H3 Pending Review version is missing or obsolete.")
+    return value.get("defer_completed_batch") is True
+
+
 def _review_batch_candidates(state: dict[str, Any], index: int,
                              target: int) -> list[dict[str, Any]]:
     batch = state.get("candidate_batch")
@@ -20283,11 +20295,145 @@ def _review_public_candidates(
             "revision": str(segment.get("revision") or ""),
             "seed": str(segment.get("seed") or "0"),
             "created_at": str(segment.get("created_at") or ""),
+            "scene_prompt": str(segment.get(
+                "scene_prompt_template", segment.get("scene_prompt")) or ""),
+            "raw_frames": int(segment.get("raw_frames", 0)),
             "video": candidate.get("video"),
             "has_audio": bool(candidate.get("has_audio")),
             "warning": str(candidate.get("warning") or ""),
         })
     return public
+
+
+def _deferred_review_dir(run_name: Any) -> str:
+    normalized = _safe_name(run_name, "")
+    if not normalized:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    return os.path.join(_run_dir({"run_name": normalized}), "pending_reviews")
+
+
+def _deferred_review_path(run_name: Any, token: Any) -> str:
+    normalized_token = str(token or "").lower()
+    if re.fullmatch(r"[0-9a-f]{32}", normalized_token) is None:
+        raise ValueError("H3 pending-review token is invalid.")
+    return os.path.join(
+        _deferred_review_dir(run_name), "%s.json" % normalized_token)
+
+
+def _persist_deferred_review(
+        plan: dict[str, Any], payload: dict[str, Any],
+        candidates: list[dict[str, Any]]) -> str:
+    token = str(payload.get("token") or "").lower()
+    path = _deferred_review_path(plan.get("run_name"), token)
+    public = dict(payload)
+    public.update({
+        "deferred_review": True,
+        "candidate_batch_active": False,
+        "pending_decision": True,
+        "deadline": None,
+        "timeout_seconds": 0.0,
+        "server_now": time.time(),
+    })
+    document = {
+        "format": "h3_deferred_review_v1",
+        "version": 1,
+        "token": token,
+        "run_name": str(plan["run_name"]),
+        "scene": int(public["clip_index"]),
+        "created_at": datetime.now(timezone.utc).isoformat(
+            timespec="seconds").replace("+00:00", "Z"),
+        "plan": plan,
+        "candidates": candidates,
+        "public": public,
+    }
+    with checkpoint_run_lock(_output_root(), str(plan["run_name"])):
+        _atomic_json(path, document)
+    return path
+
+
+def _load_deferred_review(run_name: Any, token: Any) -> tuple[
+        dict[str, Any], str]:
+    normalized = _safe_name(run_name, "")
+    path = _deferred_review_path(normalized, token)
+    if not os.path.isfile(path):
+        raise FileNotFoundError(
+            "Pending H3 review %s was not found for run %s." %
+            (str(token)[:8], normalized))
+    document = _read_json(path)
+    if (not isinstance(document, dict)
+            or document.get("format") != "h3_deferred_review_v1"
+            or str(document.get("run_name") or "") != normalized
+            or str(document.get("token") or "").lower() !=
+            str(token or "").lower()
+            or not isinstance(document.get("plan"), dict)
+            or not isinstance(document.get("candidates"), list)
+            or not isinstance(document.get("public"), dict)):
+        raise ValueError("Pending H3 review metadata is invalid.")
+    return document, path
+
+
+def _list_deferred_review_records(run_name: Any) -> list[dict[str, Any]]:
+    normalized = _safe_name(run_name, "")
+    if not normalized:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    directory = _deferred_review_dir(normalized)
+    if not os.path.isdir(directory):
+        return []
+    records = []
+    for filename in sorted(os.listdir(directory)):
+        match = re.fullmatch(r"([0-9a-f]{32})\.json", filename)
+        if match is None:
+            continue
+        try:
+            document, _path = _load_deferred_review(
+                normalized, match.group(1))
+            public = dict(document["public"])
+            public["created_at"] = str(document.get("created_at") or "")
+            public["server_now"] = time.time()
+            records.append(public)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            _LOG.warning(
+                "Ignoring invalid pending H3 review %s", filename,
+                exc_info=True)
+    records.sort(key=lambda item: (
+        int(item.get("clip_index", 0)), str(item.get("created_at") or "")),
+        reverse=True)
+    return records
+
+
+class MiniMaxH3PendingReview:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "defer_completed_batch": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "When connected to Review Gate, generate the "
+                               "complete candidate batch, save it as pending "
+                               "review, and stop cleanly without holding a "
+                               "ComfyUI execution open. Turn off to preserve "
+                               "the Gate's normal live wait."}),
+            },
+        }
+
+    RETURN_TYPES = (REVIEW_DISPOSITION_TYPE,)
+    RETURN_NAMES = ("pending_review",)
+    OUTPUT_TOOLTIPS = (
+        "Connect to Review Gate to defer its completed candidate batch for "
+        "a later persisted review.",
+    )
+    FUNCTION = "build"
+    CATEGORY = "conditioning/minimax/context_loop"
+    DESCRIPTION = (
+        "Makes Review Gate persist a completed candidate batch and stop at "
+        "that scene, so the takes can be reviewed later without an execution "
+        "waiting in memory.")
+
+    def build(self, defer_completed_batch):
+        return ({
+            "version": 1,
+            "defer_completed_batch": bool(defer_completed_batch),
+        },)
 
 
 def _review_batch_kept_revisions(
@@ -20630,7 +20776,10 @@ class MiniMaxH3ChainReview:
                                "scene recoverable."}),
                 "enabled": ("BOOLEAN", {
                     "default": True,
-                    "tooltip": "Pause after every saved segment for approval."}),
+                    "tooltip": "Pause after every saved segment for approval. "
+                               "A connected, enabled Pending Review node "
+                               "overrides this toggle so the completed batch "
+                               "can be stored and stopped."}),
                 "play_notification_sound": ("BOOLEAN", {
                     "default": False,
                     "tooltip": "Play a browser chime when a segment becomes "
@@ -20691,6 +20840,12 @@ class MiniMaxH3ChainReview:
                                "early or advanced manually. Leave off to generate "
                                "the full candidate_count batch automatically and "
                                "review it once at the end."}),
+                "pending_review": (REVIEW_DISPOSITION_TYPE, {
+                    "tooltip": "Optional MiniMax H3 Pending Review control. "
+                               "When enabled, Review Gate generates the full "
+                               "candidate batch, persists it for later review, "
+                               "and stops cleanly instead of waiting for a "
+                               "browser decision."}),
             },
             "hidden": {
                 "dynprompt": "DYNPROMPT",
@@ -20722,13 +20877,15 @@ class MiniMaxH3ChainReview:
                      assemble_partial_on_stop, partial_audio_source, audio=None,
                      source_audio=None, candidate_count=1,
                      review_each_candidate=False,
+                     pending_review=None,
                      dynprompt=None, unique_id=None):
         plan = state["plan"]
         index = int(state["index"])
         if int(segment.get("index", -1)) != index:
             raise ValueError(
                 "H3 Chain Review received the wrong segment for clip %d." % index)
-        if not enabled:
+        defer_completed_batch = _deferred_review_enabled(pending_review)
+        if not enabled and not defer_completed_batch:
             status = "review bypassed for clip %d" % index
             return {"ui": {"text": [status]}, "result": (segment, status)}
         if PromptServer is None or web is None:
@@ -20744,6 +20901,11 @@ class MiniMaxH3ChainReview:
             plan, segment, None)
         shot = plan["shots"][index - 1]
         candidate_target = _review_candidate_target(candidate_count)
+        # A deferred review is useful precisely because it needs no live
+        # interaction. Generate the complete batch even if an older workflow
+        # left per-candidate inspection enabled on Review Gate.
+        inspect_each_candidate = (
+            bool(review_each_candidate) and not defer_completed_batch)
         previous_candidates = _review_batch_candidates(
             state, index, candidate_target)
         batch_token = _review_batch_token(state, index, candidate_target)
@@ -20752,8 +20914,7 @@ class MiniMaxH3ChainReview:
             previous_candidates = []
             batch_token = ""
             candidate_index = 1
-        candidate_preview_ready = False
-        if candidate_index < candidate_target and not review_each_candidate:
+        if candidate_index < candidate_target and not inspect_each_candidate:
             try:
                 candidate_video, candidate_has_audio, candidate_warning = (
                     _review_video(
@@ -20767,7 +20928,6 @@ class MiniMaxH3ChainReview:
             current_candidate = _review_candidate_record(
                 segment, candidate_video, candidate_has_audio,
                 candidate_warning)
-            candidate_preview_ready = True
         else:
             current_candidate = _review_candidate_record(
                 segment, video, False, no_audio_warning)
@@ -20802,7 +20962,7 @@ class MiniMaxH3ChainReview:
                 revision for revision in requested_kept
                 if revision in available))
             if batch_command.get("action") == "pause":
-                review_each_candidate = True
+                inspect_each_candidate = True
             elif batch_command.get("action") == "accept":
                 requested_revision = str(
                     batch_command.get("candidate_revision") or "")
@@ -20827,7 +20987,7 @@ class MiniMaxH3ChainReview:
                     }
 
         if (candidate_index < candidate_target
-                and not review_each_candidate
+                and not inspect_each_candidate
                 and queued_decision is None):
             if not batch_token:
                 _review_candidate_batch_cleanup()
@@ -20956,7 +21116,7 @@ class MiniMaxH3ChainReview:
                 candidate_index >= candidate_target),
             "candidate_batch_active": False,
             "pending_decision": queued_decision is None,
-            "review_each_candidate": bool(review_each_candidate),
+            "review_each_candidate": bool(inspect_each_candidate),
             "candidate_remaining": max(
                 0, candidate_target - candidate_index),
             "candidates": _review_public_candidates(candidates),
@@ -20968,18 +21128,22 @@ class MiniMaxH3ChainReview:
             "deadline": deadline,
             "server_now": server_now,
         }
-        _PENDING_REVIEWS[token] = {
-            "future": future,
-            "loop": loop,
-            "public": payload,
-            "plan": plan,
-            "current_seed": int(shot["seed"]),
-            "current_length": int(shot["raw_frames"]),
-            "candidates": candidates,
-        }
-        PromptServer.instance.send_sync(
-            "minimax_h3_context_loop_review", dict(payload),
-            PromptServer.instance.client_id)
+        defer_now = (
+            defer_completed_batch and queued_decision is None
+            and candidate_index >= candidate_target)
+        if not defer_now:
+            _PENDING_REVIEWS[token] = {
+                "future": future,
+                "loop": loop,
+                "public": payload,
+                "plan": plan,
+                "current_seed": int(shot["seed"]),
+                "current_length": int(shot["raw_frames"]),
+                "candidates": candidates,
+            }
+            PromptServer.instance.send_sync(
+                "minimax_h3_context_loop_review", dict(payload),
+                PromptServer.instance.client_id)
 
         if audio is not None:
             # Keep tensor-to-WAV conversion on Comfy's execution thread. Some
@@ -20989,7 +21153,7 @@ class MiniMaxH3ChainReview:
             # can fail into a silent review instead of an unresolvable workflow
             # hang.
             try:
-                if candidate_target > 1:
+                if candidate_target > 1 or defer_now:
                     video, has_audio, warning = _review_video(
                         plan, segment, audio, retain_previous=True)
                 else:
@@ -21012,9 +21176,40 @@ class MiniMaxH3ChainReview:
             candidates[-1] = _review_candidate_record(
                 segment, video, has_audio, warning)
             payload["candidates"] = _review_public_candidates(candidates)
+            if not defer_now:
+                PromptServer.instance.send_sync(
+                    "minimax_h3_context_loop_review", dict(payload),
+                    PromptServer.instance.client_id)
+
+        if defer_now:
+            if ExecutionBlocker is None:
+                raise RuntimeError(
+                    "This ComfyUI build does not support pending-review "
+                    "blocking.")
+            payload.update({
+                "deferred_review": True,
+                "pending_decision": True,
+                "warning": (
+                    "Candidate batch saved for later review. This execution "
+                    "has stopped cleanly; select the pending batch in Review "
+                    "Gate when ready."),
+                "preview_pending": False,
+                "deadline": None,
+                "timeout_seconds": 0.0,
+                "server_now": time.time(),
+            })
+            _persist_deferred_review(plan, payload, candidates)
             PromptServer.instance.send_sync(
                 "minimax_h3_context_loop_review", dict(payload),
                 PromptServer.instance.client_id)
+            status = (
+                "saved %d candidate%s for clip %d as pending review; "
+                "execution stopped at the checkpoint" %
+                (len(candidates), "" if len(candidates) == 1 else "s", index))
+            return {
+                "ui": {"text": [status]},
+                "result": (ExecutionBlocker(None), status),
+            }
 
         if queued_decision is not None and not future.done():
             future.set_result(queued_decision)
@@ -25827,6 +26022,120 @@ async def _list_pending_reviews(_request):
     return web.json_response({"reviews": reviews})
 
 
+async def _list_deferred_reviews(request):
+    run_name = _safe_name(request.query.get("run_name", ""), "")
+    if not run_name:
+        return web.json_response(
+            {"error": "A non-empty H3 chain run_name is required."}, status=400)
+    try:
+        reviews = _list_deferred_review_records(run_name)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        return web.json_response(
+            {"error": "Could not list pending H3 reviews: %s" % exc},
+            status=500)
+    return web.json_response({"run_name": run_name, "reviews": reviews})
+
+
+def _deferred_review_selection(
+        document: dict[str, Any], revision: Any
+) -> tuple[dict[str, Any], int]:
+    requested = str(revision or "")
+    for number, candidate in enumerate(document["candidates"], start=1):
+        segment = candidate.get("segment") if isinstance(
+            candidate, dict) else None
+        if (isinstance(segment, dict) and str(
+                segment.get("revision") or "") == requested):
+            return segment, number
+    raise ValueError(
+        "The selected H3 candidate is not part of this pending review.")
+
+
+async def _submit_deferred_review(request):
+    try:
+        body = await request.json()
+    except (json.JSONDecodeError, TypeError):
+        return web.json_response(
+            {"error": "Pending H3 review requires JSON."}, status=400)
+    if not isinstance(body, dict):
+        return web.json_response(
+            {"error": "Pending H3 review requires a JSON object."},
+            status=400)
+    try:
+        run_name = _safe_name(body.get("run_name", ""), "")
+        document, path = _load_deferred_review(
+            run_name, body.get("token"))
+        action = str(body.get("action") or "")
+        if action not in ("prepare", "finalize"):
+            raise ValueError("Unknown pending H3 review action.")
+        selected, selected_number = _deferred_review_selection(
+            document, body.get("candidate_revision"))
+        scene = int(document["scene"])
+        revision = str(selected.get("revision") or "")
+        kept = _review_requested_kept_revisions(
+            body, document["candidates"], revision)
+        metadata, _metadata_path = _load_checkpoint_revision(
+            run_name, scene, revision)
+        authoritative = metadata.get("segment")
+        if not isinstance(authoritative, dict):
+            raise ValueError(
+                "The selected H3 candidate has no checkpoint segment.")
+        response = {
+            "ok": True,
+            "action": action,
+            "token": str(document["token"]),
+            "run_name": run_name,
+            "scene": scene,
+            "resume_scene": scene + 1,
+            "end_clip": int(document["public"].get(
+                "end_clip", len(document["plan"].get("shots", ())))),
+            "clip_count": int(document["public"].get(
+                "clip_count", len(document["plan"].get("shots", ())))),
+            "candidate_revision": revision,
+            "candidate_number": selected_number,
+            "candidate_count": len(document["candidates"]),
+            "kept_candidate_count": len(kept),
+            "scene_prompt": str(authoritative.get(
+                "scene_prompt_template",
+                authoritative.get("scene_prompt")) or ""),
+            "seed": str(authoritative.get("seed") or "0"),
+            "length": int(authoritative.get("raw_frames", 0)),
+        }
+        if action == "prepare":
+            response["resume_revisions"] = _review_candidate_resume_revisions(
+                run_name, scene, revision)
+            return web.json_response(response)
+
+        active_path = os.path.join(
+            _run_dir({"run_name": run_name}), "checkpoints",
+            "clip_%04d.json" % scene)
+        active_metadata = _read_json(active_path)
+        active_segment = (active_metadata.get("segment")
+                          if isinstance(active_metadata, dict) else None)
+        if (not isinstance(active_segment, dict) or str(
+                active_segment.get("revision") or "") != revision):
+            raise ValueError(
+                "Activate the selected checkpoint lineage before finalizing "
+                "this pending review.")
+        selected_plan = _plan_with_review_revision(
+            document["plan"], scene, response["scene_prompt"],
+            int(response["seed"]), response["length"])
+        _write_run_archives(selected_plan)
+        cleanup = _prune_review_candidates(
+            selected_plan, scene, document["candidates"], kept)
+        with checkpoint_run_lock(_output_root(), run_name):
+            _safe_unlink(path)
+        response.update({
+            "deleted_candidate_count": len(cleanup["deleted"]),
+            "cleanup_warnings": cleanup["warnings"],
+            "reclaimed_bytes": cleanup["reclaimed_bytes"],
+        })
+        return web.json_response(response)
+    except FileNotFoundError as exc:
+        return web.json_response({"error": str(exc)}, status=404)
+    except (OSError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
+
+
 def _checkpoint_review_preview(
         index: int, segment: dict[str, Any], review_dir: str,
         review_filenames: list[str]) -> str | None:
@@ -27864,6 +28173,12 @@ if (PromptServer is not None and web is not None and
     PromptServer.instance.routes.get(
         "/minimax_h3_context_loop/reviews")(_list_pending_reviews)
     PromptServer.instance.routes.get(
+        "/minimax_h3_context_loop/deferred-reviews")(
+            _list_deferred_reviews)
+    PromptServer.instance.routes.post(
+        "/minimax_h3_context_loop/deferred-review")(
+            _submit_deferred_review)
+    PromptServer.instance.routes.get(
         "/minimax_h3_context_loop/checkpoints")(_list_saved_checkpoints)
     PromptServer.instance.routes.post(
         "/minimax_h3_context_loop/editorial")(_update_run_editorial)
@@ -28008,6 +28323,7 @@ CHAIN_NODE_CLASS_MAPPINGS = {
     "MiniMaxH3ChainContext": MiniMaxH3ChainContext,
     "MiniMaxH3DriftControlModelPatch": MiniMaxH3DriftControlModelPatch,
     "MiniMaxH3ChainSegmentSave": MiniMaxH3ChainSegmentSave,
+    "MiniMaxH3PendingReview": MiniMaxH3PendingReview,
     "MiniMaxH3ChainReview": MiniMaxH3ChainReview,
     "MiniMaxH3ChainLoopEnd": MiniMaxH3ChainLoopEnd,
     "MiniMaxH3ChainManifestLoad": MiniMaxH3ChainManifestLoad,
@@ -28078,6 +28394,7 @@ CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3DriftControlModelPatch": (
         "MiniMax H3 Drift-Control Model Patch (Sigma Split)"),
     "MiniMaxH3ChainSegmentSave": "MiniMax H3 Context Loop Segment + Checkpoint",
+    "MiniMaxH3PendingReview": "MiniMax H3 Pending Review",
     "MiniMaxH3ChainReview": "MiniMax H3 Context Loop Review Gate",
     "MiniMaxH3ChainLoopEnd": "MiniMax H3 Context Loop End",
     "MiniMaxH3ChainManifestLoad": "MiniMax H3 Context Loop Load Manifest",

@@ -12,9 +12,10 @@ persisted before the gate waits, then the gate offers:
 - **Approve & stop**, optionally assembling a partial video
 
 Set Review Gate's optional **candidate_count** above 1 to collect several
-different-seed takes. The gate pauses after every saved candidate instead of
-blindly generating the full batch. Use **Generate next candidate** to continue,
-or accept the current scene early and interrupt the remaining batch. The
+different-seed takes. By default it generates the full batch and pauses once;
+enable per-candidate inspection only when you want **Generate next candidate**
+between takes. During an automatic batch you can still select a completed take
+early and interrupt the remaining batch. The
 carousel previews every completed take with synchronized sound; arrow keys and
 the visible dots move between them. Mark one or more takes to keep, then choose
 the take that becomes the active continuation. Its saved video frames and AV
@@ -24,6 +25,16 @@ alternatives are deleted only after the active checkpoint is promoted safely.
 The default value of 1 keeps the normal one-take review behavior. The widget can
 be converted to an input and driven by a regular INT node; the safety limit is
 20 candidates per scene.
+
+Connect **MiniMax H3 Pending Review** to Review Gate when the batch should not
+hold a live ComfyUI execution. Its connection overrides a disabled Gate and
+per-candidate inspection: all requested candidates are checkpointed, a small
+record is written under `pending_reviews/`, and execution stops at that scene.
+The media is not duplicated. Later, load the same run in the Plan/Project Asset
+Carousel, use **Pending candidate reviews → Refresh** in Review Gate, select the
+batch and click **Review**. Choosing **Use this take & prepare resume** activates
+that candidate's exact checkpoint lineage, keeps the checked alternatives,
+deletes only unkept candidates, and arms Loop Start for the following scene.
 
 Notification sound, automatic timeout, and model unloading while waiting are
 optional. Drag the bar below the player to resize it; double-click to restore

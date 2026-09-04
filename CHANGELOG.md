@@ -4,6 +4,15 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added **MiniMax H3 Pending Review**, an optional one-wire Review Gate mode.
+  It generates the complete candidate batch, stores a durable pending-review
+  record beside the existing immutable checkpoints, and stops cleanly instead
+  of keeping a ComfyUI execution waiting. Review Gate can later filter the
+  connected run's pending batches, preview every saved take, activate the exact
+  selected lineage, retain checked alternatives, prune unkept candidates, and
+  arm Loop Start at the following scene. An unconnected Gate behaves exactly as
+  before.
+
 - Fixed Project Asset Carousel Run-name editing so pauses after a space,
   underscore, or hyphen no longer let an asynchronous catalog refresh erase
   the separator. The field now preserves the exact draft while typing and

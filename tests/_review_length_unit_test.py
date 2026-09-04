@@ -6,6 +6,7 @@ import importlib.util
 import json
 import pathlib
 import sys
+import tempfile
 import types
 from contextlib import nullcontext
 
@@ -176,6 +177,13 @@ asyncio.run(check_route_validation())
 
 assert chain._review_candidate_target(1) == 1
 assert chain._review_candidate_target("10") == 10
+pending_node = chain.MiniMaxH3PendingReview()
+pending_policy = pending_node.build(True)[0]
+assert chain._deferred_review_enabled(pending_policy)
+assert chain.MiniMaxH3ChainReview.INPUT_TYPES()["optional"][
+    "pending_review"][0] == chain.REVIEW_DISPOSITION_TYPE
+assert chain.CHAIN_NODE_CLASS_MAPPINGS[
+    "MiniMaxH3PendingReview"] is chain.MiniMaxH3PendingReview
 try:
     chain._review_candidate_target(21)
 except ValueError as exc:
@@ -223,13 +231,23 @@ async def check_candidate_batch():
     original_select_candidate = chain._select_review_candidate
     original_resume_revisions = chain._review_candidate_resume_revisions
     original_write_archives = chain._write_run_archives
+    original_persist_deferred = chain._persist_deferred_review
+    original_execution_blocker = chain.ExecutionBlocker
     cleanup_calls = []
     archive_calls = []
+    review_video_calls = []
     chain.PromptServer = type(
         "BatchServer", (), {"instance": BatchServerInstance()})
-    chain._review_video = lambda _plan, segment, _audio, retain_previous=False: (
-        {"filename": "%s.mp4" % segment["revision"],
-         "subfolder": "candidates", "type": "output"}, True, "")
+
+    def review_video(_plan, segment, _audio, retain_previous=False):
+        review_video_calls.append((
+            segment["revision"], _audio is not None,
+            bool(retain_previous)))
+        return (
+            {"filename": "%s.mp4" % segment["revision"],
+             "subfolder": "candidates", "type": "output"}, True, "")
+
+    chain._review_video = review_video
     chain._prune_review_candidates = (
         lambda candidate_plan, scene, candidates, kept: (
             cleanup_calls.append((candidate_plan, scene, candidates, kept)) or {
@@ -511,6 +529,64 @@ async def check_candidate_batch():
         assert finalize_token not in chain._ACTIVE_CANDIDATE_BATCHES
         assert archive_calls[-1]["shots"][1]["seed"] == 29
         assert cleanup_calls[-1][3] == [finalize_candidate["revision"]]
+
+        deferred_documents = []
+        chain._persist_deferred_review = (
+            lambda deferred_plan, deferred_payload, deferred_candidates: (
+                deferred_documents.append((
+                    deferred_plan, deferred_payload, deferred_candidates))
+                or "pending.json"))
+
+        class TestExecutionBlocker:
+            def __init__(self, value):
+                self.value = value
+
+        chain.ExecutionBlocker = TestExecutionBlocker
+        deferred_first = candidate_segment("7" * 32, 71)
+        deferred_first_result = await chain.MiniMaxH3ChainReview().review(
+            {"plan": plan, "index": 2,
+             "segments": [{"revision": "parent"}]},
+            deferred_first, False, False, 0.0, False, False, "none",
+            candidate_count=2, review_each_candidate=True,
+            pending_review=pending_policy, unique_id="review-node")
+        deferred_decision = deferred_first_result["result"][0][
+            "_h3_review_decision"]
+        assert deferred_decision["candidate_batch"]["target"] == 2
+        assert "automatically generating candidate 2" in (
+            deferred_first_result["result"][1])
+
+        deferred_plan = chain._plan_with_review_revision(
+            plan, 2, "Scene 2.", deferred_decision["seed"], 56)
+        deferred_second = candidate_segment(
+            "8" * 32, deferred_decision["seed"])
+        deferred_result = await chain.MiniMaxH3ChainReview().review(
+            {"plan": deferred_plan, "index": 2,
+             "segments": [{"revision": "parent"}],
+             "candidate_batch": deferred_decision["candidate_batch"]},
+            deferred_second, False, False, 0.0, False, False, "none",
+            candidate_count=2, review_each_candidate=True,
+            pending_review=pending_policy, unique_id="review-node")
+        assert isinstance(
+            deferred_result["result"][0], TestExecutionBlocker)
+        assert "pending review" in deferred_result["result"][1]
+        assert not chain._PENDING_REVIEWS
+        assert deferred_documents
+        deferred_public = deferred_documents[-1][1]
+        assert deferred_public["deferred_review"] is True
+        assert deferred_public["candidate_generation_complete"] is True
+        assert len(deferred_documents[-1][2]) == 2
+
+        deferred_single = candidate_segment("0" * 32, 70)
+        deferred_single_result = await chain.MiniMaxH3ChainReview().review(
+            {"plan": plan, "index": 2,
+             "segments": [{"revision": "parent"}]},
+            deferred_single, False, False, 0.0, False, False, "none",
+            audio=object(), candidate_count=1,
+            pending_review=pending_policy, unique_id="review-node")
+        assert isinstance(
+            deferred_single_result["result"][0], TestExecutionBlocker)
+        assert (deferred_single["revision"], True, True) in (
+            review_video_calls)
     finally:
         chain._PENDING_REVIEWS.clear()
         chain._ACTIVE_CANDIDATE_BATCHES.clear()
@@ -521,9 +597,128 @@ async def check_candidate_batch():
         chain._select_review_candidate = original_select_candidate
         chain._review_candidate_resume_revisions = original_resume_revisions
         chain._write_run_archives = original_write_archives
+        chain._persist_deferred_review = original_persist_deferred
+        chain.ExecutionBlocker = original_execution_blocker
 
 
 asyncio.run(check_candidate_batch())
+
+
+async def check_deferred_review_storage():
+    original_output_root = chain._output_root
+    original_load_revision = chain._load_checkpoint_revision
+    original_resume_revisions = chain._review_candidate_resume_revisions
+    original_write_archives = chain._write_run_archives
+    original_prune = chain._prune_review_candidates
+    with tempfile.TemporaryDirectory() as temporary:
+        chain._output_root = lambda: temporary
+        pending_plan = json.loads(json.dumps(plan))
+        pending_plan["run_name"] = "pending-review-test"
+        selected = candidate_segment("4" * 32, 44)
+        other = candidate_segment("5" * 32, 55)
+        candidates = [
+            chain._review_candidate_record(
+                selected, {"filename": "selected.mp4", "subfolder": "reviews",
+                           "type": "output"}, True, ""),
+            chain._review_candidate_record(
+                other, {"filename": "other.mp4", "subfolder": "reviews",
+                        "type": "output"}, True, ""),
+        ]
+        token = "6" * 32
+        public = {
+            "token": token,
+            "run_name": pending_plan["run_name"],
+            "clip_index": 2,
+            "clip_count": 3,
+            "end_clip": 3,
+            "shot_id": "scene_2",
+            "candidate_count": 2,
+            "candidate_generation_complete": True,
+            "candidates": chain._review_public_candidates(candidates),
+        }
+        try:
+            path = chain._persist_deferred_review(
+                pending_plan, public, candidates)
+            assert pathlib.Path(path).is_file()
+            listed = chain._list_deferred_review_records(
+                pending_plan["run_name"])
+            assert len(listed) == 1
+            assert listed[0]["deferred_review"] is True
+            assert listed[0]["candidates"][0]["raw_frames"] == 56
+
+            class ListRequest:
+                query = {"run_name": pending_plan["run_name"]}
+
+            response = await chain._list_deferred_reviews(ListRequest())
+            assert response.status == 200
+            assert len(json.loads(response.text)["reviews"]) == 1
+
+            chain._load_checkpoint_revision = (
+                lambda _run, _scene, revision: (
+                    {"segment": selected if revision == selected["revision"]
+                     else other}, "revision.json"))
+            chain._review_candidate_resume_revisions = (
+                lambda _run, scene, revision: [
+                    {"scene": 1, "revision": "1" * 32},
+                    {"scene": scene, "revision": revision},
+                ])
+            archive_calls = []
+            prune_calls = []
+            chain._write_run_archives = lambda value: archive_calls.append(value)
+            chain._prune_review_candidates = (
+                lambda value, scene, values, kept: (
+                    prune_calls.append((value, scene, values, kept)) or {
+                        "kept": kept,
+                        "deleted": [other["revision"]],
+                        "reclaimed_bytes": 123,
+                        "warnings": [],
+                    }))
+
+            class DeferredRequest:
+                def __init__(self, action):
+                    self.action = action
+
+                async def json(self):
+                    return {
+                        "action": self.action,
+                        "token": token,
+                        "run_name": pending_plan["run_name"],
+                        "candidate_revision": selected["revision"],
+                        "candidate_revisions": [],
+                    }
+
+            prepared = await chain._submit_deferred_review(
+                DeferredRequest("prepare"))
+            assert prepared.status == 200
+            prepared_body = json.loads(prepared.text)
+            assert prepared_body["resume_scene"] == 3
+            assert prepared_body["resume_revisions"][-1]["revision"] == (
+                selected["revision"])
+            assert pathlib.Path(path).is_file()
+
+            checkpoint_dir = pathlib.Path(temporary) / "h3_chains" / (
+                pending_plan["run_name"]) / "checkpoints"
+            chain._atomic_json(
+                str(checkpoint_dir / "clip_0002.json"),
+                {"segment": selected})
+            finalized = await chain._submit_deferred_review(
+                DeferredRequest("finalize"))
+            assert finalized.status == 200
+            finalized_body = json.loads(finalized.text)
+            assert finalized_body["kept_candidate_count"] == 1
+            assert finalized_body["deleted_candidate_count"] == 1
+            assert archive_calls and prune_calls
+            assert prune_calls[-1][3] == [selected["revision"]]
+            assert not pathlib.Path(path).exists()
+        finally:
+            chain._output_root = original_output_root
+            chain._load_checkpoint_revision = original_load_revision
+            chain._review_candidate_resume_revisions = original_resume_revisions
+            chain._write_run_archives = original_write_archives
+            chain._prune_review_candidates = original_prune
+
+
+asyncio.run(check_deferred_review_storage())
 
 
 def check_candidate_resume_lineage():

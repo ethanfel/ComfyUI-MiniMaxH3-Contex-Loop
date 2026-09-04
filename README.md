@@ -113,6 +113,7 @@ See [How disabled nodes are shown](docs/NODE_REFERENCE.md#how-disabled-nodes-are
 | **Current Shot** | `state` | prompt, seed, timing, size | Drive the current scene. |
 | **Chain Context** | state, conditioning, VAE, latent | conditioned latent and trim count | Add the selected continuity. |
 | **Segment + Checkpoint** | state, frames, sampled latent | `segment` | Save a take and its resume state. |
+| **Pending Review** | one defer toggle | `pending_review` | Optionally store a complete candidate batch for later review without leaving an execution waiting. |
 | **Review Gate** | state and saved segment | reviewed `segment` | Approve, retry, reroll, or stop. |
 | **Loop End** | flow, state, frames, latent, segment | `manifest` | Advance or finish the loop. |
 | **Assemble** | `manifest` | `video_path` | Build the final MP4. |

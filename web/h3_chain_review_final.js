@@ -1011,6 +1011,33 @@ function mount(node) {
     status.className = "h3r-status";
     status.textContent = "The loop will pause here after each saved segment.";
 
+    const deferred = document.createElement("section");
+    deferred.className = "h3r-resume";
+    const deferredTitle = document.createElement("div");
+    deferredTitle.className = "h3r-resume-title";
+    deferredTitle.textContent = "Pending candidate reviews";
+    const deferredRow = document.createElement("div");
+    deferredRow.className = "h3r-resume-row";
+    const deferredSelect = document.createElement("select");
+    deferredSelect.className = "h3r-resume-select";
+    deferredSelect.title = "Saved candidate batches waiting for a decision in the connected Plan's run.";
+    const refreshDeferred = document.createElement("button");
+    refreshDeferred.type = "button";
+    refreshDeferred.className = "h3r-button";
+    refreshDeferred.textContent = "Refresh";
+    refreshDeferred.title = "Scan this run for candidate batches saved by MiniMax H3 Pending Review.";
+    const openDeferred = document.createElement("button");
+    openDeferred.type = "button";
+    openDeferred.className = "h3r-button h3r-approve";
+    openDeferred.textContent = "Review";
+    openDeferred.title = "Load the selected persisted batch into this Review Gate.";
+    openDeferred.disabled = true;
+    const deferredStatus = document.createElement("div");
+    deferredStatus.className = "h3r-resume-status";
+    deferredStatus.textContent = "Refresh to find batches saved for later review.";
+    deferredRow.append(deferredSelect, refreshDeferred, openDeferred);
+    deferred.append(deferredTitle, deferredRow, deferredStatus);
+
     const resume = document.createElement("section");
     resume.className = "h3r-resume";
     const resumeTitle = document.createElement("div");
@@ -1051,10 +1078,12 @@ function mount(node) {
 
     root.append(
         head, videoPanel, prefix, promptNotice, promptLabel,
-        seedRow, candidateRow, actions, status, resume,
+        seedRow, candidateRow, actions, status, deferred, resume,
     );
 
     let current = null;
+    let deferredReviews = [];
+    let deferredRefreshToken = 0;
     let countdownTimer = null;
     let resumeChoices = [];
     let checkpointRevisions = [];
@@ -1202,11 +1231,15 @@ function mount(node) {
         nextCandidateButton.title = running
             ? "Let the current in-flight take finish, then pause before another candidate starts."
             : "Keep any marked takes, resume the workflow, and generate the next candidate for this scene.";
-        approveButton.textContent = batch
+        approveButton.textContent = current?.deferred_review
+            ? "Use this take & prepare resume"
+            : batch
             ? running ? "Use this take & stop batch"
                 : complete ? "Use this take & continue" : "Accept now & continue"
             : "Approve & continue";
-        approveButton.title = running
+        approveButton.title = current?.deferred_review
+            ? "Activate this saved checkpoint lineage, keep the marked alternatives, and prepare Loop Start at the next scene."
+            : running
             ? "Accept this saved take now, cancel only the speculative in-flight " +
                 "H3 prompt, activate its checkpoint, and continue at the next scene."
             : "Accept this saved scene and continue the loop with the next scene.";
@@ -1268,6 +1301,57 @@ function mount(node) {
             });
         }
     });
+
+    function renderDeferredChoices() {
+        const selectedToken = deferredSelect.value;
+        deferredSelect.replaceChildren();
+        for (const review of deferredReviews) {
+            const option = document.createElement("option");
+            option.value = String(review.token ?? "");
+            const count = Array.isArray(review.candidates)
+                ? review.candidates.length : Number(review.candidate_count) || 0;
+            option.textContent = `Scene ${review.clip_index} · ${review.shot_id} · ` +
+                `${count} candidate${count === 1 ? "" : "s"}`;
+            deferredSelect.append(option);
+        }
+        if (deferredReviews.some((review) => review.token === selectedToken)) {
+            deferredSelect.value = selectedToken;
+        }
+        openDeferred.disabled = deferredReviews.length === 0;
+        deferredStatus.textContent = deferredReviews.length
+            ? `${deferredReviews.length} pending batch${deferredReviews.length === 1 ? "" : "es"} found for this run.`
+            : "No pending candidate batch was found for this run.";
+    }
+
+    async function refreshDeferredReviews() {
+        const refreshToken = ++deferredRefreshToken;
+        try {
+            const context = planResumeContext(node);
+            const query = new URLSearchParams({run_name: context.runName});
+            const response = await api.fetchApi(
+                `/minimax_h3_context_loop/deferred-reviews?${query.toString()}`,
+            );
+            const body = await response.json();
+            if (refreshToken !== deferredRefreshToken) return;
+            if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
+            deferredReviews = Array.isArray(body.reviews) ? body.reviews : [];
+            renderDeferredChoices();
+        } catch (error) {
+            if (refreshToken !== deferredRefreshToken) return;
+            deferredReviews = [];
+            renderDeferredChoices();
+            deferredStatus.textContent = error.message;
+        }
+    }
+
+    refreshDeferred.addEventListener("click", refreshDeferredReviews);
+    openDeferred.addEventListener("click", () => {
+        const review = deferredReviews.find(
+            (item) => String(item.token ?? "") === deferredSelect.value,
+        );
+        if (review) node._h3ReviewHandler?.(review);
+    });
+    node._h3RefreshDeferred = refreshDeferredReviews;
 
     function selectedRevisionChain() {
         const selectedResumeScene = Number(resumeSelect.value);
@@ -1562,7 +1646,9 @@ function mount(node) {
         const complete = Boolean(current.candidate_generation_complete) ||
             generated >= target;
         const batchCommand = current.candidate_batch_command_pending;
-        const message = batchCommand
+        const message = current.deferred_review
+            ? "This complete candidate batch is stored on disk. Choose the active continuation, mark alternatives to keep, then prepare the next scene."
+            : batchCommand
             ? batchCommand === "accept"
                 ? "Selected take is being activated; Review Gate is stopping the speculative take."
                 : "Pause queued. The current in-flight candidate will finish, then Review Gate will wait here."
@@ -1593,6 +1679,86 @@ function mount(node) {
         }
     }
 
+    async function submitDeferredReview(submittedReview, submittedCandidate) {
+        if (!submittedCandidate?.revision) {
+            throw new Error("Choose a saved candidate before resolving this pending review.");
+        }
+        const requestBody = {
+            token: submittedReview.token,
+            run_name: submittedReview.run_name,
+            candidate_revision: submittedCandidate.revision,
+            candidate_revisions: [...keptCandidateRevisions],
+        };
+        const prepareResponse = await api.fetchApi(
+            "/minimax_h3_context_loop/deferred-review", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({...requestBody, action: "prepare"}),
+            },
+        );
+        const prepared = await prepareResponse.json();
+        if (!prepareResponse.ok) {
+            throw new Error(prepared.error || `HTTP ${prepareResponse.status}`);
+        }
+        const restoreResponse = await api.fetchApi(
+            "/minimax_h3_context_loop/checkpoint-revisions/restore", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({
+                    run_name: prepared.run_name,
+                    resume_scene: prepared.resume_scene,
+                    scope_start_scene: 1,
+                    // Changing the selected scene invalidates every later
+                    // mutable pointer, including scenes outside the original
+                    // bounded render range. Immutable revisions stay intact.
+                    scope_end_scene: prepared.clip_count,
+                    activate_only: true,
+                    revisions: prepared.resume_revisions,
+                }),
+            },
+        );
+        const restored = await restoreResponse.json();
+        if (!restoreResponse.ok) {
+            throw new Error(restored.error || `HTTP ${restoreResponse.status}`);
+        }
+        const finalizeResponse = await api.fetchApi(
+            "/minimax_h3_context_loop/deferred-review", {
+                method: "POST",
+                headers: {"Content-Type": "application/json"},
+                body: JSON.stringify({...requestBody, action: "finalize"}),
+            },
+        );
+        const finalized = await finalizeResponse.json();
+        if (!finalizeResponse.ok) {
+            throw new Error(finalized.error || `HTTP ${finalizeResponse.status}`);
+        }
+        const saved = updatePlan(
+            node, prepared.scene, prepared.scene_prompt,
+            prepared.seed, prepared.length);
+        const hasNextScene = prepared.resume_scene <= prepared.clip_count;
+        const armed = hasNextScene && prepareResume(
+            node, prepared.resume_scene, prepared.end_clip,
+            prepared.clip_count);
+        pinAcceptedPreview(submittedReview, submittedCandidate);
+        await Promise.all([refreshDeferredReviews(), refreshResumeOptions()]);
+        current = null;
+        showAcceptedPreview();
+        root.classList.add("h3r-busy");
+        setActionsEnabled(false);
+        status.className = "h3r-status";
+        const cleanupWarning = Array.isArray(finalized.cleanup_warnings) &&
+            finalized.cleanup_warnings.length
+            ? ` Cleanup warning: ${finalized.cleanup_warnings.join(" ")}` : "";
+        status.textContent = `Candidate ${prepared.candidate_number}/${prepared.candidate_count} is active. ` +
+            `${prepared.kept_candidate_count} take${prepared.kept_candidate_count === 1 ? "" : "s"} kept; ` +
+            `${finalized.deleted_candidate_count} removed.` +
+            (saved ? " The Plan seed was updated." : "") +
+            (armed ? ` Loop Start is armed for scene ${prepared.resume_scene}; queue when ready.`
+                : hasNextScene
+                    ? ` Arm Loop Start manually for scene ${prepared.resume_scene}.`
+                    : " This was the final scene.") + cleanupWarning;
+    }
+
     async function submit(action) {
         if (!current?.token) {
             status.className = "h3r-status h3r-warning";
@@ -1611,6 +1777,17 @@ function mount(node) {
             const submittedToken = submittedReview.token;
             const submittedIndex = submittedReview.clip_index;
             const submittedCandidate = selectedCandidate();
+            if (submittedReview.deferred_review) {
+                if (action !== "approve") return;
+                stopCountdown();
+                root.classList.add("h3r-busy");
+                setActionsEnabled(false);
+                status.className = "h3r-status";
+                status.textContent = "Activating the selected saved lineage…";
+                await submitDeferredReview(
+                    submittedReview, submittedCandidate);
+                return;
+            }
             const liveCandidateBatch = Boolean(
                 submittedReview.candidate_batch_active) &&
                 !submittedReview.candidate_generation_complete;
@@ -1770,6 +1947,10 @@ function mount(node) {
         if (!sameToken) {
             root.classList.remove("h3r-busy");
             setActionsEnabled(true);
+            const deferredReview = Boolean(data.deferred_review);
+            retryButton.hidden = deferredReview;
+            rerollButton.hidden = deferredReview;
+            stopButton.hidden = deferredReview;
             activeCandidateRevision = (data.candidates ?? []).some(
                 (candidate) => candidate.revision ===
                     carriedActiveCandidateRevision,
@@ -1786,6 +1967,7 @@ function mount(node) {
             // Refresh here so the current (including final) checkpoint appears
             // in history without requiring the user to press Refresh.
             setTimeout(refreshResumeOptions, 0);
+            if (deferredReview) setTimeout(refreshDeferredReviews, 0);
         }
         if (!sameToken) {
             prompt.value = data.scene_prompt ?? "";
@@ -1878,6 +2060,7 @@ function mount(node) {
     delete node._h3QueuedReview;
     if (queuedReview) node._h3ReviewHandler(queuedReview);
     setTimeout(fetchPending, 0);
+    setTimeout(refreshDeferredReviews, 0);
     setTimeout(refreshResumeOptions, 0);
 }
 
@@ -1947,6 +2130,7 @@ app.registerExtension({
         await fetchPending();
         for (const node of allNodes(app.graph)) {
             if (nodeType(node) === NODE_NAME) node._h3RefreshResume?.();
+            if (nodeType(node) === NODE_NAME) node._h3RefreshDeferred?.();
             if (nodeType(node) === NODE_NAME) node._h3ReviewApplyLayout?.();
         }
     },
