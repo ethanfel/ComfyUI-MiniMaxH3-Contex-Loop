@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Fixed Prompt Editor reference discovery when the Studio render engine lives
+  inside a subgraph. Editors now read the connected upstream Project Asset
+  Carousel directly instead of requiring a traversable downstream Ref2VA
+  wrapper.
+
 - Fixed Project Asset Carousel refresh hydration on the published main line:
   saved assets render immediately from the workflow catalog while the disk
   catalog refreshes in the background, instead of flashing or remaining

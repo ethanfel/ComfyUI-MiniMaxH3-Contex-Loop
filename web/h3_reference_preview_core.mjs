@@ -369,6 +369,22 @@ function findDownstreamType(start, wantedType) {
     return null;
 }
 
+function findUpstreamType(start, wantedType) {
+    const queue = [start];
+    const seen = new Set();
+    while (queue.length) {
+        const node = queue.shift();
+        if (!node || seen.has(node)) continue;
+        seen.add(node);
+        if (node !== start && nodeType(node) === wantedType) return node;
+        for (const input of node.inputs ?? []) {
+            const parent = inputConnection(node, input.name)?.source ?? null;
+            if (parent) queue.push(parent);
+        }
+    }
+    return null;
+}
+
 export function findScheduledRef2VA(start) {
     return findDownstreamType(start, SCHEDULED_REF2VA_TYPE);
 }
@@ -383,6 +399,10 @@ export function findCoreRef2VA(start) {
 
 export function findImageToVideo(start) {
     return findDownstreamType(start, IMAGE_TO_VIDEO_TYPE);
+}
+
+export function findProjectAssetManager(start) {
+    return findUpstreamType(start, PROJECT_ASSET_MANAGER_TYPE);
 }
 
 export function collectScheduleNodes(wrapper) {
@@ -669,7 +689,18 @@ export function projectAssetReferenceRecords(manager, prompt = "") {
 
 export function taggedReferenceRecords(editorNode, prompt = "") {
     const wrapper = findTaggedRef2VA(editorNode);
-    if (!wrapper) return {wrapper: null, mode: null, records: []};
+    if (!wrapper) {
+        // Studio workflows can keep the render engine inside a subgraph while
+        // the Asset Carousel feeds Plan/Plan Studio upstream of this editor.
+        // The connected Carousel catalog remains authoritative even when no
+        // downstream Ref2VA wrapper is traversable from the editor.
+        const manager = findProjectAssetManager(editorNode);
+        return manager ? {
+            wrapper: manager,
+            mode: "tagged",
+            records: projectAssetReferenceRecords(manager, prompt),
+        } : {wrapper: null, mode: null, records: []};
+    }
     const referenceSource = inputSource(wrapper, "references");
     if (nodeType(referenceSource) === PROJECT_ASSET_MANAGER_TYPE) {
         return {

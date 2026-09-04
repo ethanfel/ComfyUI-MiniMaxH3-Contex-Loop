@@ -6,6 +6,7 @@ import {
     collectTaggedNodes,
     convertTaggedPictureReference,
     coreReferenceRecords,
+    findProjectAssetManager,
     findScheduledRef2VA,
     findTaggedRef2VA,
     imageToVideoReferenceRecords,
@@ -720,5 +721,34 @@ assert.deepEqual(
 );
 assert.ok(projectRecords.every((record) => record.previewUrl?.includes(
     "project=episode_1")));
+
+const studioManager = add(makeNode(1276, "MiniMaxH3ProjectAssetManager", {
+    catalog_json: JSON.stringify({
+        project: "studio_project",
+        assets: [{
+            id: "studio-picture", kind: "image", role: "picture",
+            tag: "Comfy", enabled: true, metadata: {},
+        }],
+    }),
+    semantic_anchor_mode: "timestamped_video",
+}));
+const modernPlan = add(makeNode(1277, "MiniMaxH3ChainPlanModern"));
+const planStudio = add(makeNode(1278, "MiniMaxH3ChainPlanStudio"));
+const richEditor = add(makeNode(
+    1279, "MiniMaxH3ChainRichScenePromptEditor",
+));
+connect(studioManager, modernPlan, "project_assets");
+connect(modernPlan, planStudio, "plan");
+connect(studioManager, planStudio, "tagged_references", 1);
+connect(planStudio, richEditor, "plan");
+assert.equal(findProjectAssetManager(richEditor), studioManager);
+assert.equal(findTaggedRef2VA(richEditor), null);
+assert.deepEqual(
+    availableReferenceRecords(richEditor, 1, {
+        includeInactive: true,
+        prompt: "No reference inserted yet.",
+    }).records.map(({tag, active}) => ({tag, active})),
+    [{tag: "Comfy", active: false}],
+);
 
 console.log("H3 reference preview: tagged/scheduled Ref2VA, core Ref2VA, and core I2V/FL2V discovery pass");
