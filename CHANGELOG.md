@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## v0.6.0 — Production context authoring and synchronized export
 
+- Fixed Review Gate delivery when Project Assets owns the Plan run name. The
+  hidden, stale Plan widget no longer rejects the exact pending review or
+  participates in run-name fallback matching. Report and original fix by
+  **Psylent_Gamer (4090)** via Banodoco, adapted to the current Plan/Modern Plan
+  routing implementation.
+
 - Fixed path-backed video and motion references in `restart_each_scene` mode
   being cropped or padded to the generated scene length. They now retain
   their own complete 24 fps reference duration; only `sequential` references
