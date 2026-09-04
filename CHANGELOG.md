@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## v0.6.0 — Production context authoring and synchronized export
 
+- Fixed Prompt Editor reference discovery when the Studio render engine lives
+  inside a subgraph. Editors now read the connected upstream Project Asset
+  Carousel directly instead of requiring a traversable downstream Ref2VA
+  wrapper.
+
 - Fixed Project Asset Carousel Run-name editing so pauses after a space,
   underscore, or hyphen no longer let an asynchronous catalog refresh erase
   the separator. The field now preserves the exact draft while typing and
