@@ -3,6 +3,7 @@ import {api} from "/scripts/api.js";
 import {
     checkpointBranchRows,
     checkpointChapterBranchRows,
+    checkpointActivationMode,
     checkpointDeletionTitle,
     checkpointDependencyText,
     checkpointRevisionKey,
@@ -10,7 +11,7 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.6.0";
+} from "./h3_checkpoint_manager_core.mjs?v=0.6.1";
 import {
     parsePlanJson,
     planToJson,
@@ -475,12 +476,12 @@ function mount(node) {
     }
 
     function canActivateSelected() {
-        if (!canLoadSelected()) return false;
-        return selectedLineage().some((selection) => {
-            const revision = selectedCheckpointRevision(
-                state.payload, selection.scene, selection.revision);
-            return !revision?.active;
-        });
+        return ["activate", "rollback"].includes(selectedActivationMode());
+    }
+
+    function selectedActivationMode() {
+        return checkpointActivationMode(
+            state.payload, state.selected, selectedChapterRange());
     }
 
     function selectRevision(record, requestDeletion = true) {
@@ -901,6 +902,13 @@ function mount(node) {
 
     function renderDeletion() {
         deletionBody.replaceChildren();
+        const activationMode = selectedActivationMode();
+        const rollsBack = activationMode === "rollback";
+        activate.textContent = rollsBack
+            ? "Roll active branch back" : "Make branch active";
+        activate.title = rollsBack
+            ? "Retire later active scene pointers in this chapter without deleting any saved revision"
+            : "Promote this revision inside its chapter without changing other chapters";
         deletion.classList.toggle("h3cm-delete-blocked", Boolean(state.deletion && !state.deletion.allowed));
         deletionTitle.textContent = checkpointDeletionTitle(state.deletion);
         load.disabled = state.busy || !canLoadSelected();
@@ -923,12 +931,21 @@ function mount(node) {
             deletionBody.append(list);
         }
         if (state.deletion.dependents?.length) {
-            const heading = element("div", "h3cm-error", "Delete dependent leaves first:");
+            const heading = element(
+                "div", "h3cm-error",
+                "Permanent deletion is blocked by dependent revisions:",
+            );
+            if (rollsBack) {
+                deletionBody.append(element(
+                    "div", "h3cm-muted",
+                    "To continue from this scene, use Roll active branch back. It clears later active pointers but keeps every saved take.",
+                ));
+            }
             const list = element("ul", "h3cm-dependents");
             for (const dependent of state.deletion.dependents) {
                 const action = dependent.leaf
                     ? (dependent.active
-                        ? " · active tip: select to roll back"
+                        ? " · active leaf: select to delete it"
                         : " · leaf: delete this first")
                     : "";
                 const item = element("li", "h3cm-dependent",
@@ -1366,13 +1383,18 @@ function mount(node) {
         const record = state.selected;
         const lineage = selectedLineage();
         const scope = selectedChapterRange();
+        const activationMode = selectedActivationMode();
+        const rollsBack = activationMode === "rollback";
         if (!record || !canActivateSelected() || state.busy) return;
         const confirmed = window.confirm(
-            `Make ${scope.title} active through scene ${record.scene} revision ${record.revision.slice(0, 8)}?\n\n` +
+            `${rollsBack ? "Roll" : "Make"} ${scope.title} ${rollsBack ? "back" : "active"} through scene ${record.scene} revision ${record.revision.slice(0, 8)}?\n\n` +
+            `${rollsBack ? `Active pointers after scene ${record.scene} will be cleared. ` : ""}` +
             `Only scenes ${scope.start}–${scope.end} are affected. Other chapters keep their active branches. If a Plan is connected, the selected chapter's saved scene settings are restored. No saved revision, workflow, reference, or assembled video is deleted.`,
         );
         if (!confirmed) return;
-        setBusy(true, "Promoting selected checkpoint lineage…");
+        setBusy(true, rollsBack
+            ? "Rolling active checkpoint branch back…"
+            : "Promoting selected checkpoint lineage…");
         try {
             const payload = await jsonRequest(
                 "/minimax_h3_context_loop/checkpoint-revisions/restore", {
@@ -1391,7 +1413,7 @@ function mount(node) {
                 applyActivatedRevisions(planNode, payload.restored ?? []));
             await refreshCheckpoints();
             status.className = "h3cm-status";
-            status.textContent = `${scope.title} scene ${record.scene} revision ${record.revision.slice(0, 8)} is now its active branch tip. ` +
+            status.textContent = `${scope.title} ${rollsBack ? "rolled back" : "is now active"} through scene ${record.scene} revision ${record.revision.slice(0, 8)}. ` +
                 `${payload.retired_scope_pointers || 0} later pointer${payload.retired_scope_pointers === 1 ? " was" : "s were"} cleared inside this chapter; other chapters were preserved; all immutable revisions were kept` +
                 `${planUpdated ? "; connected Plan scene settings were restored." : "."}`;
         } catch (error) {

@@ -182,6 +182,38 @@ export function checkpointSelectionJson(payload, runName, selected, range = null
         : "";
 }
 
+export function checkpointActivationMode(payload, selected, range = null) {
+    if (!selected?.ready || selected?.take_kind === "editorial_alternate") {
+        return "disabled";
+    }
+    const start = Math.max(1, Number(range?.start) || 1);
+    const selectedScene = Number(selected.scene);
+    const lineage = checkpointRevisionLineage(payload, selected, range);
+    if (!Number.isInteger(selectedScene)
+            || lineage.length !== selectedScene - start + 1) {
+        return "disabled";
+    }
+    const revisions = Array.isArray(payload?.revisions)
+        ? payload.revisions : [];
+    const records = checkpointRevisionMap(payload);
+    if (lineage.some((item) => !records.get(
+        checkpointRevisionKey(item.scene, item.revision),
+    )?.active)) {
+        return "activate";
+    }
+    const maximumScene = Math.max(
+        selectedScene,
+        ...revisions.map((item) => Number(item.scene) || 0),
+    );
+    const end = Math.max(start, Number(range?.end) || maximumScene);
+    return revisions.some((item) =>
+        Boolean(item.active)
+        && item.take_kind !== "editorial_alternate"
+        && Number(item.scene) > selectedScene
+        && Number(item.scene) <= end)
+        ? "rollback" : "current";
+}
+
 export function checkpointDependencyText(item) {
     const scene = Number(item?.scene) || 0;
     const id = String(item?.scene_id ?? `clip_${String(scene).padStart(4, "0")}`);
