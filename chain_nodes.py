@@ -1801,11 +1801,16 @@ def _semantic_anchor_bundle(value: Any) -> dict[str, Any]:
             "Connect Semantic Picture Anchors through Semantic Anchor Bundle "
             "before using them in Ref2VA, Plan Studio, or Run Manager.")
     size = str(value.get("semantic_anchor_size") or "512")
-    mode = _semantic_anchor_mode(value.get("semantic_anchor_mode"))
-    if size not in SEMANTIC_ANCHOR_SIZES:
+    mode = str(value.get("semantic_anchor_mode") or
+               "timestamped_video").strip().lower()
+    if size not in SEMANTIC_ANCHOR_BUNDLE_SIZES:
         raise ValueError(
             "Semantic anchor size must be one of %s." %
-            (SEMANTIC_ANCHOR_SIZES,))
+            (SEMANTIC_ANCHOR_BUNDLE_SIZES,))
+    if mode not in SEMANTIC_ANCHOR_BUNDLE_MODES:
+        raise ValueError(
+            "Semantic anchor mode must be one of %s." %
+            (SEMANTIC_ANCHOR_BUNDLE_MODES,))
     expected = _make_semantic_anchor_bundle(entries, size, mode)
     if str(value.get("fingerprint") or "") != expected["fingerprint"]:
         raise ValueError("Semantic anchor bundle fingerprint is inconsistent.")
@@ -1816,11 +1821,15 @@ def _make_semantic_anchor_bundle(
         entries: list[dict[str, Any]], size: Any,
         mode: Any) -> dict[str, Any]:
     size = str(size or "512")
-    mode = _semantic_anchor_mode(mode)
-    if size not in SEMANTIC_ANCHOR_SIZES:
+    mode = str(mode or "timestamped_video").strip().lower()
+    if size not in SEMANTIC_ANCHOR_BUNDLE_SIZES:
         raise ValueError(
             "Semantic anchor size must be one of %s." %
-            (SEMANTIC_ANCHOR_SIZES,))
+            (SEMANTIC_ANCHOR_BUNDLE_SIZES,))
+    if mode not in SEMANTIC_ANCHOR_BUNDLE_MODES:
+        raise ValueError(
+            "Semantic anchor mode must be one of %s." %
+            (SEMANTIC_ANCHOR_BUNDLE_MODES,))
     bundled_entries = []
     for source in entries:
         entry = dict(source)
@@ -3549,7 +3558,9 @@ def _compile_tagged_reference_prompt(
     dedicated_bundle = None
     if semantic_anchor_bundle is not None:
         dedicated_bundle = _semantic_anchor_bundle(semantic_anchor_bundle)
-        semantic_anchor_mode = dedicated_bundle["semantic_anchor_mode"]
+        if (dedicated_bundle["semantic_anchor_mode"] !=
+                SEMANTIC_ANCHOR_INHERIT):
+            semantic_anchor_mode = dedicated_bundle["semantic_anchor_mode"]
     anchor_mode = _semantic_anchor_mode(semantic_anchor_mode)
     warnings: list[str] = []
     normalized_prompt = str(prompt or "").replace(
@@ -13803,8 +13814,18 @@ class MiniMaxH3TaggedReferenceToVideo:
         backend = _tagged_conditioning_backend(conditioning_backend)
         anchor_bundle = _reference_semantic_anchor_bundle(references)
         if anchor_bundle is not None:
-            semantic_anchor_size = anchor_bundle["semantic_anchor_size"]
-            semantic_anchor_mode = anchor_bundle["semantic_anchor_mode"]
+            if (anchor_bundle["semantic_anchor_size"] !=
+                    SEMANTIC_ANCHOR_INHERIT):
+                semantic_anchor_size = anchor_bundle["semantic_anchor_size"]
+            if (anchor_bundle["semantic_anchor_mode"] !=
+                    SEMANTIC_ANCHOR_INHERIT):
+                semantic_anchor_mode = anchor_bundle["semantic_anchor_mode"]
+        inherited_anchor_presentation = bool(
+            anchor_bundle is not None and (
+                anchor_bundle["semantic_anchor_size"] ==
+                SEMANTIC_ANCHOR_INHERIT or
+                anchor_bundle["semantic_anchor_mode"] ==
+                SEMANTIC_ANCHOR_INHERIT))
         compiled, summary, bindings = _compile_tagged_reference_prompt(
             references, clip_index, clip_count, prompt, reference_policy,
             semantic_anchor_mode, anchor_bundle)
@@ -13965,7 +13986,6 @@ class MiniMaxH3TaggedReferenceToVideo:
         else:
             raise ValueError(
                 "Tagged references have no valid reference fingerprint.")
-        cache_fingerprint = fingerprint
         positive = conditioner.out(0)
         latent = conditioner.out(1)
         presentation = None
@@ -14014,9 +14034,12 @@ class MiniMaxH3TaggedReferenceToVideo:
                 "semantic_anchor_mode": anchor_mode,
                 "semantic_anchor_size": anchor_size,
             })
-            if anchor_bundle is None:
+            if anchor_bundle is None or inherited_anchor_presentation:
+                fingerprint_registry = (
+                    _combined_reference_registry(references, anchor_bundle)
+                    if anchor_bundle is not None else references)
                 fingerprint_output = _reference_fingerprint_output(
-                    references,
+                    fingerprint_registry,
                     wrapper_key="tagged_reference_fingerprint",
                     wrapper_contract={
                         "semantic_anchor_mode": anchor_mode,
@@ -14027,6 +14050,8 @@ class MiniMaxH3TaggedReferenceToVideo:
                                 EXTERNAL_REFMOD_CONTRACT_VERSION),
                         } if backend == "external_refmod" else {}),
                     })
+        cache_fingerprint = _generation_fingerprint_value(
+            fingerprint_output)[0]
         cache_runtime_ready = (
             callable(getattr(vae, "encode", None))
             and not isinstance(vae, (str, bytes))
@@ -17791,16 +17816,16 @@ class MiniMaxH3ProjectAssetManager:
                     "default": "512",
                     "tooltip": "Qwen presentation size for project assets "
                                "assigned the Semantic anchor role. Select "
-                               "inherit and connect Tagged Scene Options to "
-                               "delegate this setting. Explicit values "
+                               "inherit to use the setting from the downstream "
+                               "Tagged Scene node. Explicit values "
                                "override it for every semantic asset in this "
                                "Carousel."}),
                 "semantic_anchor_mode": (
                     list(SEMANTIC_ANCHOR_BUNDLE_MODES), {
                     "default": "timestamped_video",
                     "tooltip": "Presentation mode for project semantic "
-                               "anchors. Select inherit and connect Tagged "
-                               "Scene Options to delegate this setting. Bare "
+                               "anchors. Select inherit to use the setting "
+                               "from the downstream Tagged Scene node. Bare "
                                "#tag is untimed; [timestamp] adds explicit "
                                "placement."}),
                 "operation_json": ("STRING", {
@@ -17832,12 +17857,6 @@ class MiniMaxH3ProjectAssetManager:
                                "edited image variant. It is evaluated only when "
                                "you press Model upscale in the asset editor; "
                                "normal H3 generation never loads it."}),
-                "tagged_scene_options": (TAGGED_SCENE_OPTIONS_TYPE, {
-                    "tooltip": "Optional settings source for Carousel "
-                               "semantic controls set to inherit. Connect the "
-                               "same Tagged Scene Options node used by Current "
-                               "Tagged Ref2VA Scene. The resolved values remain "
-                               "explicit in the reference fingerprint."}),
             },
         }
 
@@ -17888,7 +17907,8 @@ class MiniMaxH3ProjectAssetManager:
             semantic_anchor_mode="timestamped_video",
             tagged_references=None, operation_json="",
             ownership_json="",
-            upscale_model=_LAZY_INPUT_MISSING, tagged_scene_options=None):
+            upscale_model=_LAZY_INPUT_MISSING,
+            tagged_scene_options=None):
         del catalog_json, semantic_anchor_size
         del semantic_anchor_mode, tagged_references
         del ownership_json, tagged_scene_options
@@ -17911,7 +17931,9 @@ class MiniMaxH3ProjectAssetManager:
             semantic_anchor_mode="timestamped_video",
             tagged_references=None, operation_json="",
             ownership_json="",
-            upscale_model=_LAZY_INPUT_MISSING, tagged_scene_options=None):
+            upscale_model=_LAZY_INPUT_MISSING,
+            tagged_scene_options=None):
+        del tagged_scene_options  # Tolerate prompts saved during 0.6 preview.
         del catalog_json  # Disk catalog is authoritative; widget is UI state.
         # Carousel is an OUTPUT_NODE so it can run asset-only upscale jobs.
         # Its ordinary catalog build must remain readable when another
@@ -18034,28 +18056,10 @@ class MiniMaxH3ProjectAssetManager:
             native_count += 1
 
         if semantic_entries:
-            inherited = None
-            if (semantic_anchor_size == SEMANTIC_ANCHOR_INHERIT
-                    or semantic_anchor_mode == SEMANTIC_ANCHOR_INHERIT):
-                if tagged_scene_options is None:
-                    raise ValueError(
-                        "Carousel semantic anchor size or mode is set to "
-                        "inherit, but Tagged Scene Options is not connected. "
-                        "Connect the same Options output used by Current "
-                        "Tagged Ref2VA Scene, or choose an explicit Carousel "
-                        "value.")
-                inherited = _tagged_scene_options(tagged_scene_options)
-            resolved_anchor_size = (
-                inherited["semantic_anchor_size"]
-                if semantic_anchor_size == SEMANTIC_ANCHOR_INHERIT
-                else semantic_anchor_size)
-            resolved_anchor_mode = (
-                inherited["semantic_anchor_mode"]
-                if semantic_anchor_mode == SEMANTIC_ANCHOR_INHERIT
-                else semantic_anchor_mode)
             references = dict(references)
             references["semantic_anchors"] = _make_semantic_anchor_bundle(
-                semantic_entries, resolved_anchor_size, resolved_anchor_mode)
+                semantic_entries, semantic_anchor_size,
+                semantic_anchor_mode)
         combined = _combined_reference_registry(references)
         fingerprint = _reference_fingerprint_output(combined)
 

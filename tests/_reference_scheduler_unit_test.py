@@ -972,6 +972,38 @@ try:
         "picture_storyboard")
     assert dedicated_expansion["result"][4] == combined_token
 
+    inherited_passthrough = dict(native_passthrough)
+    inherited_passthrough["semantic_anchors"] = (
+        chain._make_semantic_anchor_bundle(
+            semantic_bundle["entries"], "inherit", "inherit"))
+    inherited_expansion = chain.MiniMaxH3TaggedReferenceToVideo().apply(
+        "clip", "video-vae", "audio-vae", inherited_passthrough, 1, 1,
+        "Use @native_0 and #anchor_0[0.00s].",
+        64, 32, 22, "match", semantic_anchor_size="384",
+        semantic_anchor_mode="timestamped_video")
+    inherited_inputs = inherited_expansion["expand"][
+        "SemanticAnchors"]["inputs"]
+    assert inherited_inputs["presentation"]["semantic_anchor_size"] == "384"
+    assert inherited_inputs["presentation"]["semantic_anchor_mode"] == (
+        "timestamped_video")
+    assert inherited_expansion["result"][4] != combined_token
+
+    partial_inherit = dict(native_passthrough)
+    partial_inherit["semantic_anchors"] = (
+        chain._make_semantic_anchor_bundle(
+            semantic_bundle["entries"], "inherit", "picture_storyboard"))
+    partial_expansion = chain.MiniMaxH3TaggedReferenceToVideo().apply(
+        "clip", "video-vae", "audio-vae", partial_inherit, 1, 1,
+        "Use @native_0 and #anchor_0[0.00s].",
+        64, 32, 22, "match", semantic_anchor_size="1024",
+        semantic_anchor_mode="timestamped_video")
+    partial_inputs = partial_expansion["expand"][
+        "SemanticAnchors"]["inputs"]
+    assert partial_inputs["presentation"]["semantic_anchor_size"] == "1024"
+    assert partial_inputs["presentation"]["semantic_anchor_mode"] == (
+        "picture_storyboard")
+    assert partial_expansion["result"][4] != inherited_expansion["result"][4]
+
     modern_state = {
         "index": 1,
         "plan": {
