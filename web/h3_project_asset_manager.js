@@ -303,10 +303,8 @@ function mount(node) {
     const catalogWidget = widget(node, "catalog_json");
     const operationWidget = widget(node, "operation_json");
     const ownershipWidget = widget(node, "ownership_json");
-    const semanticSize = widget(node, "semantic_anchor_size");
-    const semanticMode = widget(node, "semantic_anchor_mode");
-    [runNameWidget, catalogWidget, operationWidget, ownershipWidget,
-        semanticSize, semanticMode].forEach(collapseWidget);
+    [runNameWidget, catalogWidget, operationWidget, ownershipWidget]
+        .forEach(collapseWidget);
     if (ownershipWidget) {
         ownershipWidget.value = "";
         // ComfyUI deliberately separates workflow persistence
