@@ -62,7 +62,7 @@ def main():
         "timestamped_video")
     assert "tagged_references" in (
         chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"])
-    assert "tagged_scene_options" in (
+    assert "tagged_scene_options" not in (
         chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"])
     assert chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"][
         "upscale_model"][1]["lazy"] is True
@@ -152,27 +152,17 @@ def main():
 
         inherited_record, inherited_references, inherited_token, *_rest = (
             chain.MiniMaxH3ProjectAssetManager().build(
-                "episode", "", "inherit", "inherit",
-                tagged_scene_options=chain._tagged_scene_options({
-                    "version": chain.TAGGED_SCENE_OPTIONS_VERSION,
-                    "semantic_anchor_size": "768",
-                    "semantic_anchor_mode": "picture_storyboard",
-                })))
+                "episode", "", "inherit", "inherit"))
         inherited_bundle = inherited_references["semantic_anchors"]
-        assert inherited_bundle["semantic_anchor_size"] == "768"
-        assert inherited_bundle["semantic_anchor_mode"] == "picture_storyboard"
+        assert inherited_bundle["semantic_anchor_size"] == "inherit"
+        assert inherited_bundle["semantic_anchor_mode"] == "inherit"
         assert inherited_record["references"] is inherited_references
         explicit_token = chain.MiniMaxH3ProjectAssetManager().build(
             "episode", "", "768", "picture_storyboard")[2]
-        assert inherited_token == explicit_token
-        try:
-            chain.MiniMaxH3ProjectAssetManager().build(
-                "episode", "", "inherit", "inherit")
-        except ValueError as exc:
-            assert "Tagged Scene Options is not connected" in str(exc)
-        else:
-            raise AssertionError(
-                "Carousel accepted unresolved semantic inheritance")
+        assert inherited_token != explicit_token
+        assert chain._generation_fingerprint_value(inherited_token)[0] == (
+            chain._combined_reference_registry(
+                inherited_references)["fingerprint"])
 
         picture = chain._project_asset_image(
             references["entries"][0]["value"])
