@@ -297,9 +297,7 @@ function mount(node) {
     const runNameWidget = widget(node, "run_name");
     const catalogWidget = widget(node, "catalog_json");
     const operationWidget = widget(node, "operation_json");
-    const semanticSize = widget(node, "semantic_anchor_size");
-    const semanticMode = widget(node, "semantic_anchor_mode");
-    [runNameWidget, catalogWidget, operationWidget, semanticSize, semanticMode].forEach(collapseWidget);
+    [runNameWidget, catalogWidget, operationWidget].forEach(collapseWidget);
 
     const root = el("div", "h3pa-root");
     const top = el("div", "h3pa-row");
