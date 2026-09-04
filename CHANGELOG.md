@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Project Asset Carousel Run-name editing so pauses after a space,
+  underscore, or hyphen no longer let an asynchronous catalog refresh erase
+  the separator. The field now preserves the exact draft while typing and
+  commits its folder-safe project name on Enter or blur.
+
 - Fixed Checkpoint Manager hiding the safe rollback operation for an earlier
   checkpoint that was already on the active branch. It now offers **Roll
   active branch back**, retires later active pointers in one operation, and

@@ -305,7 +305,7 @@ function mount(node) {
     const top = el("div", "h3pa-row");
     const runNameInput = el("input", "h3pa-project");
     runNameInput.placeholder = "Run name";
-    runNameInput.title = "Type a new Run name or choose an existing Asset Carousel project. Choosing one switches this Carousel and its connected Plan.";
+    runNameInput.title = "Type a new Run name, then press Enter or leave the field to load it. Spaces are converted to underscores when the name is committed, or choose an existing Asset Carousel project to switch this Carousel and its connected Plan.";
     runNameInput.setAttribute("aria-label", "Run name");
     runNameInput.autocomplete = "off";
     const projectPicker = el("div", "h3pa-project-picker");
@@ -1992,10 +1992,8 @@ function mount(node) {
         clearFileDropState();
         void uploadFiles(files, {dropped: true});
     }, dropListenerOptions);
-    let projectTimer = 0;
     function switchProject(selectedProject) {
         if (!state.projectNames.has(selectedProject)) return false;
-        clearTimeout(projectTimer);
         refreshSequence += 1;
         state.selected = "";
         state.folder = "";
@@ -2012,14 +2010,20 @@ function mount(node) {
     }
     runNameInput.addEventListener("input", () => {
         refreshSequence += 1;
+        const draft = String(runNameInput.value || "");
         if (runNameWidget) {
-            runNameWidget.value = project();
-            runNameWidget.callback?.(project());
+            runNameWidget.value = draft;
+            runNameWidget.callback?.(draft);
         }
-        clearTimeout(projectTimer); projectTimer = setTimeout(refresh, 400);
+        setStatus("Press Enter or leave the Run name field to load this project.");
     });
     runNameInput.addEventListener("change", () => {
-        switchProject(project());
+        if (!switchProject(project())) void refresh();
+    });
+    runNameInput.addEventListener("keydown", (event) => {
+        if (event.key !== "Enter") return;
+        event.preventDefault();
+        runNameInput.blur();
     });
     projectMenu.addEventListener("change", () => {
         const selectedProject = String(projectMenu.value || "");
