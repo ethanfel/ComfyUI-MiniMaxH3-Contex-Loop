@@ -60,7 +60,7 @@ import {
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.7.0";
+} from "./h3_reference_preview_core.mjs?v=0.7.2";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,

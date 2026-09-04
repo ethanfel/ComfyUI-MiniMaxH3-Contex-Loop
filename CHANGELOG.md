@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Prompt Editor reference discovery in Studio workflows whose render
+  engine lives inside a subgraph. Scene Prompt Editor, Rich Prompt Editor,
+  Plan Editor, and Plan Studio can now read the connected upstream Project
+  Asset Carousel directly, so its image, video, motion, and audio tags remain
+  visible even when no downstream Ref2VA wrapper is traversable.
+
 - Added workflow ownership for Carousel-backed projects. The first workflow
   that opens a Run becomes its writer and maintains a liveness heartbeat;
   other tabs and computers connected to that server remain read-only until the
