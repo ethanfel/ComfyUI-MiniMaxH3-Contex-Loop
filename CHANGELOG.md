@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Replaced the Project Asset Carousel's filtered browser suggestion popup with
+  a real project picker attached to the editable Run name field. The arrow now
+  always lists every existing project with its asset and unassigned counts,
+  while the text field still accepts a new Run name.
+
 - Fixed Review Gate delivery when Project Assets owns the Plan run name. The
   hidden, stale Plan widget no longer rejects the exact pending review or
   participates in run-name fallback matching. Report and original fix by
