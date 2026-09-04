@@ -213,9 +213,52 @@ async def check():
         assert scene_one["presentation_revision"] == alternate_one
         assert scene_one["alternates"][0]["used_in_final_cut"] is True
 
+        regenerated_base = "3" * 32
+        regenerated = write_take(
+            run, 1, "scene_1", regenerated_base, "the green folder",
+            active=True)
+        stale_presentation = chain._editorial_presentation_segments(
+            "alternate_test", [regenerated, second], selected)
+        assert stale_presentation[0]["revision"] == regenerated_base
+        recovered_editorial, recovered_records, recovered_frames = (
+            chain._editorial_timeline_records(
+                "alternate_test", [regenerated]))
+        assert recovered_editorial["replacements"] == []
+        assert recovered_records[0]["segment"]["revision"] == regenerated_base
+        assert recovered_frames == regenerated["delivered_frames"]
+        stale_listing = chain._saved_checkpoint_listing(
+            "alternate_test", include_graph=False)
+        stale_scene_one = stale_listing["checkpoints"][0]
+        assert "presentation_revision" not in stale_scene_one
+        assert stale_scene_one["alternates"][0]["used_in_final_cut"] is False
+        assert stale_listing["editorial"]["replacements"] == []
+        stale_graph = chain.CheckpointGraphManager(temporary).graph(
+            "alternate_test")
+        stale_base_record = next(
+            item for item in stale_graph["revisions"]
+            if item["revision"] == base_one)
+        assert stale_base_record["alternates"][0]["used_in_final_cut"] is False
+        stale_alternate_preview = chain.CheckpointGraphManager(
+            temporary).deletion_preview(
+                "alternate_test", 1, alternate_one)
+        assert stale_alternate_preview["allowed"] is True
+
+        reconciled, cleared = chain._editorial_after_base_revision_change(
+            selected, 1, "scene_1", regenerated_base)
+        assert cleared == ["final-cut alternate"]
+        assert reconciled["replacements"] == []
+        assert reconciled["alternate_draft"] is None
+        valid_again, cleared = chain._editorial_after_base_revision_change(
+            selected, 1, "scene_1", base_one)
+        assert cleared == []
+        assert valid_again["replacements"] == selected["replacements"]
+
+        # Restore the original base for graph/deletion assertions below.
+        write_take(run, 1, "scene_1", base_one, "the red folder", active=True)
+
         graph = chain.CheckpointGraphManager(temporary).graph("alternate_test")
-        assert graph["summary"]["revision_count"] == 3
-        assert graph["summary"]["branch_count"] == 1
+        assert graph["summary"]["revision_count"] == 4
+        assert graph["summary"]["branch_count"] == 2
         base_record = next(item for item in graph["revisions"]
                            if item["revision"] == base_one)
         assert base_record["alternates"][0]["revision"] == alternate_one

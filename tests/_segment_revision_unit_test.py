@@ -171,6 +171,25 @@ def main():
             assert audio_file.getframerate() == 8000
             assert audio_file.getnframes() == round(5 / chain.FPS * 8000)
 
+        old_alternate = "a" * 32
+        chain._atomic_json(chain._run_editorial_path("revision_test"), {
+            "run_name": "revision_test",
+            "scene_order": [{"scene": 1, "scene_id": "scene_one"}],
+            "alternate_draft": {
+                "enabled": True,
+                "scene": 1,
+                "scene_id": "scene_one",
+                "base_revision": first["revision"],
+                "prompt": "third take",
+                "seed": "3",
+            },
+            "replacements": [{
+                "scene": 1,
+                "scene_id": "scene_one",
+                "base_revision": first["revision"],
+                "alternate_revision": old_alternate,
+            }],
+        })
         plan["shots"][0].update({
             "prompt": "second take",
             "scene_prompt": "second take",
@@ -192,6 +211,9 @@ def main():
         assert second_result["ui"]["images"] == [chain._video_output_item(
             chain._absolute_output_path(second["segment"]))]
         assert second_result["ui"]["animated"] == (True,)
+        reconciled_editorial = chain._load_run_editorial("revision_test")
+        assert reconciled_editorial["alternate_draft"] is None
+        assert reconciled_editorial["replacements"] == []
 
         current = json.loads(pathlib.Path(
             chain._absolute_output_path(second["metadata"])

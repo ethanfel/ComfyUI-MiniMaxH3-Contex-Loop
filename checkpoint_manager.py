@@ -912,10 +912,17 @@ class CheckpointGraphManager:
         except (OSError, TypeError, ValueError, json.JSONDecodeError,
                 AttributeError):
             replacement_rows = []
+        active_revisions = {
+            int(item["scene"]): str(item["revision"])
+            for item in public_records
+            if item["active"] and item["take_kind"] != "editorial_alternate"
+        }
         selected_alternates = {
             (self._integer(item.get("scene")),
              str(item.get("alternate_revision") or "").lower())
             for item in replacement_rows if isinstance(item, dict)
+            and str(item.get("base_revision") or "").lower() ==
+            active_revisions.get(self._integer(item.get("scene")), "")
         }
         by_key = {
             (int(item["scene"]), str(item["revision"])): item
@@ -1149,16 +1156,27 @@ class CheckpointGraphManager:
             try:
                 editorial = self._read_json(os.path.join(
                     scan["run_dir"], "editorial.json"))
+                active_revision = next((
+                    str(record.get("revision") or "").lower()
+                    for record in scan["records"].values()
+                    if int(record.get("scene", 0)) == scene_number
+                    and bool(record.get("active"))
+                    and str(record.get("take_kind") or "") !=
+                    "editorial_alternate"), "")
                 selected_in_cut = any(
                     isinstance(item, dict)
                     and self._integer(item.get("scene")) == scene_number
                     and str(item.get("alternate_revision") or "").lower()
                     == token
+                    and str(item.get("base_revision") or "").lower()
+                    == active_revision
                     for item in editorial.get("replacements", []))
                 selected_base = any(
                     isinstance(item, dict)
                     and self._integer(item.get("scene")) == scene_number
                     and str(item.get("base_revision") or "").lower() == token
+                    and str(item.get("base_revision") or "").lower()
+                    == active_revision
                     for item in editorial.get("replacements", []))
             except (OSError, TypeError, ValueError, json.JSONDecodeError,
                     AttributeError):
