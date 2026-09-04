@@ -647,13 +647,26 @@ function fetchPending() {
     return pendingFetchPromise;
 }
 
+function planRunNameTrusted(planNode) {
+    // Project Assets replaces Plan.run_name server-side while the plan editor
+    // deliberately leaves that now-hidden widget unchanged. Psylent_Gamer
+    // (4090) identified this Review Gate routing split through Banodoco.
+    if (!planNode) return true;
+    const input = planNode.inputs?.find((item) => item.name === "project_assets");
+    return input?.link === null || input?.link === undefined;
+}
+
 function deliverReview(node, data) {
     if (!node || nodeType(node) !== NODE_NAME) return false;
     const expectedRun = String(data?.run_name ?? "").trim();
     if (expectedRun) {
         const planNode = findUpstreamNode(node, PLAN_NAMES);
-        const actualRun = String(widgetByName(planNode, "run_name")?.value ?? "").trim();
-        if (actualRun && actualRun !== expectedRun) return false;
+        if (planRunNameTrusted(planNode)) {
+            const actualRun = String(
+                widgetByName(planNode, "run_name")?.value ?? "",
+            ).trim();
+            if (actualRun && actualRun !== expectedRun) return false;
+        }
     }
     if (typeof node._h3ReviewHandler === "function") {
         node._h3ReviewHandler(data);
@@ -675,6 +688,7 @@ function reviewFallbackNode(data) {
     if (expectedRun) {
         const matchingRun = gates.filter((item) => {
             const planNode = findUpstreamNode(item, PLAN_NAMES);
+            if (!planRunNameTrusted(planNode)) return false;
             return String(widgetByName(planNode, "run_name")?.value ?? "").trim() ===
                 expectedRun;
         });

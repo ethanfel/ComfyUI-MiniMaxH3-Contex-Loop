@@ -314,6 +314,18 @@ assert.match(reviewSource, /Accept now & continue/);
 assert.match(reviewSource, /review_each_candidate/);
 assert.match(reviewSource, /review-candidate-batch/);
 assert.match(reviewSource, /candidate_batch_active/);
+assert.match(reviewSource, /function planRunNameTrusted\(planNode\)/);
+assert.match(reviewSource, /item\.name === "project_assets"/);
+assert.match(
+    reviewSource,
+    /if \(planRunNameTrusted\(planNode\)\) \{[\s\S]*actualRun[\s\S]*actualRun !== expectedRun/,
+    "an exact Review Gate must ignore the stale Plan run-name widget when Project Assets owns it",
+);
+assert.match(
+    reviewSource,
+    /const matchingRun = gates\.filter\([\s\S]*if \(!planRunNameTrusted\(planNode\)\) return false/,
+    "run-name fallback routing must not positively match a Project Assets-owned Plan",
+);
 assert.match(reviewSource, /Pause candidate run/);
 assert.match(reviewSource, /\/api\/jobs\/\$\{encodeURIComponent\(execution\.promptId\)\}\/cancel/);
 assert.match(reviewSource, /activate_only: true/);
