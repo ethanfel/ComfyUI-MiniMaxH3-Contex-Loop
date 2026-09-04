@@ -14659,11 +14659,14 @@ class MiniMaxH3ProjectAssetManager:
                 "semantic_anchor_size": (list(SEMANTIC_ANCHOR_SIZES), {
                     "default": "512",
                     "tooltip": "Qwen presentation size for project assets "
-                               "assigned the Semantic anchor role."}),
+                               "assigned the Semantic anchor role. This visible "
+                               "value applies to every semantic asset in this "
+                               "Carousel."}),
                 "semantic_anchor_mode": (list(SEMANTIC_ANCHOR_MODES), {
                     "default": "timestamped_video",
-                    "tooltip": "Presentation mode for #tag[timestamp] "
-                               "project semantic anchors."}),
+                    "tooltip": "Presentation mode for project semantic "
+                               "anchors. Bare #tag is untimed; [timestamp] "
+                               "adds explicit placement."}),
                 "operation_json": ("STRING", {
                     "default": "", "multiline": False,
                     "dynamicPrompts": False,
@@ -14725,7 +14728,8 @@ class MiniMaxH3ProjectAssetManager:
             return "%s:%s" % (str(catalog_json or ""), operation_json or "")
 
     def check_lazy_status(
-            self, run_name, catalog_json="", semantic_anchor_size="512",
+            self, run_name, catalog_json="",
+            semantic_anchor_size="512",
             semantic_anchor_mode="timestamped_video",
             tagged_references=None, operation_json="",
             upscale_model=_LAZY_INPUT_MISSING):
@@ -14744,10 +14748,12 @@ class MiniMaxH3ProjectAssetManager:
             return ["upscale_model"]
         return []
 
-    def build(self, run_name, catalog_json="", semantic_anchor_size="512",
-              semantic_anchor_mode="timestamped_video",
-              tagged_references=None, operation_json="",
-              upscale_model=_LAZY_INPUT_MISSING):
+    def build(
+            self, run_name, catalog_json="",
+            semantic_anchor_size="512",
+            semantic_anchor_mode="timestamped_video",
+            tagged_references=None, operation_json="",
+            upscale_model=_LAZY_INPUT_MISSING):
         del catalog_json  # Disk catalog is authoritative; widget is UI state.
         store = ProjectAssetStore(_input_root(), _output_root())
         operation = _project_asset_pending_operation(operation_json)

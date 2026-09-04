@@ -64,6 +64,8 @@ assert.match(source, /Choose from ComfyUI Input/);
 assert.match(source, /slot_id/);
 assert.match(source, /node\.onExecuted/);
 assert.match(source, /widget\(node, "run_name"\)/);
+assert.doesNotMatch(source, /widget\(node, "semantic_anchor_size"\)/);
+assert.doesNotMatch(source, /widget\(node, "semantic_anchor_mode"\)/);
 assert.match(source, /placeholder = "Run name"/);
 assert.match(source, /enter it here only/);
 assert.match(source, /asset\?\.role === "semantic_anchor" \? "#" : "@"/);
