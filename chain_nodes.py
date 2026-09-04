@@ -8481,6 +8481,51 @@ def _select_editorial_alternate(
     return normalized
 
 
+def _editorial_after_base_revision_change(
+        editorial: dict[str, Any], scene: int, scene_id: str,
+        revision: str) -> tuple[dict[str, Any], list[str]]:
+    """Clear alternate state that cannot belong to a newly accepted base."""
+    updated = dict(editorial)
+    cleared: list[str] = []
+    draft = updated.get("alternate_draft")
+    if (isinstance(draft, dict) and int(draft.get("scene", 0)) == scene
+            and (str(draft.get("scene_id") or "") != scene_id
+                 or str(draft.get("base_revision") or "") != revision)):
+        updated["alternate_draft"] = None
+        cleared.append("alternate draft")
+    replacements = []
+    for item in updated.get("replacements", []):
+        if (isinstance(item, dict) and int(item.get("scene", 0)) == scene
+                and (str(item.get("scene_id") or "") != scene_id
+                     or str(item.get("base_revision") or "") != revision)):
+            cleared.append("final-cut alternate")
+            continue
+        replacements.append(item)
+    updated["replacements"] = replacements
+    if cleared:
+        updated["updated_at"] = datetime.now(timezone.utc).isoformat(
+            timespec="seconds").replace("+00:00", "Z")
+    return updated, cleared
+
+
+def _editorial_for_base_segments(
+        editorial: dict[str, Any], segments: list[dict[str, Any]],
+) -> tuple[dict[str, Any], list[str]]:
+    """Return an editorial view reconciled to the supplied base lineage."""
+    updated = editorial
+    notices: list[str] = []
+    for offset, segment in enumerate(segments, start=1):
+        scene = int(segment.get("index", offset))
+        scene_id = str(segment.get("id") or "clip_%04d" % scene)
+        revision = checkpoint_revision_token(scene, segment)
+        updated, cleared = _editorial_after_base_revision_change(
+            updated, scene, scene_id, revision)
+        if cleared:
+            notices.append(
+                "scene %d %s" % (scene, " and ".join(cleared)))
+    return updated, notices
+
+
 def _editorial_presentation_segments(
         run_name: Any, segments: list[dict[str, Any]],
         editorial: dict[str, Any] | None = None,
@@ -8504,11 +8549,17 @@ def _editorial_presentation_segments(
         base_revision = checkpoint_revision_token(scene, base)
         expected_base = str(replacement["base_revision"])
         if base_revision != expected_base:
-            raise ValueError(
-                "Final-cut alternate for scene %d belongs to base %s, but "
-                "this manifest selects %s. Choose an alternate for this "
-                "lineage or restore the original take." %
-                (scene, expected_base[:8], base_revision[:8] or "unknown"))
+            # A normal scene regeneration changes the immutable base lineage.
+            # Old builds did not clear the previous final-cut selection at the
+            # commit point, so tolerate those sidecars and present the newly
+            # accepted base instead of failing after an expensive generation.
+            _LOG.warning(
+                "H3 Chain ignored stale final-cut alternate for scene %d: "
+                "alternate base %s, active base %s. The alternate revision "
+                "is retained but no longer selected.", scene,
+                expected_base[:8], base_revision[:8] or "unknown")
+            result.append(base)
+            continue
         revision = str(replacement["alternate_revision"])
         metadata_path = _versioned_path(
             _artifact_paths({"run_name": _safe_name(run_name, "h3_chain")},
@@ -8835,6 +8886,13 @@ def _editorial_timeline_records(
             dict[str, Any], list[dict[str, Any]], int]:
     """Resolve editorial clip positions without changing the chain manifest."""
     editorial = _load_run_editorial(run_name)
+    editorial, cleared_editorial = _editorial_for_base_segments(
+        editorial, segments)
+    if cleared_editorial:
+        _LOG.warning(
+            "H3 Chain ignored stale editorial selection(s) after base "
+            "regeneration: %s. Alternate artifacts remain available.",
+            "; ".join(cleared_editorial))
     base_editorial_segments = {
         int(segment.get("index", offset)):
             _editorial_trimmed_segment(segment, editorial)
@@ -19957,6 +20015,21 @@ class MiniMaxH3ChainSegmentSave:
                 _atomic_json(published_metadata, metadata)
                 if alternate_take is None:
                     _atomic_json(paths["metadata"], metadata)
+                    editorial = _load_run_editorial(plan["run_name"])
+                    editorial, cleared_editorial = (
+                        _editorial_after_base_revision_change(
+                            editorial, index, str(shot["id"]), transaction))
+                    if cleared_editorial:
+                        normalized_editorial = _normalize_run_editorial(
+                            editorial, plan["run_name"])
+                        _atomic_json(
+                            _run_editorial_path(plan["run_name"]),
+                            normalized_editorial)
+                        _LOG.info(
+                            "H3 Chain cleared scene %d %s after accepting "
+                            "new base revision %s; alternate artifacts were "
+                            "retained.", index, " and ".join(
+                                cleared_editorial), transaction[:8])
             committed = True
         finally:
             _safe_unlink(checkpoint_tmp)
@@ -26492,6 +26565,13 @@ def _saved_checkpoint_listing(
                     KeyError):
                 continue
     editorial = _load_run_editorial(run_name)
+    editorial, cleared_editorial = _editorial_for_base_segments(
+        editorial, list(active_segments.values()))
+    if cleared_editorial:
+        _LOG.warning(
+            "H3 Checkpoint Manager ignored stale editorial selection(s): "
+            "%s. Alternate artifacts remain available.",
+            "; ".join(cleared_editorial))
     replacements = {
         int(item["scene"]): item
         for item in editorial.get("replacements", [])
@@ -26501,8 +26581,15 @@ def _saved_checkpoint_listing(
         int(item["scene"]): item for item in checkpoints
     }
     for scene, values in alternates.items():
-        selected_revision = str(
-            replacements.get(scene, {}).get("alternate_revision") or "")
+        replacement = replacements.get(scene, {})
+        active_segment = active_segments.get(scene, {})
+        active_revision = checkpoint_revision_token(scene, active_segment)
+        replacement_base = str(replacement.get("base_revision") or "")
+        selection_is_current = bool(
+            replacement_base and replacement_base == active_revision)
+        selected_revision = (str(
+            replacement.get("alternate_revision") or "")
+            if selection_is_current else "")
         for value in values:
             value["used_in_final_cut"] = (
                 str(value["revision"]) == selected_revision)
@@ -26512,6 +26599,12 @@ def _saved_checkpoint_listing(
         active_item = checkpoint_items.get(scene)
         if active_item is not None:
             active_item["alternates"] = values
+            if replacement and not selection_is_current:
+                active_item["editorial_error"] = (
+                    "The saved final-cut alternate belongs to base %s, but "
+                    "the active base is %s. The active base will be used." %
+                    (replacement_base[:8] or "unknown",
+                     active_revision[:8] or "unknown"))
             selected = next((
                 item for item in values if item.get("used_in_final_cut")
             ), None)
