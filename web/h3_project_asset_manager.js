@@ -155,7 +155,7 @@ function injectStyles() {
         .h3pa-root *{box-sizing:border-box}.h3pa-row{display:flex;gap:7px;align-items:center;min-width:0}
         .h3pa-row input,.h3pa-row select,.h3pa-editor input,.h3pa-editor select,.h3pa-editor textarea{
           min-width:0;padding:6px 8px;border:1px solid var(--border-color,#566174);border-radius:6px;
-          background:var(--comfy-input-bg,#151820);color:inherit}.h3pa-project{flex:1;font-weight:650}
+          background:var(--comfy-input-bg,#151820);color:inherit}.h3pa-project-picker{display:flex;flex:1;min-width:160px}.h3pa-project{flex:1;font-weight:650;border-radius:6px 0 0 6px!important}.h3pa-project-menu{flex:0 0 38px;width:38px;padding:6px 4px!important;border-left:0!important;border-radius:0 6px 6px 0!important;cursor:pointer}
         .h3pa-button{padding:6px 9px;border:1px solid var(--border-color,#566174);border-radius:6px;
           background:var(--comfy-input-bg,#20242d);color:inherit;cursor:pointer}.h3pa-button:hover{border-color:#79a9ff}
         .h3pa-status{min-height:18px;color:#9eabc0;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
@@ -307,12 +307,15 @@ function mount(node) {
     runNameInput.placeholder = "Run name";
     runNameInput.title = "Type a new Run name or choose an existing Asset Carousel project. Choosing one switches this Carousel and its connected Plan.";
     runNameInput.setAttribute("aria-label", "Run name");
-    const projectSuggestions = el("datalist");
-    const projectSuggestionId = `h3pa-projects-${String(
-        node.id ?? "node",
-    ).replace(/[^A-Za-z0-9_-]/g, "_")}`;
-    projectSuggestions.id = projectSuggestionId;
-    runNameInput.setAttribute("list", projectSuggestionId);
+    runNameInput.autocomplete = "off";
+    const projectPicker = el("div", "h3pa-project-picker");
+    const projectMenu = el("select", "h3pa-project-menu");
+    projectMenu.title = "Switch to an existing Asset Carousel project";
+    projectMenu.setAttribute("aria-label", "Switch Asset Carousel project");
+    const projectMenuPlaceholder = el("option", "", "▾");
+    projectMenuPlaceholder.value = "";
+    projectMenu.append(projectMenuPlaceholder);
+    projectPicker.append(runNameInput, projectMenu);
     const savedRunName = serializedProjectAssetIdentity(
         runNameWidget?.value, catalogWidget?.value,
     );
@@ -343,7 +346,7 @@ function mount(node) {
         node.properties?.h3_project_asset_preview_mode ?? "light");
     previewSelect.title = "Display quality for this Carousel only. Generation always uses the original stored asset. Light uses cached thumbnails and bounded JPEG previews; Full loads the selected original into the Carousel UI.";
     previewSelect.setAttribute("aria-label", "Carousel display preview quality; generation always uses original assets");
-    top.append(el("span", "", "Run name"), runNameInput, sourceSelect, previewSelect);
+    top.append(el("span", "", "Run name"), projectPicker, sourceSelect, previewSelect);
     const fileInput = el("input");
     fileInput.type = "file"; fileInput.accept = "image/*,video/*,audio/*";
     fileInput.hidden = true;
@@ -366,7 +369,7 @@ function mount(node) {
     stage.append(preview, editor);
     const carousel = el("div", "h3pa-carousel");
     carousel.title = "Drop one or more image, video, or audio files here to create project assets immediately.";
-    root.append(top, status, tabs, stage, carousel, projectSuggestions);
+    root.append(top, status, tabs, stage, carousel);
     const dom = node.addDOMWidget("project_asset_carousel", "div", root, {
         serialize: false, hideOnZoom: false, getMinHeight: () => 560,
     });
@@ -408,20 +411,21 @@ function mount(node) {
             state.projectNames = new Set(projects.map(
                 (item) => String(item.project ?? ""),
             ).filter(Boolean));
-            projectSuggestions.replaceChildren();
+            projectMenu.replaceChildren(projectMenuPlaceholder);
             for (const item of projects) {
                 const option = el("option");
                 option.value = String(item.project ?? "");
-                option.label = (
+                option.textContent = (
+                    `${String(item.project ?? "")} — ` +
                     `${Number(item.asset_count ?? 0)} asset${Number(item.asset_count ?? 0) === 1 ? "" : "s"}` +
                     ` · ${Number(item.unassigned_count ?? 0)} unassigned`
                 );
-                projectSuggestions.append(option);
+                projectMenu.append(option);
             }
         } catch {
             state.projects = [];
             state.projectNames = new Set();
-            projectSuggestions.replaceChildren();
+            projectMenu.replaceChildren(projectMenuPlaceholder);
         }
     }
     function persistCatalog(catalog) {
@@ -1989,6 +1993,23 @@ function mount(node) {
         void uploadFiles(files, {dropped: true});
     }, dropListenerOptions);
     let projectTimer = 0;
+    function switchProject(selectedProject) {
+        if (!state.projectNames.has(selectedProject)) return false;
+        clearTimeout(projectTimer);
+        refreshSequence += 1;
+        state.selected = "";
+        state.folder = "";
+        stopMedia();
+        runNameInput.value = selectedProject;
+        if (runNameWidget) {
+            runNameWidget.value = selectedProject;
+            runNameWidget.callback?.(selectedProject);
+        }
+        syncDownstreamPlan(node, selectedProject);
+        node.graph?.setDirtyCanvas?.(true, true);
+        void refresh();
+        return true;
+    }
     runNameInput.addEventListener("input", () => {
         refreshSequence += 1;
         if (runNameWidget) {
@@ -1998,20 +2019,12 @@ function mount(node) {
         clearTimeout(projectTimer); projectTimer = setTimeout(refresh, 400);
     });
     runNameInput.addEventListener("change", () => {
-        const selectedProject = project();
-        if (!state.projectNames.has(selectedProject)) return;
-        clearTimeout(projectTimer);
-        refreshSequence += 1;
-        state.selected = "";
-        state.folder = "";
-        stopMedia();
-        if (runNameWidget) {
-            runNameWidget.value = selectedProject;
-            runNameWidget.callback?.(selectedProject);
-        }
-        syncDownstreamPlan(node, selectedProject);
-        node.graph?.setDirtyCanvas?.(true, true);
-        void refresh();
+        switchProject(project());
+    });
+    projectMenu.addEventListener("change", () => {
+        const selectedProject = String(projectMenu.value || "");
+        projectMenu.value = "";
+        if (selectedProject) switchProject(selectedProject);
     });
     previewSelect.addEventListener("change", () => {
         state.previewMode = previewSelect.value === "full" ? "full" : "light";
