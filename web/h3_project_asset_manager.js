@@ -13,6 +13,9 @@ import {
 } from "./h3_project_asset_sync_core.mjs?v=0.5.70";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
+const SEMANTIC_SETTING_WIDGETS = [
+    "semantic_anchor_size", "semantic_anchor_mode",
+];
 const PLAN_TYPES = new Set([
     "MiniMaxH3ChainPlan", "MiniMaxH3ChainPlanStudio",
 ]);
@@ -255,10 +258,37 @@ function injectStyles() {
 
 function collapseWidget(item) {
     if (!item || item._h3paCollapsed) return;
+    item._h3paOriginalPresentation = {
+        type: item.type,
+        hidden: item.hidden,
+        computeSize: item.computeSize,
+        draw: item.draw,
+    };
     item._h3paCollapsed = true;
     item.hidden = true;
     item.computeSize = () => [0, -4];
     item.type = "hidden";
+    item.draw = () => {};
+}
+
+function restoreWidget(item) {
+    if (!item?._h3paCollapsed) return;
+    const original = item._h3paOriginalPresentation ?? {};
+    item.type = original.type;
+    item.hidden = original.hidden;
+    item.computeSize = original.computeSize;
+    item.draw = original.draw;
+    item._h3paCollapsed = false;
+}
+
+function refreshSemanticSettingVisibility(node) {
+    const visible = node?.properties?.h3_show_semantic_anchor_settings !== false;
+    for (const name of SEMANTIC_SETTING_WIDGETS) {
+        const item = widget(node, name);
+        if (visible) restoreWidget(item);
+        else collapseWidget(item);
+    }
+    node?.graph?.setDirtyCanvas?.(true, true);
 }
 
 function syncDownstreamPlan(node, runName) {
@@ -1928,6 +1958,7 @@ function mount(node) {
         return result;
     };
     node._h3ProjectAssetRefresh = ({fromConfiguration = false} = {}) => {
+        refreshSemanticSettingVisibility(node);
         hydrateSerializedCatalog({fromConfiguration});
         if (!adoptConnectedRunName()) void refresh();
         scheduleGraphRunNameSync();
@@ -1958,6 +1989,22 @@ app.registerExtension({
             setTimeout(() => this._h3ProjectAssetRefresh?.({
                 fromConfiguration: true,
             }), 0); return result;
+        };
+        const extraMenuOptions = nodeClass.prototype.getExtraMenuOptions;
+        nodeClass.prototype.getExtraMenuOptions = function (_, options) {
+            const result = extraMenuOptions?.apply(this, arguments);
+            const visible = this.properties?.h3_show_semantic_anchor_settings !== false;
+            options.push({
+                content: visible
+                    ? "Hide semantic anchor settings"
+                    : "Show semantic anchor settings",
+                callback: () => {
+                    this.properties ??= {};
+                    this.properties.h3_show_semantic_anchor_settings = !visible;
+                    refreshSemanticSettingVisibility(this);
+                },
+            });
+            return result;
         };
     },
     async nodeCreated(node) { if (nodeType(node) === NODE_NAME) mount(node); },
