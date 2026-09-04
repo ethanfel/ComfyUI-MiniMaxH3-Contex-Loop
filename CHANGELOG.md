@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## v0.6.0 — Production context authoring and synchronized export
 
+- Hardened Scene Prompt Editor and Rich Scene Prompt Editor workflow teardown.
+  Closing a workflow now cancels pending Plan propagation, prompt analysis,
+  history saves, timers, and listeners without repainting or mutating a graph
+  while ComfyUI is removing it. Cleanup failures are isolated so one editor
+  cannot prevent the remaining workflow nodes from closing.
+
 - Replaced the Project Asset Carousel's filtered browser suggestion popup with
   a real project picker attached to the editable Run name field. The arrow now
   always lists every existing project with its asset and unassigned counts,
