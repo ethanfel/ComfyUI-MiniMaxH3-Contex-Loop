@@ -54,6 +54,12 @@ def main():
     assert "project_name" not in chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["required"]
     assert chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["required"][
         "run_name"][1]["default"] == ""
+    asset_inputs = chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["required"]
+    assert asset_inputs["semantic_anchor_size"][0][0] == "inherit"
+    assert asset_inputs["semantic_anchor_size"][1]["default"] == "512"
+    assert asset_inputs["semantic_anchor_mode"][0][0] == "inherit"
+    assert asset_inputs["semantic_anchor_mode"][1]["default"] == (
+        "timestamped_video")
     assert "tagged_references" in (
         chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"])
     assert chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"][
@@ -141,6 +147,20 @@ def main():
         assert current == chain._combined_reference_registry(
             references)["fingerprint"]
         assert lineage["registry_mode"] == "tagged"
+
+        inherited_record, inherited_references, inherited_token, *_rest = (
+            chain.MiniMaxH3ProjectAssetManager().build(
+                "episode", "", "inherit", "inherit"))
+        inherited_bundle = inherited_references["semantic_anchors"]
+        assert inherited_bundle["semantic_anchor_size"] == "inherit"
+        assert inherited_bundle["semantic_anchor_mode"] == "inherit"
+        assert inherited_record["references"] is inherited_references
+        explicit_token = chain.MiniMaxH3ProjectAssetManager().build(
+            "episode", "", "768", "picture_storyboard")[2]
+        assert inherited_token != explicit_token
+        assert chain._generation_fingerprint_value(inherited_token)[0] == (
+            chain._combined_reference_registry(
+                inherited_references)["fingerprint"])
 
         picture = chain._project_asset_image(
             references["entries"][0]["value"])
