@@ -171,5 +171,15 @@ assert.match(source, /window\.setTimeout\(\s*flushPlanEffects, PROMPT_SYNC_DELAY
 assert.match(source, /liveValue !== state\.lastValue && !rebaseActivePromptOntoLivePlan\(\)/);
 assert.match(source, /textarea\.addEventListener\("blur", \(\) => \{\s*flushPlanEffects\(\)/);
 assert.match(source, /schedulePromptAnalysis\(\)/);
+const teardown = source.slice(
+    source.indexOf("node.onRemoved = function ()"),
+    source.indexOf("node._h3PromptCompanionSetActiveScene"),
+);
+assert.match(teardown, /state\.disposed = true/);
+assert.match(teardown, /state\.planSyncPending = null/);
+assert.match(teardown, /state\.history\.pendingDraft = null/);
+assert.doesNotMatch(teardown, /flushPlanEffects\(\)/);
+assert.doesNotMatch(teardown, /flushPromptAnalysis\(\)/);
+assert.doesNotMatch(teardown, /flushHistoryDraft\(\)/);
 
 console.log("H3 Scene Prompt companion: Plan synchronization and controls pass");

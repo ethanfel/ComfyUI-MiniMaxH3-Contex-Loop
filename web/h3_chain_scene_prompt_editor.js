@@ -801,6 +801,7 @@ function mount(node) {
         analysisTimer: null,
         applyPromptHistoryShortcut: null,
         ownsPromptHistoryTarget: null,
+        disposed: false,
     };
     node._h3ScenePromptEditorState = state;
 
@@ -902,6 +903,7 @@ function mount(node) {
     }
 
     function schedulePlanEffects(pending) {
+        if (state.disposed) return;
         state.planSyncPending = pending;
         if (state.planSyncTimer != null) {
             window.clearTimeout(state.planSyncTimer);
@@ -913,6 +915,7 @@ function mount(node) {
     }
 
     function schedulePromptAnalysis() {
+        if (state.disposed) return;
         if (state.analysisTimer != null) {
             window.clearTimeout(state.analysisTimer);
         }
@@ -1211,6 +1214,7 @@ function mount(node) {
     }
 
     function scheduleHistoryDraft(shotId, prompt) {
+        if (state.disposed) return;
         const history = state.history;
         const runName = planRunName();
         if (!runName) return;
@@ -2853,6 +2857,7 @@ function mount(node) {
     }
 
     function loadPlan(force = false) {
+        if (state.disposed) return;
         const planNode = upstreamPlanNode(node);
         const planWidget = planNode?.widgets?.find((item) => item.name === "plan_json");
         if (!planNode || !planWidget) {
@@ -2965,27 +2970,48 @@ function mount(node) {
 
     const removed = node.onRemoved;
     node.onRemoved = function () {
-        flushPlanEffects();
-        flushPromptAnalysis();
-        if (state.pollTimer != null) window.clearInterval(state.pollTimer);
-        if (state.popoverTimer != null) window.clearTimeout(state.popoverTimer);
-        hidePopover(true);
-        state.popover?.remove();
-        state.completion?.destroy();
-        state.completion = null;
-        api.removeEventListener("executed", onPromptExecuted);
-        globalThis.removeEventListener?.(
-            PROJECT_ASSET_CATALOG_CHANGED_EVENT, onProjectAssetCatalogChanged,
-        );
-        delete node._h3PromptCompanionSetActiveScene;
-        delete node._h3PromptCompanionSetScenePrompt;
-        void flushHistoryDraft();
+        // Workflow removal runs inside ComfyUI's tab/session teardown. The
+        // Plan value is already updated synchronously by commitPlan(), so only
+        // cancel deferred work here; callbacks and analysis can race teardown.
+        state.disposed = true;
+        const cleanups = [
+            () => {
+                if (state.planSyncTimer != null) window.clearTimeout(state.planSyncTimer);
+                state.planSyncTimer = null;
+                state.planSyncPending = null;
+                if (state.analysisTimer != null) window.clearTimeout(state.analysisTimer);
+                state.analysisTimer = null;
+                if (state.history.saveTimer != null) window.clearTimeout(state.history.saveTimer);
+                state.history.saveTimer = null;
+                state.history.pendingDraft = null;
+                state.history.loadToken += 1;
+                state.history.host = null;
+            },
+            () => { if (state.pollTimer != null) window.clearInterval(state.pollTimer); },
+            () => { if (state.popoverTimer != null) window.clearTimeout(state.popoverTimer); },
+            () => hidePopover(true),
+            () => state.popover?.remove(),
+            () => state.completion?.destroy(),
+            () => api.removeEventListener("executed", onPromptExecuted),
+            () => globalThis.removeEventListener?.(
+                PROJECT_ASSET_CATALOG_CHANGED_EVENT, onProjectAssetCatalogChanged,
+            ),
+        ];
         if (PROMPT_ASSISTANT_ENABLED) {
             assistant.preparingRequest = null;
-            clearAssistantReconnect();
-            clearPendingRequest();
-            assistant.client?.close();
+            cleanups.push(
+                () => clearAssistantReconnect(),
+                () => clearPendingRequest(),
+                () => assistant.client?.close(),
+            );
         }
+        for (const cleanup of cleanups) {
+            try { cleanup(); }
+            catch (error) { console.warn("H3 Scene Prompt Editor cleanup failed", error); }
+        }
+        state.completion = null;
+        delete node._h3PromptCompanionSetActiveScene;
+        delete node._h3PromptCompanionSetScenePrompt;
         return removed?.apply(this, arguments);
     };
     node._h3PromptCompanionSetActiveScene = (planNode, index) => {

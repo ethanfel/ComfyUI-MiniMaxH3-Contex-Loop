@@ -637,6 +637,7 @@ function mount(node) {
         popover:null, popoverTimer:null, popoverPinned:false, pollTimer:null,
         planSyncTimer:null, planSyncPending:null, analysisTimer:null,
         applyPromptHistoryShortcut:null, ownsPromptHistoryTarget:null,
+        disposed:false,
     };
     node._h3RichPromptState = state;
 
@@ -719,6 +720,7 @@ function mount(node) {
     }
 
     function schedulePlanEffects(pending) {
+        if (state.disposed) return;
         state.planSyncPending = pending;
         if (state.planSyncTimer != null) {
             window.clearTimeout(state.planSyncTimer);
@@ -730,6 +732,7 @@ function mount(node) {
     }
 
     function schedulePromptAnalysis() {
+        if (state.disposed) return;
         if (state.analysisTimer != null) {
             window.clearTimeout(state.analysisTimer);
         }
@@ -978,6 +981,7 @@ function mount(node) {
     }
 
     function scheduleHistoryDraft(shotId, prompt) {
+        if (state.disposed) return;
         const runName = planRunName();
         if (!runName) return;
         const history = state.history;
@@ -2188,6 +2192,7 @@ function mount(node) {
     }
 
     function loadPlan(force = false) {
+        if (state.disposed) return;
         const planNode = upstreamPlanNode(node);
         const planWidget = planNode?.widgets?.find((item) => item.name === "plan_json");
         if (!planNode || !planWidget) {
@@ -2288,24 +2293,46 @@ function mount(node) {
 
     const removed = node.onRemoved;
     node.onRemoved = function () {
-        flushPlanEffects();
-        flushPromptAnalysis();
-        if (state.pollTimer != null) window.clearInterval(state.pollTimer);
-        if (state.popoverTimer != null) window.clearTimeout(state.popoverTimer);
-        hidePopover(true);
-        state.popover?.remove();
-        state.completion?.destroy();
+        // Closing a workflow removes many nodes while ComfyUI is also saving
+        // its tab session. Never propagate Plan callbacks, analyze prompts, or
+        // start history requests from teardown: the edited Plan JSON was
+        // already assigned synchronously by writePlan().
+        state.disposed = true;
+        const cleanups = [
+            () => {
+                if (state.planSyncTimer != null) window.clearTimeout(state.planSyncTimer);
+                state.planSyncTimer = null;
+                state.planSyncPending = null;
+                if (state.analysisTimer != null) window.clearTimeout(state.analysisTimer);
+                state.analysisTimer = null;
+                if (state.history.saveTimer != null) window.clearTimeout(state.history.saveTimer);
+                state.history.saveTimer = null;
+                state.history.pendingDraft = null;
+                state.history.loadToken += 1;
+                state.history.host = null;
+            },
+            () => { if (state.pollTimer != null) window.clearInterval(state.pollTimer); },
+            () => { if (state.popoverTimer != null) window.clearTimeout(state.popoverTimer); },
+            () => hidePopover(true),
+            () => state.popover?.remove(),
+            () => state.completion?.destroy(),
+            () => api.removeEventListener("executed", onPromptExecuted),
+            () => globalThis.removeEventListener?.(
+                PROJECT_ASSET_CATALOG_CHANGED_EVENT, onProjectAssetCatalogChanged,
+            ),
+            () => state.optimizer.client?.close(),
+            () => state.optimizer.abortController?.abort(),
+            () => globalThis.removeEventListener?.(
+                "h3-prompt-optimizer-settings-changed", onOptimizerSettingsChanged,
+            ),
+        ];
+        for (const cleanup of cleanups) {
+            try { cleanup(); }
+            catch (error) { console.warn("H3 Rich Prompt Editor cleanup failed", error); }
+        }
         state.completion = null;
-        api.removeEventListener("executed", onPromptExecuted);
-        globalThis.removeEventListener?.(
-            PROJECT_ASSET_CATALOG_CHANGED_EVENT, onProjectAssetCatalogChanged,
-        );
         delete node._h3PromptCompanionSetActiveScene;
         delete node._h3PromptCompanionSetScenePrompt;
-        void flushHistoryDraft();
-        state.optimizer.client?.close();
-        state.optimizer.abortController?.abort();
-        globalThis.removeEventListener?.("h3-prompt-optimizer-settings-changed", onOptimizerSettingsChanged);
         return removed?.apply(this, arguments);
     };
     node._h3PromptCompanionSetActiveScene = (planNode, index) => {
