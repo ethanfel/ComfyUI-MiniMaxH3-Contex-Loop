@@ -8466,9 +8466,13 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         "replacements": replacements,
     }
     stored_revision = str(value.get("revision") or "").strip().lower()
+    # Untimestamped legacy sidecars must not get a new token on every read.
+    # Preserve the previous token recipe when a saved timestamp is present.
+    revision_document = document if value.get("updated_at") else {
+        key: item for key, item in document.items() if key != "updated_at"}
     document["revision"] = (
         stored_revision if re.fullmatch(r"[0-9a-f]{32}", stored_revision)
-        else _fingerprint(document)[:32])
+        else _fingerprint(revision_document)[:32])
     return document
 
 

@@ -1153,7 +1153,7 @@ function mount(node) {
         // A periodic GET must not replace edits waiting for their POST.
         if (state.editorialRun === currentRun
                 && (state.editorialTimer != null || state.editorialSavePromise
-                    || state.editorialSaving)) return false;
+                    || state.editorialSaving || state.editorialSaveError)) return false;
         const next = normalizedEditorial(payload);
         const previous = JSON.stringify(state.editorial);
         const previousError = state.editorialBindingError;
@@ -1206,16 +1206,21 @@ function mount(node) {
     }
 
     async function persistEditorial(payload, signature) {
+        // Capture the editor binding, not just its Run name: A -> B -> A
+        // creates a new view that must not adopt an old request's revision.
+        const binding = state.editorial;
+        const readRevision = String(binding.revision ?? payload.base_revision ?? "");
         const previousSave = state.editorialSavePromise;
         const request = (async () => {
+            let previous = null;
             if (previousSave) {
-                try { await previousSave; } catch (_error) {}
+                try { previous = await previousSave; } catch (_error) {}
             }
             const outbound = {
                 ...payload,
-                base_revision:state.editorialRun === payload.run_name
-                    ? String(state.editorial.revision ?? "")
-                    : String(payload.base_revision ?? ""),
+                base_revision:previous?.binding === binding
+                        && previous.run_name === payload.run_name
+                    ? previous.revision : readRevision,
             };
             const response = await api.fetchApi(
                 "/minimax_h3_context_loop/editorial",
@@ -1229,17 +1234,24 @@ function mount(node) {
                 throw new Error(detail.error || `HTTP ${response.status}`);
             }
             const saved = detail.editorial;
-            if (state.editorialRun === payload.run_name
+            if (state.editorial === binding && state.editorialRun === payload.run_name
                     && saved && typeof saved === "object") {
                 state.editorial.revision = String(saved.revision ?? "");
+                // Invalidate checkpoint GETs that started before this commit.
+                state.editorialEditEpoch = (state.editorialEditEpoch ?? 0) + 1;
+                state.editorialSaveError = "";
+                if (!state.disposed) renderStatus();
             }
+            return {binding, run_name:payload.run_name, revision:String(saved?.revision ?? readRevision)};
         })();
         state.editorialSavePromise = request;
         try {
             await request;
         } catch (error) {
-            if (state.lastEditorialSignature === signature) {
+            if (state.editorial === binding && state.lastEditorialSignature === signature) {
                 state.lastEditorialSignature = "";
+                state.editorialSaveError = error?.message || String(error);
+                if (!state.disposed) renderStatus();
             }
             console.warn(
                 "H3 Plan Studio could not save chapter presentation data:",
@@ -1249,6 +1261,7 @@ function mount(node) {
         } finally {
             if (state.editorialSavePromise === request) {
                 state.editorialSavePromise = null;
+                if (!state.disposed && state.editorial === binding) renderStatus();
             }
         }
     }
@@ -1583,6 +1596,22 @@ function mount(node) {
         if (result.errors.length) host.append(element("span", "h3studio-error", `${result.errors.length} plan issue${result.errors.length === 1 ? "" : "s"}`));
         if (state.checkpointError) host.append(element("span", "h3studio-error", state.checkpointError));
         if (state.editorialBindingError) host.append(element("span", "h3studio-error", state.editorialBindingError));
+        if (state.editorialSaveError) {
+            host.append(element("span", "h3studio-error",
+                `Editorial edits are not saved: ${state.editorialSaveError}`));
+            const retry = button("Retry save", "Retry the current local editorial edits", () => {
+                scheduleEditorialSave(0);
+            });
+            const reload = button("Reload saved cut", "Discard unsaved editorial edits and reload the saved final cut", () => {
+                if (state.editorialSavePromise || state.editorialTimer != null) return;
+                if (!window.confirm("Discard the unsaved editorial edits in this Studio and reload the saved final cut?")) return;
+                state.editorialSaveError = "";
+                state.editorialEditEpoch = (state.editorialEditEpoch ?? 0) + 1;
+                void refreshCheckpoints();
+            });
+            retry.disabled = reload.disabled = Boolean(state.editorialSavePromise || state.editorialTimer != null);
+            host.append(retry, reload);
+        }
     }
 
     function timelinePixelAtSecond(seconds) {
@@ -6002,6 +6031,7 @@ function mount(node) {
                 state.checkpointError = ""; state.timelinePosition = null;
                 state.editorialReady = false; state.editorialRun = "";
                 state.editorialBindingError = "";
+                state.editorialSaveError = "";
                 state.editorialUnusedSceneIds = [];
                 state.editorial = cached?.editorial
                     ? normalizedEditorial(cached.editorial)
