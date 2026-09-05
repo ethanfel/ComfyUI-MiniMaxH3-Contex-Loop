@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Windows mapped network drives used as ComfyUI input/output directories
+  (#45). Root and artifact paths now resolve consistently before calculating
+  relative paths, preventing drive-letter/UNC mount errors during segment and
+  recovery-archive saving, Run Manager access, and Asset Carousel imports.
+
 - Fixed Checkpoint Manager rendering blank after a nightly update reused an
   older browser-cached helper module. Restored monotonic cache keys across the
   manager, Plan Studio, prompt editors, Run Manager, and Asset Carousel, with a

@@ -7671,11 +7671,13 @@ def _normalize_plan(
 
 
 def _output_root() -> str:
-    return os.path.abspath(folder_paths.get_output_directory())
+    # Windows resolves mapped drives (R:) to UNC shares in artifact paths.
+    # Use the same representation for their root before commonpath/relpath.
+    return os.path.realpath(os.path.abspath(folder_paths.get_output_directory()))
 
 
 def _input_root() -> str:
-    return os.path.abspath(folder_paths.get_input_directory())
+    return os.path.realpath(os.path.abspath(folder_paths.get_input_directory()))
 
 
 def _media_roots() -> tuple[str, ...]:
@@ -8009,7 +8011,8 @@ def _delete_run_folder(run_name: Any, snapshot: Any,
 
 
 def _relative_output_path(path: str) -> str:
-    return os.path.relpath(os.path.abspath(path), _output_root())
+    return os.path.relpath(
+        os.path.realpath(os.path.abspath(path)), _output_root())
 
 
 def _absolute_output_path(path: str) -> str:
@@ -24748,8 +24751,7 @@ def _load_png_export_hash_cache(
 
 
 def _png_export_checkpoint_cache_key(checkpoint: str) -> str:
-    return os.path.relpath(
-        os.path.abspath(checkpoint), _output_root()).replace(os.sep, "/")
+    return _relative_output_path(checkpoint).replace(os.sep, "/")
 
 
 def _verify_png_export_checkpoint(

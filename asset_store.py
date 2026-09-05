@@ -113,8 +113,8 @@ class RunAssetStore:
     """Save loader-backed media and materialize missing-input fallbacks."""
 
     def __init__(self, output_root: str, input_root: str | None):
-        self.output_root = os.path.abspath(output_root)
-        self.input_root = (os.path.abspath(input_root)
+        self.output_root = os.path.realpath(os.path.abspath(output_root))
+        self.input_root = (os.path.realpath(os.path.abspath(input_root))
                            if input_root is not None else None)
         self.chains_root = os.path.join(self.output_root, "h3_chains")
 
