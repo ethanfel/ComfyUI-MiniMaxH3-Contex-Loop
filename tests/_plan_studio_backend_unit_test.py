@@ -2,12 +2,14 @@
 """Standalone saved-segment discovery checks for Plan Studio."""
 
 import asyncio
+import concurrent.futures
 import importlib.util
 import json
 import pathlib
 import struct
 import sys
 import tempfile
+import threading
 import time
 import types
 
@@ -276,6 +278,99 @@ async def check():
             "scene", "gap", "scene"]
         assert timeline_records[1]["frame_count"] == 160
         assert editorial_frames == 840
+
+        newer_editorial = chain._save_run_editorial_document({
+            "run_name": "studio",
+            "base_revision": editorial["revision"],
+            "scene_order": [
+                {"scene": 1, "scene_id": "intro"},
+                {"scene": 2, "scene_id": "outro"},
+            ],
+            "chapters": [],
+            "placements": [{
+                "scene": 2, "scene_id": "outro", "start_frame": 501,
+            }],
+        })
+        assert newer_editorial["revision"] != editorial["revision"]
+        try:
+            chain._save_run_editorial_document({
+                "run_name": "studio",
+                "base_revision": editorial["revision"],
+                "scene_order": [
+                    {"scene": 1, "scene_id": "intro"},
+                    {"scene": 2, "scene_id": "outro"},
+                ],
+                "chapters": [],
+                "placements": [{
+                    "scene": 2, "scene_id": "outro", "start_frame": 502,
+                }],
+            })
+        except chain.EditorialConflictError as exc:
+            assert "was not overwritten" in str(exc)
+        else:
+            raise AssertionError("a stale Plan Studio final-cut write succeeded")
+        assert chain._load_run_editorial("studio")["placements"][0][
+            "start_frame"] == 501
+
+        # A legacy file without revision/timestamp has a stable read token,
+        # and discovery never upgrades or rewrites it on disk.
+        legacy = {"run_name": "legacy_editorial", "scene_order": [
+            {"scene": 1, "scene_id": "intro"}]}
+        legacy_path = pathlib.Path(chain._run_editorial_path("legacy_editorial"))
+        chain._atomic_json(str(legacy_path), legacy)
+        before_legacy = legacy_path.read_bytes()
+        original_datetime = chain.datetime
+        try:
+            tokens = []
+            for second in (0, 1):
+                fixed_time = original_datetime(2026, 1, 1, 0, 0, second)
+                chain.datetime = types.SimpleNamespace(now=lambda _zone: fixed_time)
+                tokens.append(chain._load_run_editorial("legacy_editorial")["revision"])
+        finally:
+            chain.datetime = original_datetime
+        assert tokens[0] == tokens[1], "Legacy revision must not depend on read time"
+        assert legacy_path.read_bytes() == before_legacy
+        legacy_saved = chain._save_run_editorial_document({
+            **legacy, "base_revision": tokens[0], "placements": [
+                {"scene": 1, "scene_id": "intro", "start_frame": 24}]})
+        assert legacy_saved["revision"] != tokens[0]
+
+        # Concurrent tabs reading the same revision cannot both publish.
+        # Exercise the real check/write lock, not an async test stub.
+        race = chain._save_run_editorial_document({
+            "run_name": "revision_race", "base_revision": "",
+            "scene_order": [{"scene": 1, "scene_id": "intro"}]})
+        barrier = threading.Barrier(2)
+
+        def save_competing_edit(frame):
+            barrier.wait(timeout=10)
+            try:
+                chain._save_run_editorial_document({
+                    **race, "base_revision": race["revision"],
+                    "placements": [{"scene": 1, "scene_id": "intro",
+                                    "start_frame": frame}]})
+                return frame
+            except chain.EditorialConflictError:
+                return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(save_competing_edit, (24, 48)))
+        winners = [frame for frame in results if frame is not None]
+        assert len(winners) == 1
+        assert chain._load_run_editorial("revision_race")["placements"][0][
+            "start_frame"] == winners[0]
+
+        class StaleEditorialRequest:
+            headers = {}
+
+            async def json(self):
+                return {**race, "base_revision": race["revision"]}
+
+        rejected = await chain._update_run_editorial(StaleEditorialRequest())
+        assert rejected.status == 409
+        assert json.loads(rejected.text)["code"] == "h3_editorial_conflict"
+        assert chain._load_run_editorial("revision_race")["placements"][0][
+            "start_frame"] == winners[0]
 
         latent_editorial = chain._save_run_editorial_document({
             "run_name": "studio",

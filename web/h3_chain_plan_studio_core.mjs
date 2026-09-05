@@ -567,15 +567,16 @@ export function matchingStudioSourceScene(payload, index, timingRow) {
     return references.length ? item : null;
 }
 
-export function matchingStudioSourceAudio(payload, timingRows) {
+export function matchingStudioSourceAudio(
+    payload, timingRows, expectedRun = payload?.run_name,
+) {
     const audio = payload?.source_audio;
     if (!payload?.token || !audio?.available) return null;
-    const rows = Array.isArray(timingRows) ? timingRows : [];
-    const plannedFrames = rows.reduce(
-        (total, row) => total + Math.max(0, Number(row?.deliveredFrames) || 0),
-        0,
-    );
-    if (Number(audio.frame_count) !== plannedFrames) return null;
+    if (String(payload.run_name ?? "") !== String(expectedRun ?? "")) return null;
+    if (!Array.isArray(timingRows) || !timingRows.length) return null;
+    // This is the whole source file, not a render tied to the saved Plan's
+    // frame count. Length edits, trims and scene reordering only move the
+    // timeline windows over it; they must not disconnect the audio track.
     return audio;
 }
 
@@ -616,7 +617,16 @@ export function studioWaveformIntervalSamples(
         ((Number(startSeconds) || 0) + Math.max(0, Number(durationSeconds) || 0))
             * pointsPerSecond,
     ));
-    return samples.slice(start, end);
+    if (start >= samples.length) return [];
+    const interval = samples.slice(start, end);
+    // Keep seconds mapped to the same horizontal positions if a resized
+    // scene crosses the source end (or newly requested waveform coverage).
+    // Stretching the remaining samples across the entire card is misleading.
+    if (end > samples.length) {
+        interval.length = end - start;
+        interval.fill(0, samples.length - start);
+    }
+    return interval;
 }
 
 export function studioSourceSecond(reference, deliveredLocalSeconds, fps = 24) {

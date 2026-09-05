@@ -8089,6 +8089,10 @@ def _run_editorial_path(run_name: Any) -> str:
         _output_root(), "h3_chains", normalized, "editorial.json")
 
 
+class EditorialConflictError(ValueError):
+    """A stale editor attempted to replace newer final-cut data."""
+
+
 def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("H3 run editorial data must be a JSON object.")
@@ -8322,7 +8326,7 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
             "media_mode": "picture_only",
         })
     replacements.sort(key=lambda item: int(item["scene"]))
-    return {
+    document = {
         "format": "h3_chain_editorial_v1",
         "run_name": normalized_run,
         "updated_at": str(value.get("updated_at") or
@@ -8337,12 +8341,22 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         "alternate_draft": alternate_draft,
         "replacements": replacements,
     }
+    stored_revision = str(value.get("revision") or "").strip().lower()
+    # Old sidecars have no revision (and may have no timestamp). Derive a
+    # stable read-only token without upgrading or rewriting the user's file.
+    revision_document = document if value.get("updated_at") else {
+        key: item for key, item in document.items() if key != "updated_at"}
+    document["revision"] = (
+        stored_revision if re.fullmatch(r"[0-9a-f]{32}", stored_revision)
+        else _fingerprint(revision_document)[:32])
+    return document
 
 
 def _load_run_editorial(run_name: Any) -> dict[str, Any]:
     normalized = _safe_name(run_name, "")
     empty = {
         "format": "h3_chain_editorial_v1", "run_name": normalized,
+        "revision": "",
         "chapters": [], "scene_order": [], "placements": [], "trims": [],
         "locked_scene_ids": [],
         "subtitles": {"mode": "off", "asset_id": "", "offset_seconds": 0.0},
@@ -8490,6 +8504,7 @@ def _select_editorial_alternate(
         editorial["updated_at"] = datetime.now(timezone.utc).isoformat(
             timespec="seconds").replace("+00:00", "Z")
         normalized = _normalize_run_editorial(editorial, plan["run_name"])
+        normalized["revision"] = uuid.uuid4().hex
         _atomic_json(_run_editorial_path(plan["run_name"]), normalized)
     return normalized
 
@@ -19402,6 +19417,7 @@ class MiniMaxH3ChainSegmentSave:
                     if cleared_editorial:
                         normalized_editorial = _normalize_run_editorial(
                             editorial, plan["run_name"])
+                        normalized_editorial["revision"] = uuid.uuid4().hex
                         _atomic_json(
                             _run_editorial_path(plan["run_name"]),
                             normalized_editorial)
@@ -26101,7 +26117,7 @@ async def _list_saved_checkpoints(request):
     return web.json_response(payload)
 
 
-def _save_run_editorial_document(body: Any) -> dict[str, Any]:
+def _save_run_editorial_document_unlocked(body: Any) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise ValueError("H3 run editorial data must be a JSON object.")
     document = dict(body)
@@ -26184,8 +26200,37 @@ def _save_run_editorial_document(body: Any) -> dict[str, Any]:
                 (scene, str(segment.get("id") or ""),
                  str(trim["scene_id"])))
         _editorial_trimmed_segment(segment, normalized)
+    normalized["revision"] = uuid.uuid4().hex
     _atomic_json(_run_editorial_path(normalized["run_name"]), normalized)
     return normalized
+
+
+def _save_run_editorial_document(body: Any) -> dict[str, Any]:
+    """Check the read revision and publish under the same per-Run lock."""
+    if not isinstance(body, dict):
+        raise ValueError("H3 run editorial data must be a JSON object.")
+    run_name = _safe_name(body.get("run_name"), "")
+    if not run_name:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    with checkpoint_run_lock(_output_root(), run_name):
+        # Older clients without a token remain supported. Updated Studio
+        # always sends one, including blank for a not-yet-created document.
+        if "base_revision" in body:
+            expected = str(body.get("base_revision") or "").strip().lower()
+            if expected and re.fullmatch(r"[0-9a-f]{32}", expected) is None:
+                raise ValueError(
+                    "Editorial base_revision must be a revision id or blank.")
+            path = _run_editorial_path(run_name)
+            current_revision = ""
+            if os.path.isfile(path):
+                current = _normalize_run_editorial(_read_json(path), run_name)
+                current_revision = str(current.get("revision") or "")
+            if expected != current_revision:
+                raise EditorialConflictError(
+                    "This Run's final cut changed in another workflow. "
+                    "Refresh Plan Studio before editing again; the newer "
+                    "editorial data was not overwritten.")
+        return _save_run_editorial_document_unlocked(body)
 
 
 async def _update_run_editorial(request):
@@ -26196,6 +26241,10 @@ async def _update_run_editorial(request):
             {"error": "H3 run editorial data requires JSON."}, status=400)
     try:
         payload = await asyncio.to_thread(_save_run_editorial_document, body)
+    except EditorialConflictError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_editorial_conflict",
+        }, status=409)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
     return web.json_response({"ok": True, "editorial": payload})

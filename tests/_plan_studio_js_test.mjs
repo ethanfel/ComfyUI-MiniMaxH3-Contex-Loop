@@ -292,8 +292,14 @@ assert.equal(
     matchingStudioSourceAudio(
         sourceTimeline, [{...rows[0], deliveredFrames:361}, ...rows.slice(1)],
     ),
-    null,
+    sourceTimeline.source_audio,
 );
+assert.equal(matchingStudioSourceAudio(sourceTimeline, rows, "other-run"), null);
+assert.equal(matchingStudioSourceAudio({...sourceTimeline, token:""}, rows), null);
+assert.equal(matchingStudioSourceAudio({
+    ...sourceTimeline, source_audio:{available:false},
+}, rows), null);
+assert.equal(matchingStudioSourceAudio(sourceTimeline, []), null);
 assert.ok(Math.abs(
     studioSourceAudioSecond(sourceTimeline.source_audio, 3) - 5,
 ) < 1e-9);
