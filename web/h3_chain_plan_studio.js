@@ -646,7 +646,8 @@ function mount(node) {
         subtitleTimelineHost:null,
         panelHost:null,
         planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
-        editorialReady:false, editorialRun:"",
+        editorialReady:false, editorialRun:"", editorialBindingError:"",
+        editorialStored:null, editorialBaseline:null, editorialEditEpoch:0,
         editorial:{placements:[], trims:[], locked_scene_ids:[], subtitles:{},
             alternate_draft:null, replacements:[]},
         subtitleAssets:[], subtitleAssetsRun:"", subtitleAssetsToken:0,
@@ -1137,48 +1138,41 @@ function mount(node) {
         };
     }
 
-    function applyEditorialPayload(payload) {
+    function applyEditorialPayload(payload, expectedEpoch = state.editorialEditEpoch ?? 0) {
         const currentRun = runName();
         if (!payload || String(payload.run_name ?? "") !== currentRun) return false;
+        if (expectedEpoch !== (state.editorialEditEpoch ?? 0)) return false;
+        // A periodic GET must not replace edits waiting for their POST.
+        if (state.editorialRun === currentRun
+                && (state.editorialTimer != null || state.editorialSavePromise
+                    || state.editorialSaving)) return false;
         const next = normalizedEditorial(payload);
         const previous = JSON.stringify(state.editorial);
+        const previousError = state.editorialBindingError;
         state.editorial = next;
         state.editorialRun = currentRun;
         state.editorialReady = true;
-        state.lastEditorialSignature = JSON.stringify({
-            run_name:currentRun,
-            chapters:(payload.chapters ?? []).map((chapter) => ({
-                id:chapter.id, title:chapter.title,
-                start_scene_id:chapter.start_scene_id,
-                start_scene:chapter.start_scene,
-                text:chapter.text ?? "",
-            })),
-            scene_order:(payload.scene_order ?? []).map((row) => ({
-                scene:row.scene, scene_id:row.scene_id,
-            })),
-            placements:next.placements.map((placement) => ({
-                scene_id:placement.scene_id,
-                scene:(payload.scene_order ?? []).find(
-                    (row) => row.scene_id === placement.scene_id,
-                )?.scene,
-                start_frame:placement.start_frame,
-            })),
-            trims:next.trims.map((trim) => ({
-                scene_id:trim.scene_id,
-                scene:(payload.scene_order ?? []).find(
-                    (row) => row.scene_id === trim.scene_id,
-                )?.scene,
-                out_frame:trim.out_frame,
-            })),
-            locked_scene_ids:[...next.locked_scene_ids],
-            subtitles:{...next.subtitles},
-            alternate_draft:next.alternate_draft
-                ? {...next.alternate_draft} : null,
-            replacements:next.replacements.map(
-                (replacement) => ({...replacement})),
-        });
-        scheduleEditorialSave();
-        return previous !== JSON.stringify(next);
+        // A GET is hydration, never permission to rewrite another Run's Plan.
+        // Keep the server document and the local view separately: unchanged
+        // Plan fields (notably chapters) must survive an unrelated scene edit.
+        state.editorialStored = structuredClone(payload);
+        state.editorialBaseline = editorialPayload();
+        const knownIds = new Set(state.editorialBaseline.scene_order.map((row) => row.scene_id));
+        const savedIds = [
+            ...(payload.scene_order ?? []).map((row) => row.scene_id),
+            ...(payload.chapters ?? []).map((row) => row.start_scene_id),
+            ...(payload.placements ?? []).map((row) => row.scene_id),
+            ...(payload.trims ?? []).map((row) => row.scene_id),
+            ...(payload.locked_scene_ids ?? []),
+            ...(payload.replacements ?? []).map((row) => row.scene_id),
+        ].filter(Boolean);
+        state.editorialBindingError = savedIds.some((id) => !knownIds.has(id))
+            ? "Editorial saving paused: this Run contains scenes absent from the connected Plan. Load its matching Plan or choose a new Run name."
+            : "";
+        state.lastEditorialSignature = JSON.stringify(state.editorialStored);
+        syncAlternateTakeWidget();
+        return previous !== JSON.stringify(next)
+            || previousError !== state.editorialBindingError;
     }
 
     function cacheStudioPresentation(records, editorial) {
@@ -1188,7 +1182,7 @@ function mount(node) {
         if (snapshot) node.properties[CHECKPOINT_CACHE_PROPERTY] = snapshot;
     }
 
-    function scheduleEditorialSave(delay = 250) {
+    function syncAlternateTakeWidget() {
         if (alternateTakeWidget) {
             const serialized = JSON.stringify(
                 state.editorial.alternate_draft ?? null,
@@ -1199,17 +1193,32 @@ function mount(node) {
                 dirty();
             }
         }
+    }
+
+    function scheduleEditorialSave(delay = 250) {
+        syncAlternateTakeWidget();
         if (!state.plan) return;
         if (!state.editorialReady || state.editorialRun !== runName()) return;
-        const payload = editorialPayload();
+        if (state.editorialBindingError) { renderStatus(); return; }
+        const local = editorialPayload();
+        const payload = {...state.editorialStored};
+        // Only explicitly changed fields may replace saved project data.
+        for (const [key, value] of Object.entries(local)) {
+            if (JSON.stringify(value) !== JSON.stringify(state.editorialBaseline?.[key])) {
+                payload[key] = value;
+            }
+        }
+        payload.run_name = local.run_name;
         cacheStudioPresentation([...state.checkpoints.values()], payload);
         const signature = JSON.stringify(payload);
         if (signature === state.lastEditorialSignature) return;
+        state.editorialEditEpoch = (state.editorialEditEpoch ?? 0) + 1;
         state.lastEditorialSignature = signature;
         if (state.editorialTimer != null) clearTimeout(state.editorialTimer);
         if (!payload.run_name) return;
         state.editorialTimer = setTimeout(async () => {
             state.editorialTimer = null;
+            state.editorialSaving = (state.editorialSaving || 0) + 1;
             try {
                 const response = await api.fetchApi(
                     "/minimax_h3_context_loop/editorial",
@@ -1224,6 +1233,8 @@ function mount(node) {
                     state.lastEditorialSignature = "";
                 }
                 console.warn("H3 Plan Studio could not save chapter presentation data:", error);
+            } finally {
+                state.editorialSaving -= 1;
             }
         }, Math.max(0, Number(delay) || 0));
     }
@@ -1383,6 +1394,7 @@ function mount(node) {
         if (state.disposed) return;
         const currentRun = runName();
         const token = ++state.checkpointToken;
+        const editorialEpoch = state.editorialEditEpoch ?? 0;
         if (!currentRun) {
             const changed = state.checkpoints.size > 0
                 || Boolean(state.checkpointSignature) || Boolean(state.checkpointError);
@@ -1400,7 +1412,7 @@ function mount(node) {
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
             if (state.disposed || token !== state.checkpointToken || currentRun !== runName()) return;
-            editorialChanged = applyEditorialPayload(payload.editorial);
+            editorialChanged = applyEditorialPayload(payload.editorial, editorialEpoch);
             const records = payload.checkpoints ?? [];
             cacheStudioPresentation(records, payload.editorial);
             const signature = studioCheckpointSignature(currentRun, records);
@@ -1477,6 +1489,7 @@ function mount(node) {
         );
         if (result.errors.length) host.append(element("span", "h3studio-error", `${result.errors.length} plan issue${result.errors.length === 1 ? "" : "s"}`));
         if (state.checkpointError) host.append(element("span", "h3studio-error", state.checkpointError));
+        if (state.editorialBindingError) host.append(element("span", "h3studio-error", state.editorialBindingError));
     }
 
     function timelinePixelAtSecond(seconds) {
@@ -2589,9 +2602,27 @@ function mount(node) {
     }
 
     async function selectScene(index, synchronize = true, reveal = true) {
+        if (!state.plan?.shots?.length || !Number.isFinite(Number(index))) return;
+        const requested = Math.max(0, Math.min(state.plan.shots.length - 1, Math.trunc(Number(index))));
+        const selection = {
+            planNode:state.planNode, runName:runName(),
+            sceneId:String(state.plan.shots[requested]?.id ?? ""), index:requested,
+        };
+        state.sceneNavigation = selection;
         await flushHistoryDraft();
+        // A late history save must not undo a newer click (including an
+        // empty scene) or send that stale selection back to the prompt editor.
+        if (state.disposed || state.sceneNavigation !== selection
+                || state.planNode !== selection.planNode
+                || runName() !== selection.runName) return;
+        state.sceneNavigation = null;
+        const target = selection.sceneId
+                && String(state.plan.shots[selection.index]?.id ?? "") !== selection.sceneId
+            ? state.plan.shots.findIndex(shot => String(shot?.id ?? "") === selection.sceneId)
+            : selection.index;
+        if (!state.plan.shots[target]) return;
         state.activeChapterId = "";
-        state.active = Math.max(0, Math.min(state.plan.shots.length - 1, Number(index)));
+        state.active = target;
         if (state.view === "player") {
             state.timelinePosition = studioEditorialSceneStartSeconds(
                 timelineModel().segments, state.active,
@@ -5851,6 +5882,7 @@ function mount(node) {
                     ? studioCheckpointSignature(currentRun, cachedRecords) : "";
                 state.checkpointError = ""; state.timelinePosition = null;
                 state.editorialReady = false; state.editorialRun = "";
+                state.editorialBindingError = "";
                 state.editorial = cached?.editorial
                     ? normalizedEditorial(cached.editorial)
                     : {placements:[], trims:[], locked_scene_ids:[], subtitles:{
@@ -5873,7 +5905,7 @@ function mount(node) {
             state.active = Math.min(state.active, state.plan.shots.length - 1);
             // Always synchronize the hidden one-shot queue widget on load.
             // Editorial data is useful even when the Plan has no chapters.
-            scheduleEditorialSave();
+            syncAlternateTakeWidget();
             renderShell(); void refreshCheckpoints();
             if (runChanged && currentRun) {
                 void restoreSourcePresentation();

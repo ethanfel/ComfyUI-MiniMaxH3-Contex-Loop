@@ -1856,10 +1856,31 @@ function mount(node) {
         if (!state.plan?.shots?.length) return;
         flushPlanEffects();
         flushPromptAnalysis();
+        const pending = state.sceneNavigation;
+        const from = pending && pending.planNode === state.planNode
+                && pending.runName === planRunName() ? pending.index : state.active;
+        const requested = absolute == null ? from + offset : Number(absolute);
+        if (!Number.isFinite(requested)) return;
+        const index = Math.max(0, Math.min(state.plan.shots.length - 1, Math.trunc(requested)));
+        const selection = {
+            planNode:state.planNode, runName:planRunName(),
+            sceneId:String(state.plan.shots[index]?.id ?? ""), index,
+        };
+        state.sceneNavigation = selection;
         void (async () => {
             await flushHistoryDraft();
-            const requested = absolute == null ? state.active + offset : Number(absolute);
-            state.active = Math.max(0, Math.min(state.plan.shots.length - 1, requested));
+            // History IO can complete out of order. Only the latest selection
+            // may move this editor or broadcast a scene to its companions.
+            if (state.disposed || state.sceneNavigation !== selection
+                    || state.planNode !== selection.planNode
+                    || planRunName() !== selection.runName) return;
+            state.sceneNavigation = null;
+            const target = selection.sceneId
+                    && String(state.plan.shots[selection.index]?.id ?? "") !== selection.sceneId
+                ? state.plan.shots.findIndex(shot => String(shot?.id ?? "") === selection.sceneId)
+                : selection.index;
+            if (!state.plan.shots[target]) return;
+            state.active = target;
             persistView();
             render();
             if (synchronize) publishCompanionScene(node, state.planNode, state.active);
@@ -1869,6 +1890,7 @@ function mount(node) {
 
     async function appendScene() {
         if (!state.plan || state.plan.shots.length >= MAX_SHOTS) return;
+        state.sceneNavigation = null;
         flushPlanEffects();
         flushPromptAnalysis();
         await flushHistoryDraft();
