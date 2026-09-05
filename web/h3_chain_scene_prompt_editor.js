@@ -32,7 +32,7 @@ import {
     replacePromptReferenceOccurrence,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.5.68";
+} from "./h3_reference_preview_core.mjs?v=0.5.71";
 import {
     PromptUndoHistory,
     promptUndoDirection,
@@ -40,10 +40,10 @@ import {
 } from "./h3_rich_prompt_editor_core.mjs?v=0.5.68";
 import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.5.68";
 import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.5.68";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.68";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.71";
 import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
-} from "./h3_project_asset_sync_core.mjs?v=0.5.68";
+} from "./h3_project_asset_sync_core.mjs?v=0.5.71";
 
 const {publishCompanionScene, rebaseScenePrompt} = promptCompanionSync;
 function publishCompanionPrompt(...args) {

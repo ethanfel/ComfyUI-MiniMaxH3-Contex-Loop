@@ -4,6 +4,10 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Refreshed browser cache keys for Checkpoint Manager, prompt editors, Plan
+  Studio, and Asset Carousel helpers. Added checks to prevent cache keys from
+  being downgraded to stale versions during future updates.
+
 - Fixed Prompt Editor reference discovery when the Studio render engine lives
   inside a subgraph. Editors now read the connected upstream Project Asset
   Carousel directly instead of requiring a traversable downstream Ref2VA

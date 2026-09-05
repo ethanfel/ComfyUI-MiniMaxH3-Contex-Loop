@@ -51,7 +51,7 @@ import {
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.5.68";
+} from "./h3_reference_preview_core.mjs?v=0.5.71";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -91,7 +91,7 @@ import {
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
 } from "./h3_chain_plan_studio_core.mjs?v=0.5.68";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.68";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.71";
 
 const {connectedPromptEditors, publishCompanionScene} = promptCompanionSync;
 function publishCompanionPrompt(...args) {
