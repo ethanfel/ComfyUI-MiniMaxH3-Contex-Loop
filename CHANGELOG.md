@@ -4,6 +4,17 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Chapter Delivery now exports already-generated scenes of unfinished chapters
+  instead of requiring their planned final scene. Immutable recovery snapshots
+  distinguish the available scene range from the planned chapter end.
+- Chapter PNG/WAV exports can reuse verified unchanged PNGs and append newly
+  generated scenes in the same folder. Identical exports skip VAE decoding;
+  growing soundtracks are rebuilt atomically to preserve audio joins. Changed
+  takes, trims, placements, settings, damaged/missing files, and interrupted or
+  unverifiable legacy exports use a new folder without replacing prior frames.
+  A fresh-export switch, per-export process lock, file integrity records, and
+  export-index history preserve explicit recovery and whole-Run behaviour.
+
 - Fixed Load Manifest and checkpoint recovery rejecting legacy shared archive
   references as invalid immutable revision IDs. Older Runs now use their
   existing root-archive fallback; newer per-revision snapshots retain strict

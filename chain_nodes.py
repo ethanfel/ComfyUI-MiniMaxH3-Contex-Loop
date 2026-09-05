@@ -33,7 +33,7 @@ import time
 import uuid
 import wave
 from collections import deque
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from fractions import Fraction
 from typing import Any
@@ -22023,6 +22023,11 @@ def _manifest_segment_bounds(
                 int(chapter.get("end_scene", 0)) != end):
             raise ValueError(
                 "%s chapter range does not match its selected scenes." % purpose)
+        planned_end = int(chapter.get("planned_end_scene", end))
+        if (planned_end < end or
+                chapter.get("complete", True) != (end == planned_end)):
+            raise ValueError(
+                "%s has inconsistent chapter completion metadata." % purpose)
     return start, end
 
 
@@ -22210,7 +22215,7 @@ def _persist_chapter_manifest(manifest: dict[str, Any]) -> tuple[
 def _chapter_manifest_from_manifest(
         manifest: dict[str, Any], chapter_number: int = 0
 ) -> tuple[dict[str, Any], str]:
-    """Seal one complete, explicitly selectable chapter from a Run manifest."""
+    """Snapshot the available scenes of one explicitly selectable chapter."""
     if not isinstance(manifest, dict):
         raise ValueError("H3 chapter delivery requires a chain manifest.")
     if manifest.get("format") == CHAPTER_MANIFEST_FORMAT:
@@ -22247,10 +22252,9 @@ def _chapter_manifest_from_manifest(
         chapter = next((item for item in ranges
                         if int(item["start_scene"]) <= last_completed
                         <= int(item["end_scene"])), None)
-        if chapter is None or last_completed != int(chapter["end_scene"]):
+        if chapter is None:
             raise ValueError(
-                "The current manifest stops at scene %d, inside a chapter. "
-                "Finish that chapter or choose a completed chapter number."
+                "No chapter contains the last generated scene %d."
                 % last_completed)
     else:
         chapter = next((item for item in ranges
@@ -22260,12 +22264,13 @@ def _chapter_manifest_from_manifest(
                 "Chapter %d does not exist; this Plan defines %d chapter(s)." %
                 (requested, len(ranges)))
     chapter_start = int(chapter["start_scene"])
-    chapter_end = int(chapter["end_scene"])
-    if chapter_end > last_completed:
+    planned_end = int(chapter["end_scene"])
+    chapter_end = min(planned_end, last_completed)
+    if chapter_start > last_completed:
         raise ValueError(
-            "Chapter %d is not complete: it ends at scene %d, but the manifest "
-            "contains scenes only through %d." %
-            (int(chapter["number"]), chapter_end, last_completed))
+            "Chapter %d has no generated scenes yet: it starts at scene %d, "
+            "but the manifest contains scenes only through %d." %
+            (int(chapter["number"]), chapter_start, last_completed))
     by_index = {int(item["index"]): item for item in segments}
     selected = [by_index[index] for index in range(chapter_start, chapter_end + 1)
                 if index in by_index]
@@ -22283,6 +22288,9 @@ def _chapter_manifest_from_manifest(
                        for item in selected)
     chapter_record = dict(chapter)
     chapter_record.update({
+        "end_scene": chapter_end,
+        "planned_end_scene": planned_end,
+        "complete": chapter_end == planned_end,
         "editorial_origin_frame": editorial_origin,
         "source_start_frame": source_start,
         "source_editorial_revision": str(editorial.get("revision") or ""),
@@ -22835,9 +22843,10 @@ class MiniMaxH3ChainChapterDelivery:
                 "chapter_number": ("INT", {
                     "default": 0, "min": 0, "max": MAX_SHOTS,
                     "tooltip": "0 selects the chapter containing the last "
-                               "completed scene and requires that scene to be "
-                               "the chapter boundary. Use 1, 2, 3, and so on "
-                               "to export any particular completed chapter."}),
+                               "generated scene. Use 1, 2, 3, and so on to "
+                               "export a particular chapter. Unfinished "
+                               "chapters export their generated scenes now; "
+                               "later exports can include new scenes."}),
             },
         }
 
@@ -22855,7 +22864,8 @@ class MiniMaxH3ChainChapterDelivery:
     CATEGORY = "conditioning/minimax/context_loop"
     DESCRIPTION = (
         "Turn Plan Studio chapter markers into immutable delivery units. Each "
-        "chapter keeps its exact checkpoint lineage and editorial state, and "
+        "snapshot includes the available scenes, even before the chapter is "
+        "finished, with their exact checkpoint lineage and editorial state, and "
         "routes every downstream MP4, PNG/WAV, or full-chain upscale export "
         "into a separate chapter folder. Disable it for a whole-Run final.")
 
@@ -22876,10 +22886,13 @@ class MiniMaxH3ChainChapterDelivery:
             manifest, int(chapter_number))
         chapter = chapter_manifest["chapter"]
         status = (
-            "sealed Chapter %d %r, scenes %d:%d, snapshot %s -> %s" %
+            "saved Chapter %d %r, scenes %d:%d, snapshot %s -> %s" %
             (int(chapter["number"]), str(chapter["title"]),
              int(chapter["start_scene"]), int(chapter["end_scene"]),
              str(chapter_manifest["chapter_manifest_id"])[:8], path))
+        if not chapter.get("complete", True):
+            status += "; partial chapter, planned through scene %d" % int(
+                chapter["planned_end_scene"])
         return (
             chapter_manifest,
             json.dumps(chapter_manifest, ensure_ascii=False, indent=2,
@@ -24821,6 +24834,204 @@ def _new_export_directory(manifest: dict[str, Any], export_name: str) -> str:
     raise RuntimeError("H3 PNG export could not allocate a unique output folder.")
 
 
+@contextmanager
+def _chapter_png_export_lock(manifest: dict[str, Any], export_name: str):
+    """Fence appenders without locking checkpoint saves or leaving stale leases."""
+    root = _chapter_delivery_root(manifest)
+    directory = os.path.realpath(os.path.join(root, ".export_locks"))
+    if os.path.commonpath([root, directory]) != root:
+        raise ValueError("H3 chapter export lock escapes its chapter directory.")
+    os.makedirs(directory, exist_ok=True)
+    path = os.path.join(
+        directory, _safe_name(export_name, "png_sequence") + ".lock")
+    if os.path.islink(path):
+        raise ValueError("H3 chapter export lock must not be a symbolic link.")
+    with open(path, "a+b") as handle:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0, os.SEEK_END)
+                if handle.tell() == 0:
+                    handle.write(b"\0")
+                    handle.flush()
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except OSError as exc:
+            raise ValueError(
+                "Another export is writing this Chapter/export_name. "
+                "Retry when it finishes or choose a different export_name.") from exc
+        try:
+            yield
+        finally:
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def _png_export_file_record(path: str) -> dict[str, Any]:
+    stat = os.stat(path)
+    return {"file": os.path.basename(path), "size": stat.st_size,
+            "mtime_ns": stat.st_mtime_ns, "sha256": _file_sha256(path)}
+
+
+def _png_export_file_unchanged(
+        directory: str, record: dict[str, Any], verification: str) -> bool:
+    filename = record.get("file")
+    if not isinstance(filename, str) or re.fullmatch(
+            r"frame_[0-9]{8,}\.png|audio\.wav", filename) is None:
+        return False
+    if re.fullmatch(r"[0-9a-f]{64}", str(record.get("sha256") or "")) is None:
+        return False
+    path = os.path.join(directory, filename)
+    if os.path.islink(path) or not os.path.isfile(path):
+        return False
+    stat = os.stat(path)
+    if (stat.st_size <= 0 or stat.st_size != record.get("size") or
+            stat.st_mtime_ns != record.get("mtime_ns")):
+        return False
+    return (verification != "strict" or
+            _file_sha256(path) == record.get("sha256"))
+
+
+def _png_export_source_identity(segment: dict[str, Any]) -> dict[str, Any]:
+    path = _absolute_output_path(segment["checkpoint"])
+    stat = os.stat(path)
+    return {"segment": _json_document(segment),
+            "checkpoint_size": stat.st_size,
+            "checkpoint_mtime_ns": stat.st_mtime_ns,
+            "checkpoint_sha256": (segment.get("checkpoint_sha256") or
+                                  _file_sha256(path))}
+
+
+def _png_export_incremental_identity(
+        manifest, segments, editorial_segments, video_vae, audio_vae,
+        first_frame_number, compression, embed_workflow):
+    chapter = manifest.get("chapter") or {}
+    sources = {int(item["index"]): item for item in segments}
+    placements = {
+        str(item["scene_id"]): int(item["start_frame"])
+        for item in (manifest.get("editorial") or {}).get("placements", [])}
+    return {
+        "format": "h3_chapter_incremental_export_v1",
+        "settings": {
+            "run_name": manifest.get("run_name"),
+            "chapter": {key: chapter.get(key) for key in
+                        ("number", "id", "start_scene")},
+            "first_frame_number": int(first_frame_number),
+            "png_compression": compression,
+            "embed_workflow": bool(embed_workflow),
+            # Use the original VAEs for incremental exports. Different weights
+            # of the same class require reuse_existing=false (as with other
+            # latent re-decode caches, a class signature is not a weights hash).
+            "video_vae": (_full_chain_vae_signature(video_vae)
+                          if video_vae is not None else None),
+            "audio_vae": (_full_chain_vae_signature(audio_vae)
+                          if audio_vae is not None else None),
+            "audio_sample_rate": (_png_export_audio_sample_rate(audio_vae)
+                                  if audio_vae is not None else None),
+            "continuation_mode": (manifest.get("compatibility") or {}).get(
+                "continuation_mode", "guide"),
+        },
+        "sources": [{
+            "picture": (_png_export_source_identity(item)
+                        if video_vae is not None else None),
+            "audio": (_png_export_source_identity(sources[int(item["index"])])
+                      if audio_vae is not None else None),
+            "frames": _editorial_segment_delivered_frames(item),
+            "index": int(item["index"]),
+            "placement": placements.get(str(item.get("id") or "")),
+        } for item in editorial_segments],
+    }
+
+
+def _find_incremental_png_export(manifest, export_name, identity, verification):
+    """Reuse only a successful, unchanged prefix; never repair files in place."""
+    chapter_root = _chapter_delivery_root(manifest)
+    root = os.path.realpath(os.path.join(chapter_root, "frames"))
+    if os.path.commonpath([chapter_root, root]) != chapter_root:
+        raise ValueError("H3 chapter frames directory escapes its chapter.")
+    if not os.path.isdir(root):
+        return None
+    name = _safe_name(export_name, "png_sequence")
+    pattern = re.compile(re.escape(name) + r"(?:_([0-9]{4}))?")
+    candidates = []
+    for entry in os.scandir(root):
+        match = pattern.fullmatch(entry.name)
+        if match and not entry.is_symlink() and entry.is_dir():
+            candidates.append((int(match.group(1) or 1), entry.path))
+    for _suffix, directory in sorted(candidates, reverse=True):
+        try:
+            sidecar = os.path.join(directory, "export.json")
+            history = os.path.realpath(os.path.join(directory, "export.history"))
+            if (os.path.islink(sidecar) or
+                    os.path.commonpath([directory, history]) != directory or
+                    os.path.lexists(os.path.join(directory, "export.partial.json"))):
+                continue
+            record = _read_json(sidecar)
+            prior = record.get("incremental") or {}
+            sources = prior.get("sources") or []
+            clips = record.get("clips") or []
+            if (record.get("format") != "h3_chain_png_export_v1" or
+                    record.get("complete") is not True or
+                    prior.get("format") != identity["format"] or
+                    prior.get("settings") != identity["settings"] or
+                    not sources or len(sources) != len(clips) or
+                    sources != identity["sources"][:len(sources)]):
+                continue
+            frames = sum(int(item["frames"]) for item in sources)
+            video_enabled = identity["settings"]["video_vae"] is not None
+            files = record.get("frame_files") or []
+            first = identity["settings"]["first_frame_number"]
+            expected_names = (["frame_%08d.png" % index
+                               for index in range(first, first + frames)]
+                              if video_enabled else [])
+            if (record.get("frame_count") != (frames if video_enabled else 0) or
+                    record.get("timeline_frame_count") != frames or
+                    record.get("first_frame_number") != first or
+                    [item["file"] for item in files] != expected_names or
+                    {entry.name for entry in os.scandir(directory)
+                     if entry.name.startswith("frame_") and
+                     entry.name.endswith(".png")} != set(expected_names) or
+                    not all(_png_export_file_unchanged(directory, item, verification)
+                            for item in files)):
+                continue
+            cursor = first
+            valid_clips = True
+            for clip, source in zip(clips, sources):
+                count = int(source["frames"])
+                if (clip.get("index") != source["index"] or
+                        clip.get("delivered_frames") != count or
+                        (video_enabled and (clip.get("first_frame_number") != cursor or
+                         clip.get("last_frame_number") != cursor + count - 1))):
+                    valid_clips = False
+                    break
+                cursor += count
+            if not valid_clips:
+                continue
+            if identity["settings"]["audio_vae"] is not None:
+                audio = record.get("audio") or {}
+                if (audio.get("file") != "audio.wav" or
+                        not _png_export_file_unchanged(directory, audio, verification)):
+                    continue
+            return directory, record
+        except (OSError, TypeError, ValueError, KeyError, AttributeError):
+            # Legacy, incomplete, edited, or damaged exports remain untouched.
+            continue
+    return None
+
+
+def _write_incremental_png(path, pixels, compression, metadata):
+    if os.path.lexists(path):
+        raise ValueError("H3 incremental export refuses to overwrite %s." % path)
+    _write_png(path, pixels, compression, metadata)
+    return _png_export_file_record(path)
+
+
 def _png_export_uint8(images: Any) -> Any:
     if torch is None or np is None:
         raise RuntimeError("H3 PNG export requires torch and NumPy.")
@@ -25007,9 +25218,10 @@ class MiniMaxH3ChainExportPNG:
                 "export_name": ("STRING", {
                     "default": "png_sequence",
                     "tooltip": "Folder name under the Run frames folder, or "
-                               "the selected Chapter frames folder. An "
-                               "existing folder is never overwritten; a "
-                               "numbered sibling is created automatically."}),
+                               "the selected Chapter frames folder. Chapter "
+                               "exports reuse unchanged scenes and append new "
+                               "ones. Changed content creates a numbered "
+                               "sibling, preserving the earlier export."}),
                 "first_frame_number": ("INT", {
                     "default": 1, "min": 0, "max": 999999999,
                     "tooltip": "Number used by the first exported file. Frames "
@@ -25046,6 +25258,14 @@ class MiniMaxH3ChainExportPNG:
                                "SHA-256 once, then trusts matching size and "
                                "modification time on later exports. Strict "
                                "re-hashes every checkpoint on every export."}),
+                "reuse_existing": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "For Chapter manifests, keep verified unchanged "
+                               "PNGs and append newly generated scenes. Changed "
+                               "takes, trims or settings create a new folder. "
+                               "Turn off after changing VAE weights or decode "
+                               "settings, or to force a fresh export. Whole-Run "
+                               "exports always create a new folder."}),
             },
         }
 
@@ -25053,7 +25273,8 @@ class MiniMaxH3ChainExportPNG:
     RETURN_NAMES = ("output_directory", "frame_count", "status", "audio_path")
     OUTPUT_TOOLTIPS = (
         "Absolute folder containing the selected deliverables and export.json.",
-        "Total PNG frames written; zero in audio-only mode.",
+        "Total PNG frames available, including reused frames; zero in "
+        "audio-only mode.",
         "Export folder, generated deliverables, scene count, and duration.",
         "Absolute audio.wav path when audio_vae is connected; blank otherwise.",
     )
@@ -25072,7 +25293,20 @@ class MiniMaxH3ChainExportPNG:
     def export(self, manifest, video_vae=None, export_name="png_sequence",
                first_frame_number=1, png_compression=1, embed_workflow=True,
                save_workers=0, checkpoint_verification="cached",
-               audio_vae=None):
+               audio_vae=None, reuse_existing=True):
+        incremental = (bool(reuse_existing) and isinstance(manifest, dict)
+                       and manifest.get("format") == CHAPTER_MANIFEST_FORMAT)
+        guard = (_chapter_png_export_lock(manifest, export_name)
+                 if incremental else nullcontext())
+        with guard:
+            return self._export(
+                manifest, video_vae, export_name, first_frame_number,
+                png_compression, embed_workflow, save_workers,
+                checkpoint_verification, audio_vae, incremental)
+
+    def _export(self, manifest, video_vae, export_name, first_frame_number,
+                png_compression, embed_workflow, save_workers,
+                checkpoint_verification, audio_vae, incremental):
         if _st_load is None or torch is None or np is None:
             raise RuntimeError(
                 "H3 PNG/WAV export requires safetensors, torch, and NumPy.")
@@ -25116,13 +25350,26 @@ class MiniMaxH3ChainExportPNG:
             PNG_EXPORT_MAX_CHUNK_FRAMES,
             max(PNG_EXPORT_MIN_CHUNK_FRAMES, workers * 4))
         cache_path, hash_cache = _load_png_export_hash_cache(manifest)
-        output_dir = _new_export_directory(manifest, export_name)
+        identity = (_png_export_incremental_identity(
+            manifest, segments, editorial_segments, video_vae, audio_vae,
+            first_frame_number, compression, embed_workflow) if incremental else None)
+        previous_export = (_find_incremental_png_export(
+            manifest, export_name, identity, verification) if incremental else None)
+        if previous_export is None:
+            output_dir = _new_export_directory(manifest, export_name)
+            previous = {}
+        else:
+            output_dir, previous = previous_export
+        reused_clips = len(previous.get("clips") or [])
+        reused_frames = int(previous.get("frame_count", 0))
+        audio_reused = (audio_enabled and reused_clips == len(editorial_segments))
         partial_path = os.path.join(output_dir, "export.partial.json")
         final_path = os.path.join(output_dir, "export.json")
         frame_number = int(first_frame_number)
         first_number = frame_number
         written = 0
         clip_records = []
+        frame_files = list(previous.get("frame_files") or [])
         clip_timings = []
         audio_path = ""
         audio_record = None
@@ -25146,6 +25393,7 @@ class MiniMaxH3ChainExportPNG:
                     "chapter_manifest_path"),
                 "first_frame_number": first_number,
                 "frame_count": written,
+                "reused_frame_count": reused_frames,
                 "phase": phase,
                 "current_clip": current_clip,
                 "current_clip_frames": int(current_clip_frames),
@@ -25158,6 +25406,7 @@ class MiniMaxH3ChainExportPNG:
                     "conversion_chunk_frames": chunk_frames,
                     "export_video": video_enabled,
                     "export_audio": audio_enabled,
+                    "reuse_existing": incremental,
                 },
                 "audio": audio_record,
                 "archives": manifest.get("archives", {}),
@@ -25170,6 +25419,12 @@ class MiniMaxH3ChainExportPNG:
             "verification=%s, output=%s",
             len(editorial_segments), total_frames, video_enabled,
             audio_enabled, compression, workers, verification, output_dir)
+        if previous:
+            _LOG.info(
+                "H3 chapter export reusing %d unchanged scenes / %d PNGs; "
+                "%d new scenes to export. Original PNG metadata is retained; "
+                "export.json records the current chapter snapshot.",
+                reused_clips, reused_frames, len(editorial_segments) - reused_clips)
         save_partial("starting")
 
         with concurrent.futures.ThreadPoolExecutor(
@@ -25208,6 +25463,18 @@ class MiniMaxH3ChainExportPNG:
                 _LOG.info(
                     "H3 PNG export scene %d: %s in %.2fs",
                     index, verification_result, verification_seconds)
+
+                if clip_position <= reused_clips:
+                    clip_records.append(dict(previous["clips"][clip_position - 1]))
+                    clip_timings.append({"index": index, "reused": True,
+                                         "verification": verification_result})
+                    written += delivered_frames
+                    frame_number += delivered_frames
+                    progress_done += 2 * delivered_frames
+                    _png_export_update_progress(
+                        progress_bar, progress_done, progress_total)
+                    save_partial("reusing unchanged scene", index, delivered_frames)
+                    continue
 
                 save_partial("loading checkpoint", index)
                 phase_started = time.perf_counter()
@@ -25304,12 +25571,15 @@ class MiniMaxH3ChainExportPNG:
                             png_metadata.update(archive_metadata)
                             png_metadata["h3_manifest"] = manifest_metadata
                         futures.append(executor.submit(
-                            _write_png, os.path.join(output_dir, filename),
+                            _write_incremental_png if incremental else _write_png,
+                            os.path.join(output_dir, filename),
                             pixels_frame, compression, png_metadata))
 
                     completed = 0
                     for future in concurrent.futures.as_completed(futures):
-                        future.result()
+                        file_record = future.result()
+                        if incremental:
+                            frame_files.append(file_record)
                         completed += 1
                         _png_export_update_progress(
                             progress_bar,
@@ -25358,7 +25628,20 @@ class MiniMaxH3ChainExportPNG:
                     delivered_frames / max(save_seconds, 1e-9))
                 del images, video, tensors
 
-        if audio_enabled:
+        if audio_reused:
+            # Re-check original audio checkpoints even when no decode is needed.
+            # Alternates may select different picture checkpoints above.
+            for segment in segments:
+                _png_export_check_interrupted()
+                _result, changed = _verify_png_export_checkpoint(
+                    _absolute_output_path(segment["checkpoint"]),
+                    segment.get("checkpoint_sha256", ""), verification, hash_cache)
+                if changed:
+                    _atomic_json(cache_path, hash_cache)
+            audio_path = os.path.join(output_dir, "audio.wav")
+            audio_record = dict(previous["audio"])
+            _LOG.info("H3 WAV export reusing unchanged soundtrack: %s", audio_path)
+        elif audio_enabled:
             sample_rate = _png_export_audio_sample_rate(audio_vae)
             audio_frames_by_index = {
                 int(segment.get("index", offset)):
@@ -25454,6 +25737,8 @@ class MiniMaxH3ChainExportPNG:
                 "elapsed_seconds": round(
                     time.perf_counter() - audio_started, 3),
             }
+            if incremental:
+                audio_record.update(_png_export_file_record(audio_path))
             save_partial("audio complete")
             _LOG.info(
                 "H3 WAV export complete: %d samples at %d Hz (%.3fs) -> %s",
@@ -25499,6 +25784,9 @@ class MiniMaxH3ChainExportPNG:
             "last_frame_number": (
                 frame_number - 1 if video_enabled else None),
             "frame_count": written,
+            "new_frame_count": written - reused_frames,
+            "reused_frame_count": reused_frames,
+            "reused_clip_count": reused_clips,
             "timeline_frame_count": total_frames,
             "clips": clip_records,
             "timings": clip_timings,
@@ -25511,9 +25799,28 @@ class MiniMaxH3ChainExportPNG:
                 "conversion_chunk_frames": chunk_frames,
                 "export_video": video_enabled,
                 "export_audio": audio_enabled,
+                "reuse_existing": incremental,
             },
             "archives": manifest.get("archives", {}),
         }
+        if isinstance(manifest.get("chapter"), dict):
+            export_record["chapter_complete"] = manifest["chapter"].get(
+                "complete", True)
+        if incremental:
+            # The immutable chapter snapshot remains the recovery authority.
+            # Updating this sidecar must not rewrite metadata in reused PNGs.
+            export_record["incremental"] = identity
+            export_record["frame_files"] = sorted(
+                frame_files, key=lambda item: int(item["file"][6:-4]))
+            if previous:
+                history_root = os.path.realpath(os.path.join(
+                    output_dir, "export.history"))
+                if os.path.commonpath([output_dir, history_root]) != output_dir:
+                    raise ValueError("H3 export history escapes its export directory.")
+                history_path = os.path.join(
+                    history_root, _fingerprint(previous) + ".json")
+                if not os.path.isfile(history_path):
+                    _atomic_json(history_path, previous)
         _atomic_json(final_path, export_record)
         _safe_unlink(partial_path)
         if video_enabled and audio_enabled:
@@ -25534,6 +25841,10 @@ class MiniMaxH3ChainExportPNG:
                 "frames (%.3fs) in %.1fs -> %s" %
                 (len(editorial_segments), total_frames,
                  total_frames / float(FPS), elapsed, audio_path))
+        if previous:
+            status += "; reused %d PNGs, wrote %d new PNGs%s" % (
+                reused_frames, written - reused_frames,
+                "; WAV reused" if audio_reused else "")
         _LOG.info("H3 Chain %s", status)
         return {"ui": {"text": [status]},
                 "result": (output_dir, written, status, audio_path)}

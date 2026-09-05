@@ -144,6 +144,8 @@ def main():
         assert chapter_one["chapter"]["number"] == 1
         assert chapter_one["scene_start"] == 1
         assert chapter_one["scene_end"] == 3
+        assert chapter_one["chapter"]["complete"] is True
+        assert chapter_one["chapter"]["planned_end_scene"] == 3
         assert [item["index"] for item in chapter_one["segments"]] == [1, 2, 3]
         assert pathlib.Path(chapter_one_path).is_file()
         assert "/chapters/01_opening/manifests/" in chapter_one_path
@@ -178,27 +180,34 @@ def main():
         assert auto_two["chapter"]["number"] == 2
 
         partial_four = make_manifest(segments[:4], complete=False)
-        expect_error(
-            lambda: chain._chapter_manifest_from_manifest(partial_four, 0),
-            "inside a chapter")
+        partial_two, partial_two_path = chain._chapter_manifest_from_manifest(
+            partial_four, 0)
+        assert partial_two["chapter"]["number"] == 2
+        assert partial_two["chapter"]["complete"] is False
+        assert partial_two["chapter"]["planned_end_scene"] == 6
+        assert partial_two["scene_start"] == partial_two["scene_end"] == 4
+        assert chain._validate_manifest(partial_two) == partial_two["segments"]
         explicit_one, _explicit_one_path = (
             chain._chapter_manifest_from_manifest(partial_four, 1))
         assert explicit_one["chapter"]["number"] == 1
+        explicit_two, explicit_two_path = chain._chapter_manifest_from_manifest(
+            partial_four, 2)
+        assert explicit_two == partial_two and explicit_two_path == partial_two_path
         expect_error(
-            lambda: chain._chapter_manifest_from_manifest(partial_four, 2),
-            "not complete")
+            lambda: chain._chapter_manifest_from_manifest(partial_three, 2),
+            "no generated scenes yet")
         expect_error(
             lambda: chain._chapter_manifest_from_manifest(complete, 3),
             "does not exist")
 
         loaded, loaded_path = chain._load_chapter_manifest(
             "chapter_delivery", 2)
-        assert loaded["chapter_manifest_id"] == chapter_two[
+        assert loaded["chapter_manifest_id"] == partial_two[
             "chapter_manifest_id"]
-        assert loaded_path == chapter_two_path
+        assert loaded_path == partial_two_path
         exact, exact_path = chain._load_chapter_manifest(
             "chapter_delivery", 2, chapter_two["chapter_manifest_id"])
-        assert exact == loaded and exact_path == loaded_path
+        assert exact == chapter_two and exact_path == chapter_two_path
         media_metadata = chain._manifest_media_metadata(chapter_two)
         assert "Chapter 2 Aftermath" in media_metadata["title"]
         assert "Chapter 2 scenes 4-6" in media_metadata["comment"]

@@ -190,18 +190,22 @@ Full-Chain Latent Video Adapter. The chapter boundaries come directly from Plan
 Studio; there is no second chapter definition to keep synchronized.
 
 - `chapter_number = 0` selects the chapter containing the manifest's last
-  completed scene. That scene must be the end of the chapter, so an accidental
-  mid-chapter export is rejected.
-- `chapter_number = 1`, `2`, `3`, and so on selects that particular completed
-  chapter even when later chapters already exist.
+  generated scene. The chapter does not have to be complete.
+- `chapter_number = 1`, `2`, `3`, and so on selects that particular chapter
+  even when later chapters already exist. If it is unfinished, only its
+  contiguous generated scenes are selected. A chapter with no generated scenes
+  still reports an error.
 - `enabled = false` passes the complete incoming manifest through and preserves
   the traditional whole-Run final.
 
-Sealing creates a content-addressed, immutable recovery manifest. It freezes
+Each selection creates a content-addressed, immutable recovery manifest. It freezes
 the selected scenes, checkpoint revisions, trims, placements, final-cut
 alternates, subtitle origin, and source-audio offset at that moment. A later
 chapter therefore cannot silently grow or replace Chapter 1. Re-sealing changed
 content creates another snapshot; it does not destroy the previous one.
+Partial snapshots record both their exported `end_scene` and the chapter's
+`planned_end_scene`, with `chapter.complete = false`. For example, a chapter
+planned through scene 10 can be exported through scene 8 now and extended later.
 
 Use **Chapter Recovery Load** with the Run name and chapter number to recover
 the newest sealed snapshot. Paste the full 32-character snapshot id when you
@@ -685,6 +689,37 @@ output/h3_chains/<run_name>/frames/<export_name>/
 For a Chapter Delivery manifest the equivalent path is
 `chapters/<number>_<chapter_id>/frames/<export_name>/`; `export.json` records
 the chapter number and immutable snapshot id.
+
+Chapter exports default to `reuse_existing = true`. A later export using the
+same export name looks for a successful matching export and reuses its unchanged
+PNG prefix. New scenes continue the existing frame numbering in that folder,
+without decoding or rewriting the earlier PNGs. An identical export skips both
+video and audio decoding. When new scenes extend the chapter, the synchronized
+`audio.wav` is rebuilt and atomically replaced so audio joins remain correct;
+WAV bytes are not blindly appended.
+
+Changed checkpoint revisions, trims, placements, frame numbering, or relevant
+export settings create a new numbered folder instead of mixing old and new
+output. A shorter/older chapter snapshot never truncates a longer export.
+Missing, modified, or untracked PNGs, interrupted exports, and legacy exports
+without the new verification records also use a fresh folder; their existing
+files are left untouched. `cached` checks recorded size and modification time;
+`strict` additionally re-hashes the reusable PNGs and WAV. Concurrent appenders
+to the same chapter/export name are rejected while the first export is running.
+
+Set `reuse_existing = false` to force a fresh folder, especially after changing
+VAE weights, precision, ComfyUI version, or decode settings. The reuse signature
+identifies the VAE class, not the full weights. Whole-Run exports retain their
+existing fresh-folder behaviour regardless of this switch.
+
+Reused PNGs retain their original embedded workflow/manifest metadata.
+`export.json` is the current export index and points to the latest selected
+immutable chapter snapshot; earlier indexes remain in `export.history/`.
+`complete` means that this export succeeded; `chapter_complete` separately
+indicates whether all planned chapter scenes have been generated. The node's
+frame count includes reused frames, and its status reports reused/new counts.
+MP4 assembly still creates a new assembled movie; incremental PNG reuse does
+not imply in-place MP4 appending.
 
 PNG compression is lossless. Use the same VAE, ComfyUI version, precision, and
 decode settings for the closest reconstruction. The checkpointed latent is
