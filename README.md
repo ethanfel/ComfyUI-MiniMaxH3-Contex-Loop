@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="assets/minimax-h3-contex-loop.svg" alt="MiniMax H3 Context Loop 0.6 — scene plans that survive the render" width="100%">
+  <img src="assets/minimax-h3-context-loop.svg" alt="MiniMax H3 Context Loop 0.6 — scene plans that survive the render" width="100%">
 </p>
 
 # ComfyUI MiniMax H3 Context Loop

@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1280" height="640" viewBox="0 0 1280 640" role="img" aria-labelledby="title desc">
-  <title id="title">MiniMax H3 Context Loop v0.5</title>
-  <desc id="desc">Social preview for version 0.5, featuring a luminous motion and audio loop behind the project title.</desc>
+  <title id="title">MiniMax H3 Context Loop v0.6</title>
+  <desc id="desc">Social preview for version 0.6, featuring a luminous motion and audio loop behind the project title.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#030716"/>
@@ -60,7 +60,7 @@
     <text x="88" y="143" fill="#7ce9f3" font-size="21" font-weight="750" letter-spacing="2.1">COMFYUI / MINIMAX H3</text>
     <g transform="translate(401 115)">
       <rect width="82" height="38" rx="19" fill="#18183b" stroke="#8d72ff" stroke-width="1.5"/>
-      <text x="41" y="26" fill="#e5ddff" font-size="17" font-weight="800" letter-spacing=".8" text-anchor="middle">v0.5</text>
+      <text x="41" y="26" fill="#e5ddff" font-size="17" font-weight="800" letter-spacing=".8" text-anchor="middle">v0.6</text>
     </g>
     <text x="82" y="242" fill="#f7f8ff" font-size="76" font-weight="780" letter-spacing="-2.2">Context Loop</text>
     <text x="88" y="327" fill="#c6cbe3" font-size="27" font-weight="470">Recursive scenes. Seamless continuity.</text>
