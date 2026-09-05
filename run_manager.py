@@ -335,7 +335,7 @@ def _iso_mtime(path: str) -> str:
 
 class RunArchiveManager:
     def __init__(self, output_root: str, input_root: str | None = None):
-        self.output_root = os.path.abspath(output_root)
+        self.output_root = os.path.realpath(os.path.abspath(output_root))
         self.chains_root = os.path.join(self.output_root, "h3_chains")
         self.assets = RunAssetStore(self.output_root, input_root)
 

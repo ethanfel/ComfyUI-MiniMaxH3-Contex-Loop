@@ -348,8 +348,8 @@ class ProjectAssetStore:
     """Own project media below input/h3_projects and mirror it to a run."""
 
     def __init__(self, input_root: str, output_root: str):
-        self.input_root = os.path.abspath(input_root)
-        self.output_root = os.path.abspath(output_root)
+        self.input_root = os.path.realpath(os.path.abspath(input_root))
+        self.output_root = os.path.realpath(os.path.abspath(output_root))
         self.projects_root = os.path.join(self.input_root, "h3_projects")
         self.chains_root = os.path.join(self.output_root, "h3_chains")
 

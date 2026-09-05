@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased
 
+- Fixed Windows mapped network drives used as ComfyUI input/output directories
+  (#45). Root and artifact paths now resolve consistently before calculating
+  relative paths, preventing drive-letter/UNC mount errors during segment and
+  recovery-archive saving, Run Manager access, and Asset Carousel imports.
+
 - Refreshed browser cache keys for Checkpoint Manager, prompt editors, Plan
   Studio, and Asset Carousel helpers. Added checks to prevent cache keys from
   being downgraded to stale versions during future updates.
