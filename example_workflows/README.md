@@ -1,12 +1,23 @@
 # MiniMax H3 0.6 example workflows
 
 These are clean ComfyUI UI-workflow documents built for the 0.6 node surface.
-They use fresh IDs and metadata, the organized **Production Plan**, explicit
-**Generation Profile**, and collision-free runtime and authoring rows. Older
+They use fresh node serialization, the organized **Production Plan**, explicit
+**Generation Profile**, and numbered, non-overlapping project/generation columns. Older
 0.5 files are preserved unchanged in [`Archive/0.5/`](Archive/0.5/).
 
 For installation and first-run setup, see
 [Getting started](../docs/GETTING_STARTED.md).
+
+Each workflow has a compact **START HERE** note. The longer setup and wiring
+instructions are in its matching Markdown file under [`guides/`](guides/),
+so they no longer take up large empty canvas panels. Titles and preview sizes
+were checked in ComfyUI, including the VHS preview extension.
+
+The catalog is compiled from [named recipes](../tools/v06/README.md), **not**
+archived workflow JSON. All H3 sockets, widget positions, and values are checked
+against the **0.6 checkout**. Model files, source tracks, and extra packs still
+need to be installed/selected as described below; schema validation does not
+replace a GPU render test.
 
 The loader defaults use the canonical filenames from the
 [official Comfy-Org MiniMax H3 package](https://huggingface.co/Comfy-Org/MiniMax-H3):
@@ -102,6 +113,13 @@ are not first-install tests.
 Upscaled variants are saved below
 `output/h3_chains/<run>/upscaled/<profile>/` and never replace source
 checkpoints. See [Runs and recovery](../docs/RUNS_AND_RECOVERY.md).
+
+The SeedVR2 workflow uses the current **SeedVR2 Video Path Upscaler** node
+(`SeedVR2VideoPathUpscaler`), not the retired `SeedVR2DirectVideoUpscaler` ID.
+Install the base SeedVR2 model-loader pack as well as the linked video-path
+extension. For LBH, the temporal-chunking and unload controls are explicitly
+saved; the De-Rope injection preset is **custom**, with 20 total steps and 0.5
+injection, so it does not silently override the visible schedule.
 
 ## Assets and provenance
 

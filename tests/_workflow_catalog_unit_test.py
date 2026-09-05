@@ -133,7 +133,9 @@ def validate_layout(workflow: dict) -> None:
         x, y = map(float, node["pos"][:2])
         width, height = map(float, node["size"][:2])
         assert width > 0 and height > 0
-        rectangles.append((node["id"], node["type"], x, y, width, height))
+        # LiteGraph position starts below the title. The former body-only check
+        # missed title clipping when two nodes were stacked too closely.
+        rectangles.append((node["id"], node["type"], x, y - 30, width, height + 30))
     left = min(item[2] for item in rectangles)
     top = min(item[3] for item in rectangles)
     right = max(item[2] + item[4] for item in rectangles)
@@ -146,9 +148,8 @@ def validate_layout(workflow: dict) -> None:
             _, _, bx, by, bw, bh = second
             assert not (ax < bx + bw and bx < ax + aw
                         and ay < by + bh and by < ay + ah), (first, second)
-    assert {group["title"] for group in workflow["groups"]} <= {
-        "0.6 GENERATION RUNTIME", "0.6 AUTHORING + PROJECT",
-        "0.6 RECOVERY"}
+    assert workflow["groups"][0]["title"] == "01 • PROJECT & SCENES"
+    membership = {item[0]: 0 for item in rectangles}
     for group in workflow["groups"]:
         gx, gy, gw, gh = map(float, group["bounding"])
         members = [item for item in rectangles
@@ -156,13 +157,27 @@ def validate_layout(workflow: dict) -> None:
                    and item[2] + item[4] <= gx + gw
                    and item[3] + item[5] <= gy + gh]
         assert members, group["title"]
+        for member in members:
+            membership[member[0]] += 1
+    assert set(membership.values()) == {1}, "Every node must fit inside exactly one group, including its title"
     groups = {group["title"]: group for group in workflow["groups"]}
-    if {"0.6 AUTHORING + PROJECT", "0.6 GENERATION RUNTIME"} <= groups.keys():
-        author_x, _, author_width, _ = map(
-            float, groups["0.6 AUTHORING + PROJECT"]["bounding"])
-        runtime_x = float(groups["0.6 GENERATION RUNTIME"]["bounding"][0])
-        assert author_x + author_width <= runtime_x, (
-            "authoring must sit directly before the generation runtime")
+    author_x, _, author_width, _ = map(float, groups["01 • PROJECT & SCENES"]["bounding"])
+    for title, runtime in groups.items():
+        if title != "01 • PROJECT & SCENES":
+            assert author_x + author_width <= runtime["bounding"][0], "Project controls must precede runtime"
+    for index, first in enumerate(workflow["groups"]):
+        ax, ay, aw, ah = first["bounding"]
+        for second in workflow["groups"][index + 1:]:
+            bx, by, bw, bh = second["bounding"]
+            assert not (ax < bx + bw and bx < ax + aw and ay < by + bh and by < ay + ah), (first["title"], second["title"])
+    recovery_loaders = [n for n in workflow["nodes"]
+                        if n["type"] == "MiniMaxH3ChainManifestLoad" and n["mode"] == 2]
+    recovery_assemblers = [n for n in workflow["nodes"]
+                           if n["type"] == "MiniMaxH3ChainAssemble" and n["mode"] == 2]
+    if recovery_loaders and recovery_assemblers:
+        assert recovery_loaders[0]["pos"][0] < recovery_assemblers[0]["pos"][0]
+    assert not any(n.get("title", "").startswith("RECOVERY") and n["mode"] != 2
+                   for n in workflow["nodes"]), "Bypassed runtime controls are not a recovery path"
 
 
 def validate_clean_metadata(workflow: dict) -> None:
@@ -245,7 +260,7 @@ def validate_studio(workflow: dict, path: Path) -> None:
     assert manager["size"][0] >= 1200 and manager["size"][1] >= 900
     assert carousel["size"][0] >= 760 and carousel["size"][1] >= 700
     author_group = next(group for group in workflow["groups"]
-                        if group["title"] == "0.6 AUTHORING + PROJECT")
+                        if group["title"] == "01 • PROJECT & SCENES")
     assert float(author_group["bounding"][2]) <= 4300
     assert not nodes(workflow, "MiniMaxH3ChainRunManager")
     if path.name.startswith("Ref2V Studio"):

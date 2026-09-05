@@ -8,17 +8,23 @@
       "id": 1,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
-        0,
-        0
+        80,
+        610
       ],
       "size": [
-        1376,
-        1088
+        1200,
+        900
       ],
       "flags": {},
       "order": 0,
       "mode": 0,
-      "inputs": [],
+      "inputs": [
+        {
+          "name": "plan",
+          "type": "H3_CHAIN_PLAN",
+          "link": null
+        }
+      ],
       "outputs": [
         {
           "name": "selected_manifest",
@@ -28,6 +34,7 @@
           ]
         }
       ],
+      "title": "Checkpoint Manager",
       "properties": {
         "Node name for S&R": "MiniMaxH3ChainCheckpointManager"
       },
@@ -39,12 +46,12 @@
       "id": 2,
       "type": "VAELoader",
       "pos": [
-        1696,
-        928
+        1500,
+        180
       ],
       "size": [
-        416,
-        96
+        360,
+        108
       ],
       "flags": {},
       "order": 1,
@@ -59,6 +66,7 @@
           ]
         }
       ],
+      "title": "Video VAE",
       "properties": {
         "Node name for S&R": "VAELoader"
       },
@@ -70,12 +78,12 @@
       "id": 3,
       "type": "MiniMaxH3ChainLatentVideoAdapter",
       "pos": [
-        2304,
-        0
+        1500,
+        1188
       ],
       "size": [
-        544,
-        448
+        360,
+        244
       ],
       "flags": {},
       "order": 2,
@@ -94,7 +102,6 @@
         {
           "name": "source_audio",
           "type": "AUDIO",
-          "shape": 7,
           "link": null
         }
       ],
@@ -117,6 +124,7 @@
           "links": null
         }
       ],
+      "title": "Chain Latent Video Adapter",
       "properties": {
         "Node name for S&R": "MiniMaxH3ChainLatentVideoAdapter"
       },
@@ -132,12 +140,12 @@
       "id": 4,
       "type": "SeedVR2LoadDiTModel",
       "pos": [
-        1696,
-        0
+        1500,
+        388
       ],
       "size": [
-        448,
-        352
+        360,
+        252
       ],
       "flags": {},
       "order": 3,
@@ -145,7 +153,6 @@
       "inputs": [
         {
           "name": "torch_compile_args",
-          "shape": 7,
           "type": "TORCH_COMPILE_ARGS",
           "link": null
         }
@@ -159,6 +166,7 @@
           ]
         }
       ],
+      "title": "Seed VR2Load Di TModel",
       "properties": {
         "Node name for S&R": "SeedVR2LoadDiTModel"
       },
@@ -176,12 +184,12 @@
       "id": 5,
       "type": "SeedVR2LoadVAEModel",
       "pos": [
-        1696,
-        416
+        1500,
+        740
       ],
       "size": [
-        448,
-        448
+        360,
+        348
       ],
       "flags": {},
       "order": 4,
@@ -189,7 +197,6 @@
       "inputs": [
         {
           "name": "torch_compile_args",
-          "shape": 7,
           "type": "TORCH_COMPILE_ARGS",
           "link": null
         }
@@ -203,6 +210,7 @@
           ]
         }
       ],
+      "title": "Seed VR2Load VAEModel",
       "properties": {
         "Node name for S&R": "SeedVR2LoadVAEModel"
       },
@@ -222,14 +230,14 @@
     },
     {
       "id": 6,
-      "type": "SeedVR2DirectVideoUpscaler",
+      "type": "SeedVR2VideoPathUpscaler",
       "pos": [
-        2304,
-        512
+        2010,
+        180
       ],
       "size": [
-        640,
-        768
+        520,
+        580
       ],
       "flags": {},
       "order": 5,
@@ -249,6 +257,11 @@
           "name": "vae",
           "type": "SEEDVR2_VAE",
           "link": 5
+        },
+        {
+          "name": "auto_settings",
+          "type": "SEEDVR2_AUTO_SETTINGS",
+          "link": null
         }
       ],
       "outputs": [
@@ -265,8 +278,9 @@
           "links": null
         }
       ],
+      "title": "SeedVR2 Video Path Upscaler",
       "properties": {
-        "Node name for S&R": "SeedVR2DirectVideoUpscaler"
+        "Node name for S&R": "SeedVR2VideoPathUpscaler"
       },
       "widgets_values": [
         42,
@@ -275,11 +289,11 @@
         0,
         5,
         21,
+        "lab",
         2,
         false,
         0,
         0,
-        "lab",
         0.0,
         0.0,
         "cpu",
@@ -291,12 +305,12 @@
       "id": 7,
       "type": "SaveVideo",
       "pos": [
-        3104,
-        0
+        2010,
+        860
       ],
       "size": [
-        448,
-        320
+        480,
+        440
       ],
       "flags": {},
       "order": 6,
@@ -308,12 +322,20 @@
           "link": 6
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": null
+        }
+      ],
+      "title": "Save Video",
       "properties": {
         "Node name for S&R": "SaveVideo"
       },
       "widgets_values": [
         "video/h3_seedvr2_%date:yyyy-MM-dd%",
+        "auto",
         "auto",
         "auto"
       ]
@@ -322,23 +344,24 @@
       "id": 8,
       "type": "Note",
       "pos": [
-        1696,
-        1472
+        80,
+        180
       ],
       "size": [
-        896,
-        640
+        1000,
+        330
       ],
       "flags": {},
       "order": 7,
       "mode": 0,
       "inputs": [],
       "outputs": [],
+      "title": "START HERE • 0.6",
       "properties": {
         "Node name for S&R": "Note"
       },
       "widgets_values": [
-        "WHOLE-CHAIN SEEDVR2 FINISH\n\n1. In Checkpoint Manager select the final scene of a COMPLETE branch.\n2. Use the original H3 VIDEO VAE. Do not select minimax_h3_audio_vae: it has 32 latent channels and cannot decode the 24-channel video latent.\n3. Keep decode_buffer=disk-backed. MiniMax's temporal VAE writes the active scene to a temporary mmap; only boundary frames stay in ordinary RAM.\n4. The adapter trims saved context, resolves the Plan's boundary blends, embeds the saved final audio policy, and caches one continuous lossless movie under output/h3_chains/<run>/upscaled/seedvr2/source/.\n5. SeedVR2 Direct reads that movie in chunk_size batches. chunk_size=21 and overlap=2 are conservative defaults; its batching is independent of H3 scene boundaries.\n6. The ethanfel SeedVR2 fork preserves input audio in its returned VIDEO, so it connects directly to core Save Video.\n\nNo Plan, Source Timeline, source media, per-scene upscale loop, IMAGE batch, or manual intermediate path is required. Legacy source-audio runs without a saved Source Timeline are the only case that may need source_audio on the adapter.\n\nRequired SeedVR2 fork: https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler"
+        "0.6 RELEASE • Deferred Upscale - SeedVR2 Full Chain\n\n1. Install models and extra packs listed in example_workflows/README.md.\n2. Copy the supplied assets to ComfyUI/input; select source media where requested.\n3. Select a saved run and lineage in Checkpoint Manager, then set the upscale profile / target size.\n4. Follow the numbered columns left → right and inspect the saved results.\n\nWorkflow-specific setup and detailed wiring notes:\nexample_workflows/guides/Deferred Upscale - SeedVR2 Full Chain - MiniMax H3 0.6.md"
       ]
     }
   ],
@@ -394,28 +417,38 @@
   ],
   "groups": [
     {
-      "id": 1,
-      "title": "0.6 GENERATION RUNTIME",
+      "title": "01 • PROJECT & SCENES",
       "bounding": [
-        1632.0,
-        -96.0,
-        1984.0,
-        2272.0
+        40,
+        90,
+        1280,
+        1460
       ],
-      "color": "#744c8c",
+      "color": "#315566",
       "font_size": 24,
       "flags": {}
     },
     {
-      "id": 2,
-      "title": "0.6 AUTHORING + PROJECT",
+      "title": "02 • MODELS & INPUTS",
       "bounding": [
-        -64.0,
-        -96.0,
-        1504.0,
-        1248.0
+        1460,
+        90,
+        440,
+        1382
       ],
-      "color": "#3f789e",
+      "color": "#393f58",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "title": "03 • DELIVER",
+      "bounding": [
+        1970,
+        90,
+        600,
+        1250
+      ],
+      "color": "#394c49",
       "font_size": 24,
       "flags": {}
     }
@@ -423,10 +456,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.55,
+      "scale": 0.65,
       "offset": [
-        320.0,
-        160.0
+        30,
+        0
       ]
     },
     "comfyui_mcp": {

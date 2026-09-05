@@ -1,1248 +1,236 @@
 #!/usr/bin/env python3
-"""Build the clean 0.6 example-workflow catalog from legacy topology seeds.
+"""Compile fresh 0.6 workflows from named recipes and this branch's schemas.
 
-The archived workflows are used only as wiring blueprints.  Every output
-document receives fresh IDs, compact metadata, current authoring nodes, new
-prompts, and a collision-free layout.  This deliberately avoids accumulating
-frontend and node-pack metadata from older releases.
+No archived workflow, widget array, position, or frontend metadata is an input.
+Settings and wires use names. --check detects stale generated documents.
 """
-
 from __future__ import annotations
-
 import argparse
 import copy
 import json
 import re
 import uuid
 from pathlib import Path
-from typing import Any
+from workflow_schema import DATA, ROOT, fields, is_widget, widget_fields, validate_value, load_schemas, options
 
-
-ROOT = Path(__file__).resolve().parents[1]
-EXAMPLES = ROOT / "example_workflows"
-LEGACY_05 = EXAMPLES / "Archive" / "0.5"
-WORKFLOW_NAMES = (
-    "Deferred Upscale + De-Rope - H3 LBH 3D - MiniMax H3.json",
-    "Deferred Upscale - H3 LBH 3D - MiniMax H3.json",
-    "Deferred Upscale - SeedVR2 Full Chain - MiniMax H3.json",
-    "FL2V Normal - MiniMax H3.json",
-    "I2V Normal - MiniMax H3.json",
-    "I2V Studio - MiniMax H3.json",
-    "Masked AV Bridge - Two Clips - MiniMax H3.json",
-    "Masked AV Extension - Chain + Reference Image - MiniMax H3.json",
-    "Masked AV Extension - Single Clip - MiniMax H3.json",
-    "Masked Video Inpaint - MiniMax H3.json",
-    "Ref2V Basic - MiniMax H3.json",
-    "Ref2V Masked Video Inpaint - MiniMax H3.json",
-    "Ref2V Sequential Motion - EXPERIMENTAL - MiniMax H3.json",
-    "Ref2V Studio Tagged - MiniMax H3.json",
-    "Ref2V Studio Tagged Source Audio - MiniMax H3.json",
-    "Ref2V Tagged - MiniMax H3.json",
-    "T2V Normal - MiniMax H3.json",
-    "T2V Studio - MiniMax H3.json",
-)
-OUTPUT_RENAMES = {
-    name: name.removesuffix(".json") + " 0.6.json"
-    for name in WORKFLOW_NAMES
+EXAMPLES = ROOT / 'example_workflows'
+NAMESPACE = uuid.UUID('aedf0e28-4e77-4ec8-98d8-7662561e4cf4')
+TITLE_HEIGHT, GAP = 30, 70
+AUTHOR = {'MiniMaxH3ChainPlanModern', 'MiniMaxH3GenerationProfile', 'MiniMaxH3ChainPlanStudio',
+          'MiniMaxH3ProjectAssetManager', 'MiniMaxH3ChainScenePromptEditor',
+          'MiniMaxH3ChainRichScenePromptEditor', 'MiniMaxH3ChainCheckpointManager'}
+SIZES = {
+    'MiniMaxH3ChainPlanModern': (1000,900), 'MiniMaxH3ChainPlanStudio': (1080,940),
+    'MiniMaxH3ProjectAssetManager': (1080,880), 'MiniMaxH3ChainCheckpointManager': (1200,900),
+    'MiniMaxH3ChainScenePromptEditor': (1000,840), 'MiniMaxH3ChainRichScenePromptEditor': (1200,940),
+    'MiniMaxH3ChainReview': (760,880), 'MiniMaxH3ChainCurrent': (460,400),
+    'MiniMaxH3ChainUpscaleCurrent': (480,520), 'MiniMaxH3TaggedReferenceToVideo': (520,540),
+    'MiniMaxH3ReferenceToVideo': (520,420), 'MiniMaxH3ImageToVideo': (500,380),
+    'MiniMaxH3ChainSegmentSave': (460,220), 'MiniMaxH3ChainAssemble': (440,360),
+    'MiniMaxH3ChainContext': (420,260), 'MiniMaxH3LoopTrim': (420,250),
+    'MiniMaxH3ChainLoopEnd': (420,220), 'MiniMaxH3ChainManifestLoad': (440,200),
+    'LoadImage': (400,420), 'LoadImageMask': (400,420), 'LoadVideo': (400,380),
+    'VHS_LoadVideo': (400,580), 'PreviewImage': (420,380), 'PreviewAny': (420,180), 'SaveVideo': (480,440),
+    'SeedVR2VideoPathUpscaler': (520,580), 'Note': (1000,330),
 }
-OUTPUT_RENAMES.update({
-    "Ref2V Studio Tagged - MiniMax H3.json":
-        "Ref2V Studio - MiniMax H3 0.6.json",
-    "Ref2V Studio Tagged Source Audio - MiniMax H3.json":
-        "Ref2V Studio Source Audio - MiniMax H3 0.6.json",
-})
-NAMESPACE = uuid.UUID("aedf0e28-4e77-4ec8-98d8-7662561e4cf4")
-
-ARRIVAL = "h3_v06_courier_greenhouse_arrival.png"
-DELIVERY = "h3_v06_courier_greenhouse_delivery.png"
-CANONICAL_H3_MODELS = {
-    "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
-    "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
-    "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
-    "minimax_h3_video_vae_fp16.safetensors",
-    "minimax_h3_audio_vae_fp32.safetensors",
+LABELS = {
+    'MiniMaxH3ChainPlanModern':'Production Plan', 'MiniMaxH3ChainPlanStudio':'Plan Studio',
+    'MiniMaxH3ProjectAssetManager':'Project Asset Carousel', 'MiniMaxH3ChainCheckpointManager':'Checkpoint Manager',
+    'MiniMaxH3ChainScenePromptEditor':'Scene Prompts', 'MiniMaxH3ChainRichScenePromptEditor':'Scene Prompts + References',
+    'MiniMaxH3GenerationProfile':'Generation Profile', 'MiniMaxH3ChainLoopStart':'Loop Start',
+    'MiniMaxH3ChainCurrent':'Current Scene', 'MiniMaxH3ChainContext':'Apply Scene Context',
+    'MiniMaxH3TaggedReferenceToVideo':'Tagged Ref2VA Conditioning', 'MiniMaxH3LoopTrim':'Trim Carried Overlap',
+    'MiniMaxH3ChainSegmentSave':'Save Segment + Checkpoint', 'MiniMaxH3ChainReview':'Review Candidates',
+    'MiniMaxH3ChainLoopEnd':'Loop End', 'MiniMaxH3ChainAssemble':'Assemble Final Video',
+    'MiniMaxH3ChainManifestLoad':'Load Saved Clips', 'MiniMaxH3ImageToVideo':'Image / Keyframe Conditioning',
+    'MiniMaxH3ReferenceToVideo':'Reference Conditioning', 'UNETLoader':'H3 Diffusion Model',
+    'CLIPLoader':'H3 Text Encoder', 'RandomNoise':'Scene Seed', 'SamplerCustomAdvanced':'Sample Video + Audio',
+    'BasicScheduler':'Sampling Schedule', 'KSamplerSelect':'Sampler',
+    'MinimaxH3LatentUpscaler3D':'LBH 3D Latent Upscaler', 'SeedVR2VideoPathUpscaler':'SeedVR2 Video Path Upscaler',
 }
 
 
-T2V_PROMPTS = (
-    """integrated_multimodal_description:
-[Shot 1] A grounded cinematic wide shot at a rain-darkened neighborhood tram stop just before dawn. One elderly watchmaker in a navy wool coat waits beneath the shelter, holding a small paper parcel with both hands. Sodium streetlights glow in wet pavement while an empty tram approaches from deep background. The camera makes a slow, steady push toward him. He hears the rails sing, looks up, and takes one deliberate step toward the curb. Keep exactly one person, natural body mechanics, restrained contrast, fine rain, and realistic lens breathing. End with the tram entering frame and his step still in progress.
-
-overall_soundscape:
-Fine rain on glass, distant tires on wet road, a low electrical rail hum, the approaching tram bell, coat fabric, and one measured footstep. Preserve a quiet predawn acoustic space.
-
-non_diegetic_music:
-No non-diegetic music.""",
-    """integrated_multimodal_description:
-[Shot 1] Continue the same unbroken predawn tram-stop moment from the incoming H3 Motion Context. The carried opening overlap already contains the watchmaker's step and the tram entering frame; begin new action only after that overlap. Preserve his identity, navy coat, parcel, lighting direction, rain density, camera height, lens, and left-to-right tram motion. He completes the step, the doors align beside him and open, and warm interior light reaches across the wet pavement. He gives the parcel a protective glance and boards in one calm motion while the camera settles outside. No cut, no extra pedestrian, no reset of the carried movement.
-
-overall_soundscape:
-Continue the same rain and rail hum through the boundary. Add braking metal, a soft pneumatic door release, one final pavement step, two hollow tram-floor steps, and subdued interior ventilation without restarting the ambience.
-
-non_diegetic_music:
-No non-diegetic music.""",
-)
-
-I2V_PROMPTS = (
-    f"""integrated_multimodal_description:
-[Shot 1] At 0.00 seconds, <Picture 1> is fully referenced as the opening frame. Animate the exact adult bicycle courier, mustard-yellow waterproof jacket, dark teal trousers, charcoal helmet, olive messenger bag, silver bicycle, kraft parcel, glass greenhouse entrance, wet paving, overcast daylight, and photographic rendering shown in <Picture 1>. In one stable landscape shot, he walks the bicycle through the open doorway, checks the parcel, then turns his shoulders toward the workbench inside. Keep exactly one courier and one bicycle; preserve face, wardrobe, proportions, bicycle geometry, parcel size, lighting direction, and camera height. End while he is crossing the threshold so the motion can continue.
-
-overall_soundscape:
-Light rain beyond the glass, wet tire noise, a quiet freewheel tick, rubber soles, the metal door hinge, jacket rustle, and soft greenhouse room tone.
-
-non_diegetic_music:
-No non-diegetic music.""",
-    """integrated_multimodal_description:
-[Shot 1] Continue directly from the incoming H3 Motion Context inside the same greenhouse. The carried opening overlap already contains the courier crossing the threshold; begin new action only after it. Preserve the same face, mustard jacket, teal trousers, helmet, olive bag, bicycle, parcel, glass architecture, plant layout, wet floor reflections, camera height, and direction of travel. He rolls the bicycle beside the wooden potting table, stops it with his left hand, and places the parcel on the dry corner of the table with his right hand. He briefly smiles at the completed delivery. No cut, no duplicate person or bicycle, and no motion reset.
-
-overall_soundscape:
-Continue the rain-muted greenhouse ambience, freewheel tick, tire roll, footsteps, clothing movement, and a soft cardboard contact on wood without an acoustic restart.
-
-non_diegetic_music:
-No non-diegetic music.""",
-)
-
-FL2V_PROMPTS = (
-    """integrated_multimodal_description:
-[Shot 1] <Picture 1> aligns with 0.00 seconds and <Picture 2> aligns with the final target frame. Begin from the exact adult courier, mustard waterproof jacket, teal trousers, charcoal helmet, olive messenger bag, silver bicycle, parcel, glass entrance, wet paving, lighting, lens, and landscape composition in <Picture 1>. In one continuous shot he walks the bicycle through the doorway, turns toward the potting table, and places the parcel down. Progressively match the courier's final pose, bicycle position, parcel placement, warm greenhouse bulbs, plant geometry, reflections, and framing in <Picture 2>. Reach <Picture 2> only on the final frame; do not freeze early, cut, or introduce another person.
-
-overall_soundscape:
-Rain on glass, tire roll, freewheel ticks, footsteps, door hinge, jacket rustle, and the parcel touching wood follow the visible action continuously.
-
-non_diegetic_music:
-No non-diegetic music.""",
-    """integrated_multimodal_description:
-[Shot 1] Continue from the incoming greenhouse delivery context. The carried overlap already contains the completed parcel placement; begin new action only after it. The courier checks his bicycle, turns it smoothly toward the open door, and walks back onto the wet paving. Preserve his exact identity and wardrobe, the bicycle, greenhouse layout, parcel remaining on the table, camera height, and screen direction. During the final seconds, progressively align the doorway, exterior reflections, courier stance, bicycle position, and composition with <Picture 1>, reaching that picture only on the final frame without a cut or early hold.
-
-overall_soundscape:
-Continue greenhouse room tone and rain, then add the bicycle freewheel, footsteps, door hinge, and brighter exterior rain as he exits.
-
-non_diegetic_music:
-No non-diegetic music.""",
-)
-
-
-def ref_prompt(tagged: bool, continuation: bool = False,
-               motion: bool = False) -> str:
-    first = "@courier_arrival" if tagged else "<Picture 1>"
-    second = "@greenhouse_delivery" if tagged else "<Picture 2>"
-    motion_line = (
-        "\n@courier_motion is a motion-only guide for the walk, turn, and "
-        "parcel placement; it must not replace the courier's appearance. "
-        "@courier_motion_audio is its synchronized embedded sound guide."
-        if motion and tagged else "")
-    if not continuation:
-        return f"""subject_definitions:
-{first} defines <Subject 1>, the exact adult bicycle courier, including his face, mustard-yellow waterproof jacket, dark teal trousers, charcoal helmet, olive messenger bag, silver bicycle, kraft parcel, proportions, and photographic rendering.
-{second} defines the greenhouse delivery destination, including the glass structure, wooden potting table, dense plants, warm practical bulbs, wet floor reflections, and the same courier's end pose.{motion_line}
-<Subject 1> is the single courier shown by both references. Preserve his identity, clothing, equipment, and scale while allowing the described movement.
-
-summary:
-[reference generation] One continuous delivery moves <Subject 1> from the wet greenhouse entrance in {first} toward the completed parcel placement in {second}.
-
-retention_analysis:
-<Subject 1> (appears in [Shot 1]): fully_preserved - retain the exact face, adult age, body proportions, mustard jacket, teal trousers, helmet, bag, bicycle, and parcel across the complete shot.
-{first}: fully_preserved - use its courier identity, wardrobe, bicycle geometry, exterior doorway, wet paving, camera height, and cool daylight as the opening state.
-{second}: reference - use its potting table, plants, warm bulbs, interior reflections, and delivery pose as the destination; do not copy the final pose before the action reaches it.
-
-detailed_description:
-[Shot 1] Begin at the greenhouse entrance with exactly one courier and one bicycle. He walks the bicycle through the open glass door, glances down to confirm the parcel, then turns toward the wooden potting table. The camera tracks laterally at walking speed with restrained handheld movement. He stops the bicycle with his left hand and sets the parcel on the clear corner of the table with his right hand. Preserve face, hands, clothing, bicycle structure, parcel dimensions, plant layout, lighting direction, and coherent reflections. End immediately after the parcel makes contact; no cut, duplicate subject, added customer, text, logo, or early freeze.
-
-overall_soundscape:
-Light rain on greenhouse glass, wet tire roll, a quiet freewheel tick, rubber soles, door hinge, jacket movement, muted ventilation, and soft cardboard contact on wood. Keep every sound synchronized and spatially plausible.
-
-non_diegetic_music:
-No non-diegetic music."""
-    continuation_motion = (
-        "\n@courier_motion remains the motion-only walk and parcel-placement "
-        "guide. @courier_motion_audio remains its synchronized embedded "
-        "sound guide."
-        if motion and tagged else "")
-    return f"""subject_definitions:
-{first} preserves the exact identity, clothing, bicycle, parcel, exterior weather, and entrance geography established before the boundary.
-{second} defines the same greenhouse interior, potting table, plants, warm bulbs, and final delivery area.
-<Subject 1> is the same single adult courier carried by the incoming H3 Motion Context and both references.{continuation_motion}
-
-summary:
-[reference generation] The uninterrupted delivery continues inside the greenhouse after the carried overlap and ends with the courier calmly confirming the parcel placement.
-
-retention_analysis:
-<Subject 1> (appears in [Shot 1]): fully_preserved - preserve the exact face, mustard jacket, teal trousers, helmet, bag, body proportions, bicycle, and motion phase inherited from context.
-{first}: reference - retain its cool exterior light and entrance geometry only where still visible behind the courier.
-{second}: fully_preserved - retain the greenhouse table, plant arrangement, warm practical lights, reflections, parcel position, and photographic rendering.
-
-detailed_description:
-[Shot 1] Continue directly from the incoming H3 Motion Context. The carried opening overlap already contains the threshold crossing; begin new action only after it and never reset the stride. The courier rolls the same bicycle beside the potting table, steadies it with his left hand, and places the kraft parcel on the dry corner with his right hand. He checks the label area without showing readable text, then gives a small satisfied smile. Keep exactly one person and one bicycle, stable hands, coherent wheels, continuous camera direction, and consistent light. No cut, duplicate, wardrobe change, or early freeze.
-
-overall_soundscape:
-Continue rain-muted greenhouse ambience, footsteps, tire roll, freewheel ticks, clothing movement, ventilation, and the soft parcel contact without restarting any sound at the scene boundary.
-
-non_diegetic_music:
-No non-diegetic music."""
-
-
-def _load(path: Path) -> dict[str, Any]:
-    return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _input(node: dict[str, Any], name: str) -> dict[str, Any] | None:
-    return next((value for value in node.get("inputs", [])
-                 if value.get("name") == name), None)
-
-
-def _output(node: dict[str, Any], name: str) -> dict[str, Any] | None:
-    return next((value for value in node.get("outputs", [])
-                 if value.get("name") == name), None)
-
-
-class Graph:
-    def __init__(self, workflow: dict[str, Any]):
-        self.workflow = workflow
-        self.nodes = {node["id"]: node for node in workflow["nodes"]}
-        self.links = {link[0]: link for link in workflow["links"]}
-        self.next_node = max(self.nodes, default=0) + 1
-        self.next_link = max(self.links, default=0) + 1
-
-    def remove_link(self, link_id: int) -> None:
-        link = self.links.pop(link_id, None)
-        if link is None:
-            return
-        _, origin_id, origin_slot, target_id, target_slot, _ = link
-        origin = self.nodes.get(origin_id)
-        target = self.nodes.get(target_id)
-        if origin is not None:
-            links = origin["outputs"][origin_slot].get("links") or []
-            origin["outputs"][origin_slot]["links"] = (
-                [value for value in links if value != link_id] or None)
-        if target is not None and target_slot < len(target.get("inputs", [])):
-            target["inputs"][target_slot]["link"] = None
-        self.workflow["links"] = [value for value in self.workflow["links"]
-                                  if value[0] != link_id]
-
-    def remove_node(self, node: dict[str, Any]) -> None:
-        for value in list(node.get("inputs", [])):
-            if value.get("link") is not None:
-                self.remove_link(int(value["link"]))
-        for value in list(node.get("outputs", [])):
-            for link_id in list(value.get("links") or []):
-                self.remove_link(int(link_id))
-        self.workflow["nodes"] = [value for value in self.workflow["nodes"]
-                                  if value is not node]
-        self.nodes.pop(node["id"], None)
-
-    def add_node(self, node: dict[str, Any]) -> dict[str, Any]:
-        node["id"] = self.next_node
-        self.next_node += 1
-        self.workflow["nodes"].append(node)
-        self.nodes[node["id"]] = node
-        return node
-
-    def connect(self, origin: dict[str, Any], output_name: str,
-                target: dict[str, Any], input_name: str, kind: str) -> int:
-        origin_slot = next(index for index, value in
-                           enumerate(origin["outputs"])
-                           if value["name"] == output_name)
-        target_slot = next(index for index, value in
-                           enumerate(target["inputs"])
-                           if value["name"] == input_name)
-        target_input = target["inputs"][target_slot]
-        if target_input.get("link") is not None:
-            self.remove_link(int(target_input["link"]))
-        link_id = self.next_link
-        self.next_link += 1
-        link = [link_id, origin["id"], origin_slot,
-                target["id"], target_slot, kind]
-        self.workflow["links"].append(link)
-        self.links[link_id] = link
-        links = origin["outputs"][origin_slot].get("links") or []
-        origin["outputs"][origin_slot]["links"] = [*links, link_id]
-        target_input["link"] = link_id
-        return link_id
-
-
-def _node(node_type: str, title: str, pos: list[float], size: list[float],
-          inputs: list[dict[str, Any]], outputs: list[dict[str, Any]],
-          widgets: list[Any]) -> dict[str, Any]:
-    return {
-        "id": 0, "type": node_type, "pos": pos, "size": size,
-        "flags": {}, "order": 0, "mode": 0,
-        "inputs": inputs, "outputs": outputs, "title": title,
-        "properties": {"Node name for S&R": node_type},
-        "widgets_values": widgets,
-    }
-
-
-def _socket(name: str, kind: str, *, shape: int | None = None,
-            link: int | None = None) -> dict[str, Any]:
-    result: dict[str, Any] = {"name": name, "type": kind, "link": link}
-    if shape is not None:
-        result["shape"] = shape
-    return result
-
-
-def _out(name: str, kind: str) -> dict[str, Any]:
-    return {"name": name, "type": kind, "links": None}
-
-
-def _profile_values(old: list[Any]) -> list[str]:
-    transition = str(old[0]) if old else "guide"
-    scene = {
-        "cut": "Independent scenes",
-        "hard_av": "Hard picture + protected audio",
-        "soft_av": "Hard picture + smooth audio",
-    }.get(transition, "Visual continuity")
-    final = str(old[1]) if len(old) > 1 else "generated"
-    source = str(old[2]) if len(old) > 2 else "off"
-    continuity = str(old[3]) if len(old) > 3 else "on"
-    if final == "none":
-        audio = "No final audio"
-    elif final == "source":
-        audio = "Lip-sync to source audio"
-    elif source == "on":
-        audio = "Generate audio from source guide"
-    elif continuity == "off":
-        audio = "Generate fresh audio per scene"
-    else:
-        audio = "Generate audio"
-    return [scene, audio]
-
-
-def _fresh_plan(name: str, old_plan: dict[str, Any]) -> dict[str, Any]:
-    old_shots = list(old_plan.get("shots") or [])
-    count = max(1, len(old_shots))
-    if name.startswith("T2V"):
-        prompts = T2V_PROMPTS
-        ids = ("tram_stop_arrival", "tram_boarding")
-    elif name.startswith("I2V"):
-        prompts = I2V_PROMPTS
-        ids = ("greenhouse_arrival", "greenhouse_delivery")
-    elif name.startswith("FL2V"):
-        prompts = FL2V_PROMPTS
-        ids = ("arrival_to_delivery", "delivery_to_arrival")
-    elif name.startswith("Ref2V") and "Masked" not in name:
-        tagged = ("Tagged" in name or "Studio" in name
-                  or "Sequential Motion" in name)
-        motion = "Sequential Motion" in name
-        prompts = (ref_prompt(tagged, False, motion),
-                   ref_prompt(tagged, True, motion))
-        ids = ("reference_delivery", "reference_confirmation")
-    else:
-        return old_plan
-    shots = []
-    for index in range(count):
-        old = old_shots[index] if index < len(old_shots) else {}
-        prompt = prompts[min(index, len(prompts) - 1)]
-        length = int(old.get("length") or 243)
-        shots.append({
-            "id": ids[min(index, len(ids) - 1)],
-            "prompt": prompt,
-            "length": length,
-            "steps": 20,
-            "seed": str(6101 + index),
-        })
-    return {"defaults": {"steps": 20}, "shots": shots}
-
-
-def _replace_loader_assets(workflow: dict[str, Any], name: str) -> None:
-    if not (name.startswith(("I2V", "FL2V", "Ref2V"))
-            and "Masked" not in name):
-        return
-    loaders = [node for node in workflow["nodes"]
-               if node.get("type") == "LoadImage"]
-    for index, loader in enumerate(loaders[:2]):
-        values = loader.get("widgets_values")
-        old_filename = ""
-        if isinstance(values, list) and values:
-            old_filename = str(values[0])
-        elif isinstance(values, dict):
-            old_filename = str(values.get("image") or "")
-        if "opening" in old_filename:
-            filename = ARRIVAL
-        elif "last" in old_filename:
-            filename = DELIVERY
-        else:
-            filename = ARRIVAL if index == 0 else DELIVERY
-        if isinstance(values, list) and values:
-            values[0] = filename
-        elif isinstance(values, dict):
-            values["image"] = filename
-        loader["title"] = "Load Image — 0.6 %s" % (
-            "COURIER ARRIVAL" if index == 0 else "GREENHOUSE DELIVERY")
-
-
-def _normalize_model_widgets(workflow: dict[str, Any]) -> None:
-    """Remove legacy, machine-specific model subfolder prefixes.
-
-    ComfyUI's canonical H3 package places these files directly in their
-    respective diffusion_models, text_encoders, and vae directories.  Older
-    examples carried both a local ``MiniMax-H3/`` convention and the misspelled
-    ``MiniMaw-H3/`` VAE folder; neither belongs in a portable release file.
-    """
-    for node in workflow["nodes"]:
-        if node.get("type") not in {"UNETLoader", "CLIPLoader", "VAELoader"}:
-            continue
-        values = node.get("widgets_values")
-        if not isinstance(values, list) or not values:
-            continue
-        basename = str(values[0]).replace("\\", "/").rsplit("/", 1)[-1]
-        if basename in CANONICAL_H3_MODELS:
-            values[0] = basename
-
-
-def _refresh_release_guidance(workflow: dict[str, Any], name: str) -> None:
-    if not (name.startswith(("T2V", "I2V", "FL2V", "Ref2V"))
-            and "Masked" not in name):
-        return
-    tagged_pictures = [node for node in workflow["nodes"]
-                       if node.get("type") ==
-                       "MiniMaxH3TaggedPictureReference"]
-    for index, node in enumerate(tagged_pictures[:2]):
-        tag = "courier_arrival" if index == 0 else "greenhouse_delivery"
-        node["widgets_values"] = [tag]
-        node["title"] = "MiniMax H3 Tagged Picture Ref — @%s" % tag
-    for node in workflow["nodes"]:
-        if node.get("type") == "MiniMaxH3TaggedVideoReference":
-            values = list(node.get("widgets_values") or [])
-            timeline = values[2] if len(values) > 2 else "sequential"
-            node["widgets_values"] = [
-                "courier_motion", "courier_motion_audio", timeline]
-            node["title"] = (
-                "MiniMax H3 Tagged Video Ref — @courier_motion / SEQUENTIAL")
-        title = str(node.get("title") or "")
-        node["title"] = title.replace("0.5 PREFLIGHT", "0.6 PREFLIGHT")
-
-    if name.startswith("T2V"):
-        guidance = [
-            "0.6 ORIGINAL PROMPT\n\nThis quiet predawn tram-stop example was "
-            "written for the 0.6 release catalog. It uses concrete physical "
-            "action, one counted subject, restrained camera movement, and no "
-            "third-party character or brand.",
-            "T2VA PROMPT FORMAT\n\nEach scene uses the exact three-section H3 "
-            "shape: integrated_multimodal_description, overall_soundscape, "
-            "and non_diegetic_music. Scene 2 explicitly treats the carried "
-            "overlap as already elapsed before new action begins.",
-            "T2V 0.6 QUICK START\n\nSelect installed H3 model, text encoder, "
-            "video VAE, and audio VAE files. Edit the two scene columns, keep "
-            "Generation Profile on Visual continuity + Generate audio, then "
-            "queue and approve each checkpointed scene.",
-        ]
-    elif name.startswith("I2V"):
-        guidance = [
-            f"0.6 REFERENCE ASSET\n\n{ARRIVAL} was generated specifically for "
-            "this release catalog. Copy it from example_workflows/assets to "
-            "ComfyUI/input before loading the workflow.",
-            "I2VA PROMPT FORMAT\n\nScene 1 declares <Picture 1> as the opening "
-            "frame inside the three-section H3 prompt. Scene 2 relies on the "
-            "incoming H3 Motion Context and begins new action only after the "
-            "carried overlap.",
-            "I2V 0.6 QUICK START\n\nSelect the courier arrival image and keep "
-            "Frame Gate connected: it applies Picture 1 only to scene 1. "
-            "Select installed H3 model/VAE files, edit the Plan, then queue.",
-        ]
-    elif name.startswith("FL2V"):
-        guidance = [
-            f"0.6 A→B REFERENCES\n\nCopy {ARRIVAL} and {DELIVERY} from "
-            "example_workflows/assets to ComfyUI/input. They were created as "
-            "a coherent opening/destination pair for this release catalog.",
-            "FL2VA PROMPT FORMAT\n\nEach three-section prompt identifies the "
-            "opening and final target inside integrated_multimodal_description. "
-            "The action converges on the target only at the final frame.",
-            "FL2V 0.6 QUICK START\n\nKeep delivery on Frame Index Switch "
-            "frame_1 and arrival on frame_2. Frame Gate supplies arrival as "
-            "scene 1's opening and alternates B→A end targets for the loop.",
-        ]
-    else:
-        studio = "Studio" in name
-        sequential = "Sequential Motion" in name
-        guidance = [
-            "0.6 ORIGINAL REFERENCE EXAMPLE\n\nThe matching courier and "
-            "greenhouse pictures were generated specifically for this catalog. "
-            "They replace the old community demonstration assets and prompts.",
-            "REF2VA PROMPT FORMAT — SIX SECTIONS\n\nKeep subject_definitions, "
-            "summary, retention_analysis, detailed_description, "
-            "overall_soundscape, and non_diegetic_music in that order. "
-            "References define identity; the prompt defines the new action.",
-            (
-                "REF2V STUDIO 0.6 QUICK START\n\nImport both courier images "
-                "through Project Asset Carousel. Assign Picture and tags "
-                "courier_arrival / greenhouse_delivery. Use Plan Studio for "
-                "timeline edits and Checkpoint Manager for takes, trims, and "
-                "branch restoration."
-                if studio else
-                "REF2V 0.6 QUICK START\n\nCopy both courier PNGs to "
-                "ComfyUI/input. The two picture references are activated as "
-                "courier_arrival and greenhouse_delivery. Edit the Plan, "
-                "then queue and approve each checkpointed scene."
-            ),
-        ]
-        if sequential:
-            guidance[2] = (
-                "SEQUENTIAL MOTION 0.6 QUICK START\n\nCopy both courier PNGs "
-                "to ComfyUI/input and select a motion video with embedded "
-                "audio lasting at least 19.333 seconds. Keep tags "
-                "@courier_arrival, @greenhouse_delivery, @courier_motion, "
-                "and @courier_motion_audio in the prompts. The motion window "
-                "advances with each scene.")
-    note_nodes = [node for node in workflow["nodes"]
-                  if node.get("type") == "Note"
-                  and "recovery nodes are MUTED" not in str(
-                      (node.get("widgets_values") or [""])[0])]
-    for node, text in zip(note_nodes[:3], guidance):
-        node["widgets_values"] = [text]
-        node["title"] = text.split("\n", 1)[0]
-
-
-def _modernize_plan(workflow: dict[str, Any], name: str) -> None:
-    graph = Graph(workflow)
-    plans = [node for node in workflow["nodes"]
-             if node.get("type") == "MiniMaxH3ChainPlan"]
-    for plan in plans:
-        values = list(plan.get("widgets_values") or [])
-        raw = json.loads(str(values[0]))
-        fresh = _fresh_plan(name, raw)
-        policy_input = _input(plan, "chain_policy")
-        policy = None
-        if policy_input and policy_input.get("link") is not None:
-            link = graph.links[int(policy_input["link"])]
-            policy = graph.nodes[link[1]]
-        if policy is None:
-            raise ValueError(f"{name}: Plan has no Chain Policy")
-        policy["type"] = "MiniMaxH3GenerationProfile"
-        policy["title"] = "MiniMax H3 Generation Profile — RELEASE DEFAULTS"
-        policy["size"] = [400, 190]
-        policy["inputs"] = []
-        policy["outputs"] = [
-            _out("chain_policy", "H3_CHAIN_POLICY"), _out("status", "STRING")]
-        # Preserve the existing link after recreating the output socket.
-        policy["outputs"][0]["links"] = [int(policy_input["link"])]
-        policy["widgets_values"] = _profile_values(
-            list(policy.get("widgets_values") or []))
-        policy["properties"] = {
-            "Node name for S&R": "MiniMaxH3GenerationProfile"}
-
-        optional_links = {}
-        for value in plan.get("inputs", []):
-            if value.get("name") == "plan_json_input" and value.get("link"):
-                optional_links["plan_json_input"] = value["link"]
-            if (value.get("name") == "generation_fingerprint"
-                    and value.get("link")):
-                optional_links["generation_fingerprint"] = value["link"]
-        plan["type"] = "MiniMaxH3ChainPlanModern"
-        plan["title"] = "MiniMax H3 Production Plan — 0.6 SCENE COLUMNS"
-        plan["size"] = [1040, 1040]
-        plan["inputs"] = [_socket(
-            "chain_policy", "H3_CHAIN_POLICY", shape=7,
-            link=int(policy_input["link"]))]
-        # Keep a connected fingerprint carrier in non-Carousel workflows.
-        if optional_links.get("generation_fingerprint"):
-            plan["inputs"].append({
-                "name": "generation_fingerprint", "type": "STRING",
-                "widget": {"name": "generation_fingerprint"},
-                "link": int(optional_links["generation_fingerprint"]),
-            })
-        if optional_links.get("plan_json_input"):
-            plan["inputs"].append(_socket(
-                "plan_json_input", "STRING", shape=7,
-                link=int(optional_links["plan_json_input"])))
-        # Input slots are positional in UI workflow links.  Repoint every
-        # preserved link after replacing the legacy Plan's input surface.
-        for slot, value in enumerate(plan["inputs"]):
-            if value.get("link") is not None:
-                graph.links[int(value["link"])][4] = slot
-        run_name = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_")
-        run_name = re.sub(r"_minimax_h3_json$", "", run_name)
-        width = int(values[3]) if len(values) > 3 else 960
-        height = int(values[4]) if len(values) > 4 else 544
-        encode = str(values[6]) if len(values) > 6 else "video"
-        crop = str(values[8]) if len(values) > 8 else "disabled"
-        duration = float(values[11]) if len(values) > 11 else 10.0
-        base_seed = int(values[13]) if len(values) > 13 else 0
-        crf = int(values[14]) if len(values) > 14 else 18
-        blend = int(values[15]) if len(values) > 15 else 0
-        fingerprint = "" if "Studio" in name else "h3-v06-release-example"
-        plan["widgets_values"] = [
-            json.dumps(fresh, ensure_ascii=False, indent=2), run_name,
-            fingerprint, width, height, encode, crop, duration, 20,
-            base_seed, crf, blend,
-        ]
-        plan["properties"] = {
-            "Node name for S&R": "MiniMaxH3ChainPlanModern"}
-
-        first_prompt = str(fresh["shots"][0]["prompt"])
-        for conditioning in workflow["nodes"]:
-            if conditioning.get("type") in {
-                    "MiniMaxH3ImageToVideo", "MiniMaxH3ReferenceToVideo",
-                    "MiniMaxH3TaggedReferenceToVideo"}:
-                widget_values = conditioning.get("widgets_values")
-                if isinstance(widget_values, list) and widget_values:
-                    widget_values[0] = first_prompt
-
-
-def _remove_studio_legacy_assets(graph: Graph, source_audio: bool) -> None:
-    remove_types = {"MiniMaxH3ChainRunManager",
-                    "MiniMaxH3TaggedPictureReference"}
-    if source_audio:
-        remove_types.update({"LoadAudio", "MiniMaxH3TaggedAudioReference",
-                             "MiniMaxH3SourceTimeline"})
-    candidates = [node for node in list(graph.workflow["nodes"])
-                  if node.get("type") in remove_types]
-    upstream_ids = set()
-    for node in candidates:
-        if node.get("type") == "MiniMaxH3TaggedPictureReference":
-            image_input = _input(node, "image")
-            if image_input and image_input.get("link") is not None:
-                upstream_ids.add(graph.links[int(image_input["link"])][1])
-    for node in candidates:
-        if node["id"] in graph.nodes:
-            graph.remove_node(node)
-    for node_id in upstream_ids:
-        node = graph.nodes.get(node_id)
-        if node and not any(value.get("links") for value in node["outputs"]):
-            graph.remove_node(node)
-
-
-def _studio_nodes(workflow: dict[str, Any], name: str) -> None:
-    studios = [node for node in workflow["nodes"]
-               if node.get("type") == "MiniMaxH3ChainPlanStudio"]
-    if not studios:
-        return
-    graph = Graph(workflow)
-    source_audio = "Source Audio" in name
-    _remove_studio_legacy_assets(graph, source_audio)
-    studio = studios[0]
-    plan = next(node for node in workflow["nodes"]
-                if node.get("type") == "MiniMaxH3ChainPlanModern")
-    plan["inputs"] = [value for value in plan.get("inputs", [])
-                      if not (value.get("name") == "generation_fingerprint"
-                              and value.get("link") is None)]
-    studio["title"] = "MiniMax H3 Plan Studio — TIMELINE / TAKES / TRIMS"
-    studio["size"] = [1600, 1100]
-    studio["properties"] = {"Node name for S&R": studio["type"]}
-    # Discard obsolete empty slots, then retain the live Plan connection.
-    plan_link = (_input(studio, "plan") or {}).get("link")
-    for value in list(studio.get("inputs", [])):
-        if value.get("name") != "plan" and value.get("link") is not None:
-            graph.remove_link(int(value["link"]))
-    studio["inputs"] = [_socket(
-        "plan", "H3_CHAIN_PLAN", shape=7,
-        link=int(plan_link) if plan_link is not None else None)]
-    if plan_link is not None:
-        graph.links[int(plan_link)][4] = 0
-    studio["widgets_values"] = []
-
-    run_name = str(plan["widgets_values"][1])
-    carousel = graph.add_node(_node(
-        "MiniMaxH3ProjectAssetManager",
-        "MiniMax H3 Project Asset Carousel — IMPORT RELEASE REFERENCES",
-        [0, 0], [1240, 920], [], [
-            _out("project_assets", "H3_PROJECT_ASSETS"),
-            _out("references", "H3_TAGGED_REFERENCES"),
-            _out("reference_fingerprint", "STRING"),
-            _out("source_timeline", "H3_SOURCE_TIMELINE"),
-            _out("status", "STRING"),
-        ], [run_name, "", "512", "timestamped_video", ""]))
-    checkpoint = graph.add_node(_node(
-        "MiniMaxH3ChainCheckpointManager",
-        "MiniMax H3 Checkpoint Manager — BRANCHES / PREVIEWS / RESTORE",
-        [0, 0], [1320, 980], [
-            _socket("plan", "H3_CHAIN_PLAN", shape=7)], [
-            _out("selected_manifest", "H3_CHAIN_MANIFEST")], [""]))
-
-    plan["inputs"].append(_socket(
-        "project_assets", "H3_PROJECT_ASSETS", shape=7))
-    studio["inputs"].extend([
-        _socket("tagged_references", "H3_TAGGED_REFERENCES", shape=7),
-        _socket("project_assets", "H3_PROJECT_ASSETS", shape=7),
-    ])
-    graph.connect(carousel, "project_assets", plan, "project_assets",
-                  "H3_PROJECT_ASSETS")
-    graph.connect(carousel, "references", studio, "tagged_references",
-                  "H3_TAGGED_REFERENCES")
-    graph.connect(carousel, "project_assets", studio, "project_assets",
-                  "H3_PROJECT_ASSETS")
-    graph.connect(studio, "plan", checkpoint, "plan", "H3_CHAIN_PLAN")
-
-    plan_consumers = {
-        "MiniMaxH3ChainLoopStart", "MiniMaxH3ChainExternalVideo",
-    }
-    for consumer in workflow["nodes"]:
-        if consumer.get("type") not in plan_consumers:
-            continue
-        plan_input = _input(consumer, "plan")
-        plan_origin = None
-        if plan_input and plan_input.get("link") is not None:
-            plan_origin = graph.links[int(plan_input["link"])][1]
-        if plan_origin != studio["id"]:
-            graph.connect(
-                studio, "plan", consumer, "plan", "H3_CHAIN_PLAN")
-
-    wrappers = [node for node in workflow["nodes"]
-                if node.get("type") == "MiniMaxH3TaggedReferenceToVideo"]
-    for wrapper in wrappers:
-        references = _input(wrapper, "references")
-        if references is None:
-            wrapper["inputs"].insert(3, _socket(
-                "references", "H3_TAGGED_REFERENCES"))
-        graph.connect(carousel, "references", wrapper, "references",
-                      "H3_TAGGED_REFERENCES")
-
-    if name.startswith("Ref2V Studio"):
-        asset_steps = (
-            f"2. Import {ARRIVAL}; tag courier_arrival (Picture).\n"
-            f"3. Import {DELIVERY}; tag greenhouse_delivery (Picture).\n")
-        next_step = 4
-    elif "Chain + Reference Image" in name:
-        asset_steps = (
-            "2. Import soldier_crabs_reference_cc0.png; tag crabs "
-            "(Picture).\n")
-        next_step = 3
-    elif name.startswith("I2V Studio"):
-        asset_steps = (
-            f"2. Keep {ARRIVAL} selected in the opening Load Image node.\n"
-            "3. Use the Carousel for additional project references when "
-            "needed.\n")
-        next_step = 4
-    elif name.startswith("T2V Studio"):
-        asset_steps = (
-            "2. No reference asset is required; the Carousel can remain "
-            "empty or hold later project media.\n")
-        next_step = 3
-    else:
-        asset_steps = (
-            "2. Keep the bundled source media selected in the existing "
-            "loader nodes; use the Carousel for additional project assets.\n")
-        next_step = 3
-    source_step = ""
-    if source_audio:
-        source_step = (
-            f"{next_step}. Import one audio file and assign Source track.\n")
-        next_step += 1
-    quick_start = (
-        "0.6 Studio quick start\n\n"
-        f"1. Open the Project Asset Carousel.\n"
-        + asset_steps + source_step
-        + f"{next_step}. Edit scenes in Production Plan or Plan Studio.\n"
-        + f"{next_step + 1}. Queue; inspect, branch, trim, or restore in "
-          "Checkpoint Manager.")
-    note = next((
-        node for node in workflow["nodes"]
-        if node.get("type") == "Note"
-        and "0.6" in str(node.get("title") or "").upper()
-        and "QUICK START" in str(node.get("title") or "").upper()
-    ), None)
-    if note is None:
-        note = graph.add_node(_node(
-            "Note", "0.6 STUDIO QUICK START", [0, 0], [620, 330], [], [], [
-                quick_start]))
-    else:
-        note["title"] = "0.6 STUDIO QUICK START"
-        note["size"] = [620, 330]
-        note["widgets_values"] = [quick_start]
-    note["color"] = "#20354a"
-    note["bgcolor"] = "#10202f"
-
-
-def _clean_node(node: dict[str, Any]) -> dict[str, Any]:
-    allowed = {
-        "id", "type", "pos", "size", "flags", "order", "mode",
-        "inputs", "outputs", "title", "properties", "widgets_values",
-        "color", "bgcolor",
-    }
-    result = {key: copy.deepcopy(value) for key, value in node.items()
-              if key in allowed}
-    result.setdefault("pos", [0, 0])
-    result.setdefault("size", [320, 180])
-    result.setdefault("flags", {})
-    result.setdefault("order", 0)
-    result.setdefault("mode", 0)
-    result.setdefault("inputs", [])
-    result.setdefault("outputs", [])
-    result["properties"] = {"Node name for S&R": str(result["type"])}
-    result.setdefault("widgets_values", [])
-    for value in result["inputs"]:
-        for key in list(value):
-            if key not in {"name", "type", "link", "shape", "widget",
-                           "label", "dir"}:
-                del value[key]
-    for value in result["outputs"]:
-        for key in list(value):
-            if key not in {"name", "type", "links", "shape", "slot_index",
-                           "label"}:
-                del value[key]
-    return result
-
-
-def _canonicalize(workflow: dict[str, Any], name: str) -> dict[str, Any]:
-    nodes = [_clean_node(node) for node in workflow["nodes"]]
-    node_ids = {old["id"]: index + 1 for index, old in
-                enumerate(workflow["nodes"])}
-    link_ids = {old[0]: index + 1 for index, old in
-                enumerate(workflow["links"])}
+def socket_type(spec):
+    return 'COMBO' if isinstance(spec[0], (list,tuple)) else spec[0]
+
+
+def make_node(recipe, schema, number):
+    typ, settings = recipe['type'], recipe['settings']
+    controls = list(widget_fields(schema, settings))
+    assert not (set(settings)-{key for key,_ in controls}), (typ,'unknown settings')
+    values=[]
+    for key,spec in controls:
+        assert key in settings, (typ,key,'recipe must explicitly name every widget')
+        validate_value(settings[key],spec,(typ,key))
+        values.append(copy.deepcopy(settings[key]))
+    inputs=[]
+    for name,spec in fields(schema).items():
+        if spec[0]=='COMFY_AUTOGROW_V3':
+            template=options(spec)['template']
+            item_spec=next(iter(template['input']['required'].values()))
+            names=[key for key in recipe['inputs'] if key.startswith(name+'.')]
+            names.append(name+'.'+template['prefix']+str(len(names)))
+            inputs.extend({'name':key,'type':socket_type(item_spec),'link':None} for key in names)
+        elif not is_widget(spec) or name in recipe['inputs']:
+            value={'name':name,'type':socket_type(spec),'link':None}
+            if is_widget(spec): value['widget']={'name':name}
+            inputs.append(value)
+    label=LABELS.get(typ) or re.sub(r'(?<=[a-z])(?=[A-Z])',' ',typ.replace('MiniMaxH3','').replace('Contex','Context'))
+    if typ=='VAELoader': label='Audio VAE' if 'audio' in settings['vae_name'] else 'Video VAE'
+    if typ in ('LoadImage','LoadVideo','LoadImageMask'):
+        label={'LoadImage':'Reference Image','LoadVideo':'Source Video','LoadImageMask':'Edit Mask'}[typ]
+    if recipe.get('mode')==2:label='RECOVERY • '+label
+    elif recipe.get('mode')==4:label='OPTIONAL • '+label
+    outputs=[dict(name=name,type=kind,links=None) for name,kind in zip(schema['output_name'],schema['output'])]
+    input_width=max((len(i['name']) for i in inputs),default=0)*7
+    output_width=max((len(o['name']) for o in outputs),default=0)*7
+    width=max(360,len(label)*8+48,input_width+output_width+80)
+    height=64+max(len(inputs),len(outputs))*20+len(controls)*24
+    if any(options(spec).get('multiline') for _,spec in controls):height+=180
+    explicit=SIZES.get(typ,(width,height))
+    width,height=max(width,explicit[0]),max(height,explicit[1])
+    if typ=='VHS_LoadVideo':values=copy.deepcopy(settings)  # VHS uses a named serializer.
+    return dict(id=number,type=typ,pos=[0,0],size=[width,height],flags={},order=number-1,
+                mode=recipe.get('mode',0),inputs=inputs,outputs=outputs,title=label,
+                properties={'Node name for S&R':typ},widgets_values=values)
+
+
+def group(title,members,color):
+    left=min(n['pos'][0] for n in members)-40
+    top=min(n['pos'][1] for n in members)-90
+    right=max(n['pos'][0]+n['size'][0] for n in members)+40
+    bottom=max(n['pos'][1]+n['size'][1] for n in members)+40
+    return dict(title=title,bounding=[left,top,right-left,bottom-top],color=color,font_size=24,flags={})
+
+
+def stack(nodes,x,y):
     for node in nodes:
-        node["id"] = node_ids[node["id"]]
-        node["order"] = node["id"] - 1
-        for value in node["inputs"]:
-            value["link"] = (link_ids.get(value.get("link"))
-                             if value.get("link") is not None else None)
-        for value in node["outputs"]:
-            links = [link_ids[item] for item in (value.get("links") or [])
-                     if item in link_ids]
-            value["links"] = links or None
-    links = []
-    for old in workflow["links"]:
-        links.append([
-            link_ids[old[0]], node_ids[old[1]], int(old[2]),
-            node_ids[old[3]], int(old[4]), str(old[5]),
-        ])
-    workflow_id = str(uuid.uuid5(NAMESPACE, name))
-    result = {
-        "id": workflow_id,
-        "revision": 0,
-        "last_node_id": len(nodes),
-        "last_link_id": len(links),
-        "nodes": nodes,
-        "links": links,
-        "groups": [],
-        "config": {},
-        "extra": {
-            "ds": {"scale": 0.55, "offset": [320.0, 160.0]},
-            "comfyui_mcp": {"workflow_uuid": workflow_id},
-        },
-        "version": 0.4,
-    }
-    _layout(result)
-    return result
+        node['pos']=[x,y]
+        y+=node['size'][1]+TITLE_HEIGHT+GAP
+    return y
 
 
-AUTHOR_TYPES = {
-    "MiniMaxH3GenerationProfile", "MiniMaxH3ChainPlanModern",
-    "MiniMaxH3ChainPlanStudio", "MiniMaxH3ChainScenePromptEditor",
-    "MiniMaxH3ChainRichScenePromptEditor", "MiniMaxH3ProjectAssetManager",
-    "MiniMaxH3ChainCheckpointManager",
-}
+def layout(nodes,links):
+    groups=[]
+    author=[n for n in nodes if n['type'] in AUTHOR or n['type']=='Note']
+    studio=any(n['type']=='MiniMaxH3ChainPlanStudio' for n in author)
+    columns=[[],[],[]] if studio else [[],[]]
+    priority={'Note':0,'MiniMaxH3GenerationProfile':1,'MiniMaxH3ChainPlanModern':2,
+              'MiniMaxH3ChainPlanStudio':3,'MiniMaxH3ChainScenePromptEditor':3,
+              'MiniMaxH3ChainRichScenePromptEditor':3,'MiniMaxH3ProjectAssetManager':4,
+              'MiniMaxH3ChainCheckpointManager':5}
+    for n in sorted(author,key=lambda n:priority.get(n['type'],9)):
+        t=n['type']; col=0
+        if studio:
+            if t in ('MiniMaxH3ChainPlanStudio','MiniMaxH3ProjectAssetManager'):col=1
+            elif t in ('MiniMaxH3ChainRichScenePromptEditor','MiniMaxH3ChainCheckpointManager'):col=2
+        elif t in ('MiniMaxH3ChainScenePromptEditor','MiniMaxH3ChainRichScenePromptEditor'):col=1
+        columns[col].append(n)
+    x=80
+    for col in columns:
+        if not col:continue
+        stack(col,x,180); x+=max(n['size'][0] for n in col)+120
+    if author:groups.append(group('01 • PROJECT & SCENES',author,'#315566'))
+    x+=100
+    runtime=[n for n in nodes if n not in author and n['mode']!=2]
+    recovery=sorted([n for n in nodes if n not in author and n['mode']==2],
+                    key=lambda n:n['type']!='MiniMaxH3ChainManifestLoad')
+    runtime_ids={n['id'] for n in runtime}
+    predecessors={n['id']:set() for n in runtime}
+    for _,source,_,target,_,_ in links:
+        if source in runtime_ids and target in runtime_ids:predecessors[target].add(source)
+    depths={}
+    while len(depths)<len(runtime):
+        ready=[n for n in runtime if n['id'] not in depths and predecessors[n['id']]<=depths.keys()]
+        assert ready,'Cycle in generation graph'
+        for n in ready:depths[n['id']]=max((depths[p]+1 for p in predecessors[n['id']]),default=0)
+    # Adjacent dependency depths share a column, stacked in topological order.
+    column_numbers=sorted({depths[n['id']]//2 for n in runtime})
+    runtime_left=x
+    for index,layer in enumerate(column_numbers):
+        col=sorted([n for n in runtime if depths[n['id']]//2==layer],key=lambda n:(depths[n['id']],n['id']))
+        stack(col,x,180)
+        types={n['type'] for n in col}; heading='PREPARE SCENE'
+        if index==0:heading='MODELS & INPUTS'
+        if 'SamplerCustomAdvanced' in types:heading='SAMPLE & DECODE'
+        if types & {'MiniMaxH3ChainSegmentSave','MiniMaxH3ChainUpscaleSegmentSave'}:heading='SAVE & REVIEW'
+        if 'MiniMaxH3ChainReview' in types:heading='REVIEW & CONTINUE'
+        if types & {'MiniMaxH3ChainAssemble','SaveVideo'}:heading='DELIVER'
+        groups.append(group(f'{index+2:02d} • {heading}',col,'#393f58' if index%2==0 else '#394c49'))
+        x+=max(n['size'][0] for n in col)+150
+    if recovery:
+        y=max((n['pos'][1]+n['size'][1] for n in runtime),default=180)+180
+        rx=runtime_left
+        for n in recovery:
+            n['pos']=[rx,y];rx+=n['size'][0]+130
+        groups.append(group('RECOVERY • DISABLED / NO SAMPLING',recovery,'#665135'))
+    return groups
 
 
-SIZE_OVERRIDES = {
-    # These nodes inherit canvas sizes from old executions. Native previews
-    # expanded several of them to more than 1,300 px even though their current
-    # controls need only a compact panel in a clean release workflow.
-    "SamplerCustomAdvanced": (420, 360),
-    "MiniMaxH3ChainCurrent": (520, 420),
-    "MiniMaxH3ChainContext": (440, 340),
-    "MiniMaxH3LoopTrim": (440, 260),
-    "MiniMaxH3ChainSegmentSave": (500, 340),
-    "MiniMaxH3ChainReview": (760, 900),
-    "MiniMaxH3ChainLoopEnd": (440, 340),
-    "MiniMaxH3ChainAssemble": (560, 400),
-    "MiniMaxH3ChainManifestLoad": (440, 240),
-    "MiniMaxH3ChainPreflight": (440, 300),
-}
+def build(recipe,filename,schemas):
+    recipe=copy.deepcopy(recipe)
+    guides=[n['settings']['text'] for n in recipe['nodes'] if n['type']=='Note']
+    records=[n for n in recipe['nodes'] if n['type']!='Note']
+    plans=[n for n in records if n['type']=='MiniMaxH3ChainPlanModern']
+    for n in records:
+        if n['type']=='MiniMaxH3ChainPlanStudio' and plans:
+            n['settings'].update({k:v for k,v in plans[0]['settings'].items() if k in n['settings']})
+    nodes=[make_node(n,schemas[n['type']],i+1) for i,n in enumerate(records)]
+    by_key={r['key']:n for r,n in zip(records,nodes)}
+    links=[]
+    for record,node in zip(records,nodes):
+        for input_name,(source_key,output_name) in record['inputs'].items():
+            source=by_key[source_key]
+            source_slots=[i for i,s in enumerate(source['outputs']) if s['name'].lower()==output_name.lower()]
+            assert len(source_slots)==1,(filename,source_key,output_name,'missing/ambiguous output')
+            origin_slot=source_slots[0]
+            target_slot=next(i for i,s in enumerate(node['inputs']) if s['name']==input_name)
+            inp=node['inputs'][target_slot];out=source['outputs'][origin_slot]
+            assert (set(out['type'].split(',')) & set(inp['type'].split(','))
+                    or '*' in (out['type'],inp['type'])), (filename,source['type'],out,node['type'],inp)
+            link_id=len(links)+1
+            links.append([link_id,source['id'],origin_slot,node['id'],target_slot,out['type']])
+            inp['link']=link_id;out['links']=(out['links'] or [])+[link_id]
+    project_step='Set a unique project run name, then edit scenes and the Generation Profile.'
+    if filename.startswith('Deferred'):
+        project_step='Select a saved run and lineage in Checkpoint Manager, then set the upscale profile / target size.'
+    elif filename.startswith('Masked AV Bridge'):
+        project_step='Check both source intervals and the bridge target length; this standalone graph does not use a Plan.'
+    recovery_note=('Recovery is disabled by default. Enable it only to assemble saved clips without sampling.\n'
+                   if any(n['mode']==2 for n in nodes) else '')
+    note_text=('0.6 RELEASE • '+filename.removesuffix(' - MiniMax H3 0.6.json')+'\n\n'
+        '1. Install models and extra packs listed in example_workflows/README.md.\n'
+        '2. Copy the supplied assets to ComfyUI/input; select source media where requested.\n'
+        '3. '+project_step+'\n'
+        '4. Follow the numbered columns left → right and inspect the saved results.\n\n'
+        +recovery_note+
+        'Workflow-specific setup and detailed wiring notes:\nexample_workflows/guides/'+filename.removesuffix('.json')+'.md')
+    nodes.append(dict(id=len(nodes)+1,type='Note',pos=[0,0],size=list(SIZES['Note']),flags={},order=len(nodes),mode=0,
+        inputs=[],outputs=[],title='START HERE • 0.6',properties={'Node name for S&R':'Note'},widgets_values=[note_text]))
+    identity=str(uuid.uuid5(NAMESPACE,filename))
+    workflow=dict(id=identity,revision=0,last_node_id=len(nodes),last_link_id=len(links),nodes=nodes,links=links,
+        groups=layout(nodes,links),config={},extra={'ds':{'scale':0.65,'offset':[30,0]},
+        'comfyui_mcp':{'workflow_uuid':identity}},version=0.4)
+    guide='# '+filename.removesuffix('.json')+'\n\nBuilt for the **0.6 branch**, not nightly.\n\n'
+    guide+=('Setup controls come first, followed by numbered generation columns. '+recovery_note).rstrip()+'\n\n'
+    guide+='\n\n---\n\n'.join(guides)+'\n'
+    return workflow,guide
 
 
-RUNTIME_STAGE_HINTS = {
-    # Models and source media.
-    "UNETLoader": 0, "CLIPLoader": 0, "VAELoader": 0,
-    "LoadImage": 0, "LoadImageMask": 0, "LoadVideo": 0,
-    "VHS_LoadVideo": 0,
-    "SeedVR2LoadDiTModel": 0, "SeedVR2LoadVAEModel": 0,
-    # Chain entry and source selection.
-    "MiniMaxH3ChainLoopStart": 1,
-    "ModelAttentionBackend": 1,
-    "MiniMaxH3SigmaShift": 1,
-    "MiniMaxH3ChainPreflight": 1,
-    "MiniMaxH3ChainFrameIndexSwitch": 1,
-    "MiniMaxH3ChainFirstSceneImage": 1,
-    "MiniMaxH3TaggedPictureReference": 1,
-    "MiniMaxH3TaggedVideoReference": 1,
-    "MiniMaxH3ReferenceVideoPrepare": 1,
-    "MiniMaxH3ContexLoopSourceAVTarget": 1,
-    "MiniMaxH3PatchPriority": 1,
-    "MiniMaxH3ChainUpscaleAdapter": 1,
-    # Scene-local conditioning.
-    "MiniMaxH3ChainCurrent": 2,
-    "MiniMaxH3ChainExternalVideo": 2,
-    "MiniMaxH3ImageToVideo": 2,
-    "MiniMaxH3ReferenceToVideo": 2,
-    "MiniMaxH3TaggedReferenceToVideo": 2,
-    "MiniMaxH3ContexLoopMaskSlice": 2,
-    "MiniMaxH3ContexMaskedTarget": 2,
-    "MiniMaxH3ContexMaskGridPreview": 2,
-    "H3V2VInit": 2,
-    "MiniMaxH3ChainRecoveredAV": 2,
-    "MiniMaxH3ChainUpscaleCurrent": 2,
-    # Sampler preparation.
-    "MiniMaxH3ChainContext": 3,
-    "BasicGuider": 3, "RandomNoise": 3, "KSamplerSelect": 3,
-    "BasicScheduler": 3, "H3InjectSchedule": 3,
-    "H3ConditioningSyncFromLatents": 3,
-    "MiniMaxH3ContexMaskedAVBridge": 3, "DisableNoise": 3,
-    "MiniMaxH3ChainUpscaleReferenceConditioning": 3,
-    "MiniMaxH3UpscaleReferencePromptOverride": 3,
-    # Sampling, decode, and learned processing.
-    "SamplerCustomAdvanced": 4, "VAEDecode": 4,
-    "VAEDecodeAudio": 4, "VAEEncode": 4, "VAEEncodeAudio": 4,
-    "H3AudioRecover": 4, "H3AudioSmear": 4, "H3ExactRecover": 4,
-    "H3JerkOracle": 4, "H3TimeSmear": 4,
-    "MiniMaxH3ChainDeropeContinuity": 4,
-    "MiniMaxH3ChainDeropeFreezeMask": 4,
-    "MiniMaxH3ChainDeropeGuard": 4,
-    "MiniMaxH3ChainPass2Prepare": 4,
-    "MiniMaxH3ChainLatentVideoAdapter": 4,
-    "MinimaxH3LatentUpscaler3D": 4,
-    "SeedVR2DirectVideoUpscaler": 4,
-    "ImageBatchExtendWithOverlap": 4,
-    # Persist, review, and finish.
-    "MiniMaxH3LoopTrim": 5,
-    "MiniMaxH3ChainSegmentSave": 5,
-    "MiniMaxH3ChainUpscaleSegmentSave": 5,
-    "AudioConcat": 5, "TrimAudioDuration": 5,
-    "MiniMaxH3ChainReview": 6,
-    "MiniMaxH3ChainLoopEnd": 6,
-    "MiniMaxH3ChainUpscaleLoopEnd": 6,
-    "MiniMaxH3ChainAssemble": 7,
-    "CreateVideo": 7, "SaveVideo": 7,
-    "PreviewAny": 7, "PreviewImage": 7,
-}
+def main():
+    parser=argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--check',action='store_true')
+    parser.add_argument('--output-dir',type=Path,default=EXAMPLES)
+    args=parser.parse_args();schemas=load_schemas()
+    for path in sorted((DATA/'recipes').glob('*.json')):
+        workflow,guide=build(json.loads(path.read_text()),path.name,schemas)
+        outputs={args.output_dir/path.name:json.dumps(workflow,ensure_ascii=False,indent=2)+'\n',
+                 args.output_dir/'guides'/path.with_suffix('.md').name:guide}
+        for target,content in outputs.items():
+            if args.check:assert target.read_text()==content, f'Stale generated file: {target}'
+            else:
+                target.parent.mkdir(parents=True,exist_ok=True);target.write_text(content,encoding='utf-8')
+        print(path.name)
 
 
-def _runtime_stage(node: dict[str, Any], fallback: int) -> int:
-    if node["type"] == "MiniMaxH3ChainManifestLoad":
-        return 6 if int(node.get("mode", 0)) != 0 else 0
-    return RUNTIME_STAGE_HINTS.get(node["type"], fallback)
-
-
-def _is_author_node(node: dict[str, Any]) -> bool:
-    title = str(node.get("title") or "").upper()
-    return (node["type"] in AUTHOR_TYPES
-            or (node["type"] == "Note" and "0.6" in title
-                and "QUICK START" in title))
-
-
-def _normalize_release_node_sizes(nodes: list[dict[str, Any]]) -> None:
-    for node in nodes:
-        override = SIZE_OVERRIDES.get(node["type"])
-        if override is not None:
-            node["size"] = list(override)
-
-
-def _runtime_major_layers(
-        workflow: dict[str, Any], runtime: list[dict[str, Any]]) -> tuple[
-            list[list[dict[str, Any]]], dict[int, set[int]],
-            dict[int, set[int]]]:
-    runtime_by_id = {int(node["id"]): node for node in runtime}
-    successors = {node_id: set() for node_id in runtime_by_id}
-    predecessors = {node_id: set() for node_id in runtime_by_id}
-    for link in workflow["links"]:
-        source, target = int(link[1]), int(link[3])
-        if source not in runtime_by_id or target not in runtime_by_id:
-            continue
-        successors[source].add(target)
-        predecessors[target].add(source)
-
-    major_ids = {
-        node_id for node_id, node in runtime_by_id.items()
-        if node["type"] not in {"Note", "Reroute"}
-    }
-    contracted = {node_id: set() for node_id in major_ids}
-    for source in major_ids:
-        queue = list(successors[source])
-        visited = set()
-        while queue:
-            target = queue.pop(0)
-            if target in visited:
-                continue
-            visited.add(target)
-            if target in major_ids:
-                contracted[source].add(target)
-            elif runtime_by_id[target]["type"] == "Reroute":
-                queue.extend(successors[target])
-
-    indegree = {node_id: 0 for node_id in major_ids}
-    for targets in contracted.values():
-        for target in targets:
-            indegree[target] += 1
-    rank = {node_id: 0 for node_id in major_ids}
-    queue = sorted(
-        (node_id for node_id, count in indegree.items() if count == 0),
-        key=lambda node_id: (
-            float(runtime_by_id[node_id]["pos"][0]),
-            float(runtime_by_id[node_id]["pos"][1]), node_id),
-    )
-    visited = []
-    while queue:
-        source = queue.pop(0)
-        visited.append(source)
-        for target in sorted(contracted[source]):
-            rank[target] = max(rank[target], rank[source] + 1)
-            indegree[target] -= 1
-            if indegree[target] == 0:
-                queue.append(target)
-        queue.sort(key=lambda node_id: (
-            float(runtime_by_id[node_id]["pos"][0]),
-            float(runtime_by_id[node_id]["pos"][1]), node_id))
-
-    # Custom output loops can expose a cycle in an old graph. Keep those nodes
-    # deterministic and nearby instead of failing the release builder.
-    remaining = major_ids - set(visited)
-    if remaining:
-        ordered = sorted(remaining, key=lambda node_id: (
-            float(runtime_by_id[node_id]["pos"][0]),
-            float(runtime_by_id[node_id]["pos"][1]), node_id))
-        base = max(rank.values(), default=0) + 1
-        for offset, node_id in enumerate(ordered):
-            rank[node_id] = base + offset
-
-    max_rank = max(rank.values(), default=0)
-    column_count = min(8, max_rank + 1)
-    compressed_rank = {
-        node_id: (0 if max_rank == 0 else round(
-            rank[node_id] * (column_count - 1) / max_rank))
-        for node_id in major_ids
-    }
-    if not any(node["type"] == "MiniMaxH3ChainUpscaleAdapter"
-               for node in runtime_by_id.values()):
-        compressed_rank = {
-            node_id: _runtime_stage(
-                runtime_by_id[node_id], compressed_rank[node_id])
-            for node_id in major_ids
-        }
-        # Stage hints intentionally stack related controls in one column. If
-        # a workflow variant inserts an extra preparation node, promote only
-        # backward targets into their producer's column so links never run
-        # against the main left-to-right reading direction.
-        for _iteration in range(len(major_ids)):
-            changed = False
-            for source, targets in contracted.items():
-                for target in targets:
-                    if compressed_rank[target] < compressed_rank[source]:
-                        compressed_rank[target] = compressed_rank[source]
-                        changed = True
-            if not changed:
-                break
-    layers: dict[int, list[dict[str, Any]]] = {}
-    for node_id in major_ids:
-        layers.setdefault(compressed_rank[node_id], []).append(
-            runtime_by_id[node_id])
-    return ([sorted(values, key=lambda node: (
-                rank[int(node["id"])], float(node["pos"][1]),
-                float(node["pos"][0]), node["id"]))
-             for _rank, values in sorted(layers.items())],
-            successors, predecessors)
-
-
-def _nearest_major_ids(
-        start: int, adjacency: dict[int, set[int]],
-        runtime_by_id: dict[int, dict[str, Any]]) -> list[int]:
-    queue = list(adjacency.get(start, ()))
-    visited = set()
-    result = []
-    while queue:
-        node_id = queue.pop(0)
-        if node_id in visited:
-            continue
-        visited.add(node_id)
-        node = runtime_by_id[node_id]
-        if node["type"] not in {"Note", "Reroute"}:
-            result.append(node_id)
-        elif node["type"] == "Reroute":
-            queue.extend(adjacency.get(node_id, ()))
-    return result
-
-
-def _place_runtime(
-        workflow: dict[str, Any], runtime: list[dict[str, Any]],
-        start_x: float) -> None:
-    if not runtime:
-        return
-    layers, successors, predecessors = _runtime_major_layers(
-        workflow, runtime)
-    placed: list[dict[str, Any]] = []
-    x = start_x
-    core_bottom = 0.0
-    for layer in layers:
-        y = 0.0
-        width = max(float(node["size"][0]) for node in layer)
-        for node in layer:
-            node["pos"] = [round(x / 32) * 32, round(y / 32) * 32]
-            placed.append(node)
-            y += float(node["size"][1]) + 64
-        core_bottom = max(core_bottom, y - 64)
-        x += width + 160
-    core_right = max(
-        (float(node["pos"][0]) + float(node["size"][0])
-         for node in placed), default=start_x + 2400)
-
-    runtime_by_id = {int(node["id"]): node for node in runtime}
-    reroutes = [node for node in runtime if node["type"] == "Reroute"]
-    for reroute in sorted(reroutes, key=lambda node: node["id"]):
-        node_id = int(reroute["id"])
-        sources = _nearest_major_ids(
-            node_id, predecessors, runtime_by_id)
-        targets = _nearest_major_ids(
-            node_id, successors, runtime_by_id)
-        source_right = max((
-            float(runtime_by_id[value]["pos"][0])
-            + float(runtime_by_id[value]["size"][0])
-            for value in sources), default=start_x)
-        target_left = min((
-            float(runtime_by_id[value]["pos"][0])
-            for value in targets), default=source_right + 160)
-        center_x = ((source_right + target_left) / 2.0
-                    if target_left > source_right + 96
-                    else source_right + 64)
-        centers_y = [
-            float(runtime_by_id[value]["pos"][1])
-            + float(runtime_by_id[value]["size"][1]) / 2.0
-            for value in targets or sources
-        ]
-        center_y = sum(centers_y) / len(centers_y) if centers_y else 0.0
-        reroute["pos"] = [
-            round((center_x - float(reroute["size"][0]) / 2.0) / 32) * 32,
-            round((center_y - float(reroute["size"][1]) / 2.0) / 32) * 32,
-        ]
-        _nudge(reroute, placed)
-        placed.append(reroute)
-
-    core_bottom = max((
-        float(node["pos"][1]) + float(node["size"][1])
-        for node in placed), default=core_bottom)
-
-    notes = [node for node in runtime if node["type"] == "Note"]
-    if notes:
-        row_left = start_x
-        row_right = max(core_right, start_x + 3200)
-        note_x = row_left
-        note_y = core_bottom + 192
-        row_height = 0.0
-        for node in sorted(notes, key=lambda value: (
-                float(value["pos"][0]), float(value["pos"][1]), value["id"])):
-            width, height = map(float, node["size"][:2])
-            if note_x > row_left and note_x + width > row_right:
-                note_x = row_left
-                note_y += row_height + 96
-                row_height = 0.0
-            node["pos"] = [round(note_x / 32) * 32, round(note_y / 32) * 32]
-            note_x += width + 96
-            row_height = max(row_height, height)
-
-
-def _place_author(author: list[dict[str, Any]]) -> float:
-    if not author:
-        return 0.0
-    order = {
-        "Note": 0,
-        "MiniMaxH3GenerationProfile": 1,
-        "MiniMaxH3ChainPlanModern": 2,
-        "MiniMaxH3ChainPlanStudio": 3,
-        "MiniMaxH3ProjectAssetManager": 4,
-        "MiniMaxH3ChainScenePromptEditor": 5,
-        "MiniMaxH3ChainRichScenePromptEditor": 5,
-        "MiniMaxH3ChainCheckpointManager": 6,
-    }
-    has_studio = any(
-        node["type"] == "MiniMaxH3ChainPlanStudio" for node in author)
-    if has_studio:
-        top_types = {
-            "Note", "MiniMaxH3GenerationProfile",
-            "MiniMaxH3ChainPlanModern", "MiniMaxH3ChainPlanStudio",
-        }
-        rows = [
-            sorted((node for node in author if node["type"] in top_types),
-                   key=lambda node: (order.get(node["type"], 9), node["id"])),
-            sorted((node for node in author if node["type"] not in top_types),
-                   key=lambda node: (order.get(node["type"], 9), node["id"])),
-        ]
-    else:
-        rows = [sorted(author, key=lambda node: (
-            order.get(node["type"], 9), node["id"]))]
-    y = 0.0
-    right = 0.0
-    for row in rows:
-        x = 0.0
-        row_height = 0.0
-        for node in row:
-            node["pos"] = [round(x / 32) * 32, round(y / 32) * 32]
-            x += float(node["size"][0]) + 96
-            row_height = max(row_height, float(node["size"][1]))
-        right = max(right, x - 96)
-        y += row_height + 96
-    return right
-
-
-def _layout(workflow: dict[str, Any]) -> None:
-    _normalize_release_node_sizes(workflow["nodes"])
-    author = [node for node in workflow["nodes"] if _is_author_node(node)]
-    runtime = [node for node in workflow["nodes"] if node not in author]
-    # Put authoring first, then a dependency-layered runtime beside it. This
-    # matches the way the graph is used and avoids the detached lower island
-    # created by the inherited 0.5 canvas coordinates.
-    author_right = _place_author(author)
-    _place_runtime(workflow, runtime, author_right + (320 if author else 0))
-    workflow["groups"] = []
-    if runtime:
-        workflow["groups"].append(_group(1, "0.6 GENERATION RUNTIME",
-                                          runtime, "#744c8c"))
-    if author:
-        workflow["groups"].append(_group(2, "0.6 AUTHORING + PROJECT",
-                                          author, "#3f789e"))
-
-
-def _nudge(node: dict[str, Any], placed: list[dict[str, Any]]) -> None:
-    while True:
-        conflict = None
-        ax, ay = map(float, node["pos"][:2])
-        aw, ah = map(float, node["size"][:2])
-        for other in placed:
-            bx, by = map(float, other["pos"][:2])
-            bw, bh = map(float, other["size"][:2])
-            if (ax < bx + bw + 48 and bx < ax + aw + 48
-                    and ay < by + bh + 48 and by < ay + ah + 48):
-                conflict = other
-                break
-        if conflict is None:
-            return
-        node["pos"][1] = (float(conflict["pos"][1])
-                           + float(conflict["size"][1]) + 64)
-
-
-def _group(group_id: int, title: str, nodes: list[dict[str, Any]],
-           color: str) -> dict[str, Any]:
-    left = min(float(node["pos"][0]) for node in nodes) - 64
-    top = min(float(node["pos"][1]) for node in nodes) - 96
-    right = max(float(node["pos"][0]) + float(node["size"][0])
-                for node in nodes) + 64
-    bottom = max(float(node["pos"][1]) + float(node["size"][1])
-                 for node in nodes) + 64
-    return {"id": group_id, "title": title,
-            "bounding": [left, top, right - left, bottom - top],
-            "color": color, "font_size": 24, "flags": {}}
-
-
-def build(source: Path, output: Path) -> None:
-    output.mkdir(parents=True, exist_ok=True)
-    for source_name in WORKFLOW_NAMES:
-        workflow = _load(source / source_name)
-        output_name = OUTPUT_RENAMES.get(source_name, source_name)
-        _normalize_model_widgets(workflow)
-        _replace_loader_assets(workflow, output_name)
-        _refresh_release_guidance(workflow, output_name)
-        if any(node.get("type") == "MiniMaxH3ChainPlan"
-               for node in workflow["nodes"]):
-            _modernize_plan(workflow, output_name)
-        _studio_nodes(workflow, output_name)
-        clean = _canonicalize(workflow, output_name)
-        (output / output_name).write_text(
-            json.dumps(clean, ensure_ascii=False, indent=2) + "\n",
-            encoding="utf-8")
-
-
-def main() -> None:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--source", type=Path, default=LEGACY_05)
-    parser.add_argument("--output", type=Path, required=True)
-    args = parser.parse_args()
-    build(args.source, args.output)
-
-
-if __name__ == "__main__":
-    main()
+if __name__=='__main__':main()

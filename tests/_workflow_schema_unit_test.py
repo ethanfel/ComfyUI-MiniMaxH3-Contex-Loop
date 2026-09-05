@@ -1,74 +1,74 @@
 #!/usr/bin/env python3
-"""Check active workflow sockets against the current custom-node classes."""
-
+"""Validate release widgets and socket wiring against this checkout, offline."""
 from __future__ import annotations
-
-import importlib.util
 import json
-import pathlib
 import sys
-import types
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0, str(ROOT / "tools"))
+from workflow_schema import load_schemas, fields, is_widget, widget_fields, validate_value
 
 
-ROOT = pathlib.Path(__file__).resolve().parents[1]
-PACKAGE = "h3_workflow_schema_unit"
-
-folder_paths = types.ModuleType("folder_paths")
-folder_paths.get_output_directory = lambda: str(ROOT)
-folder_paths.get_temp_directory = lambda: str(ROOT)
-folder_paths.get_input_directory = lambda: str(ROOT)
-folder_paths.get_annotated_filepath = lambda value: str(value)
-sys.modules["folder_paths"] = folder_paths
-
-package = types.ModuleType(PACKAGE)
-package.__path__ = [str(ROOT)]
-sys.modules[PACKAGE] = package
-
-shared_nodes = types.ModuleType(PACKAGE + ".nodes")
-shared_nodes.MiniMaxH3MotionContext = object
-shared_nodes._claim_inline_patch_ownership = lambda _conditioning=None: "test"
-shared_nodes._prepare_native_guide_conditioning = lambda value: value
-shared_nodes._resize = lambda *args: None
-shared_nodes._streams_from_latent = lambda *args: None
-sys.modules[shared_nodes.__name__] = shared_nodes
-
-spec = importlib.util.spec_from_file_location(
-    PACKAGE + ".chain_nodes", ROOT / "chain_nodes.py")
-chain = importlib.util.module_from_spec(spec)
-sys.modules[spec.name] = chain
-spec.loader.exec_module(chain)
-
-
-def main() -> None:
-    for path in sorted((ROOT / "example_workflows").glob("*.json")):
-        workflow = json.loads(path.read_text(encoding="utf-8"))
-        for node in workflow["nodes"]:
-            node_class = chain.CHAIN_NODE_CLASS_MAPPINGS.get(node["type"])
-            if node_class is None:
+def validate_workflow(workflow, schemas):
+    links = {link[0]: link for link in workflow["links"]}
+    for node in workflow["nodes"]:
+        if node["type"] == "Note":
+            continue
+        schema = schemas[node["type"]]
+        saved = node["widgets_values"]
+        values = {}
+        index = 0
+        for name, spec in widget_fields(schema, values):
+            if isinstance(saved, dict):
+                assert name in saved, (node["type"], name, "missing widget")
+                value = saved[name]
+            else:
+                assert index < len(saved), (node["type"], name, "missing widget")
+                value = saved[index]
+            validate_value(value, spec, (node["id"], node["type"], name))
+            values[name] = value
+            index += 1
+        assert len(saved) == index, (node["type"], "stale extra widgets")
+        inputs = {s["name"]: s for s in node["inputs"]}
+        specs = fields(schema)
+        for name, socket in inputs.items():
+            if "." in name and name.split(".")[0] in specs:
+                assert specs[name.split(".")[0]][0] == "COMFY_AUTOGROW_V3"
                 continue
-            schema = node_class.INPUT_TYPES()
-            valid_inputs = (set(schema.get("required", {}))
-                            | set(schema.get("optional", {})))
-            for value in node.get("inputs", []):
-                assert value["name"] in valid_inputs, (
-                    path.name, node["type"], value["name"])
-                required = schema.get("required", {}).get(value["name"])
-                if required is not None and value.get("link") is None:
-                    options = (required[1] if len(required) > 1
-                               and isinstance(required[1], dict) else {})
-                    socket_type = required[0]
-                    is_connection = (options.get("forceInput")
-                                     or isinstance(socket_type, str))
-                    assert not is_connection, (
-                        path.name, node["id"], node["type"],
-                        value["name"], "required input is disconnected")
-            expected_outputs = list(getattr(node_class, "RETURN_NAMES", ()))
-            if expected_outputs:
-                actual_outputs = [value["name"]
-                                  for value in node.get("outputs", [])]
-                assert actual_outputs == expected_outputs[:len(actual_outputs)], (
-                    path.name, node["type"], actual_outputs, expected_outputs)
-    print("H3 0.6 workflow schemas: custom-node inputs and output slots pass")
+            assert name in specs, (node["type"], name, "unknown input")
+            if is_widget(specs[name]):
+                assert socket.get("widget") == {"name": name}, (node["type"], name, "converted widget metadata")
+            if socket["link"] is not None:
+                link = links[socket["link"]]
+                assert link[3] == node["id"] and node["inputs"][link[4]] is socket
+        for name, spec in schema["input"].get("required", {}).items():
+            if not is_widget(spec):
+                assert name in inputs and inputs[name]["link"] is not None, (node["type"], name, "missing required connection")
+        assert [o["name"] for o in node["outputs"]] == schema["output_name"], node["type"]
+        assert [o["type"] for o in node["outputs"]] == schema["output"], node["type"]
+
+
+def main():
+    schemas = load_schemas()
+    paths = sorted((ROOT / "example_workflows").glob("*.json"))
+    for path in paths:
+        try:
+            validate_workflow(json.loads(path.read_text()), schemas)
+        except Exception as exc:
+            raise AssertionError(path.name) from exc
+    # The old audit passed this real broken array: prompt -> clip_index,
+    # "match" -> height. Ensure it can never pass release checks again.
+    wf = json.loads((ROOT / "example_workflows/Ref2V Studio - MiniMax H3 0.6.json").read_text())
+    tagged = next(n for n in wf["nodes"] if n["type"] == "MiniMaxH3TaggedReferenceToVideo")
+    tagged["widgets_values"] = tagged["widgets_values"][2:]
+    try:
+        validate_workflow(wf, schemas)
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("Shifted Tagged Ref2VA widget regression was not caught")
+    print("H3 0.6 schemas: all 18 workflows; local H3 + external contracts, widget types/choices/ranges, required sockets and converted inputs pass")
 
 
 if __name__ == "__main__":

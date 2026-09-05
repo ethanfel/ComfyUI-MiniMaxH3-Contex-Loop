@@ -8,12 +8,12 @@
       "id": 1,
       "type": "VHS_LoadVideo",
       "pos": [
-        0,
-        640
+        1300,
+        180
       ],
       "size": [
-        320,
-        310
+        400,
+        580
       ],
       "flags": {},
       "order": 0,
@@ -21,13 +21,11 @@
       "inputs": [
         {
           "name": "meta_batch",
-          "shape": 7,
           "type": "VHS_BatchManager",
           "link": null
         },
         {
           "name": "vae",
-          "shape": 7,
           "type": "VAE",
           "link": null
         }
@@ -60,6 +58,7 @@
           "links": null
         }
       ],
+      "title": "VHS_Load Video",
       "properties": {
         "Node name for S&R": "VHS_LoadVideo"
       },
@@ -71,34 +70,19 @@
         "frame_load_cap": 99,
         "skip_first_frames": 0,
         "select_every_nth": 1,
-        "format": "AnimateDiff",
-        "videopreview": {
-          "hidden": false,
-          "paused": false,
-          "params": {
-            "force_rate": 24,
-            "frame_load_cap": 99,
-            "skip_first_frames": 0,
-            "select_every_nth": 1,
-            "filename": "soldier_crabs_bribie_island_cc0.webm",
-            "type": "input",
-            "format": "video/webm"
-          },
-          "muted": false
-        }
-      },
-      "title": "Load Video (Upload) 🎥🅥🅗🅢 — SOURCE A — FIRST 99 FRAMES"
+        "format": "AnimateDiff"
+      }
     },
     {
       "id": 2,
       "type": "VHS_LoadVideo",
       "pos": [
-        0,
-        1024
+        1300,
+        860
       ],
       "size": [
-        320,
-        310
+        400,
+        580
       ],
       "flags": {},
       "order": 1,
@@ -106,13 +90,11 @@
       "inputs": [
         {
           "name": "meta_batch",
-          "shape": 7,
           "type": "VHS_BatchManager",
           "link": null
         },
         {
           "name": "vae",
-          "shape": 7,
           "type": "VAE",
           "link": null
         }
@@ -145,6 +127,7 @@
           "links": null
         }
       ],
+      "title": "VHS_Load Video",
       "properties": {
         "Node name for S&R": "VHS_LoadVideo"
       },
@@ -156,34 +139,19 @@
         "frame_load_cap": 100,
         "skip_first_frames": 213,
         "select_every_nth": 1,
-        "format": "AnimateDiff",
-        "videopreview": {
-          "hidden": false,
-          "paused": false,
-          "params": {
-            "force_rate": 24,
-            "frame_load_cap": 100,
-            "skip_first_frames": 213,
-            "select_every_nth": 1,
-            "filename": "soldier_crabs_bribie_island_cc0.webm",
-            "type": "input",
-            "format": "video/webm"
-          },
-          "muted": false
-        }
-      },
-      "title": "Load Video (Upload) 🎥🅥🅗🅢 — SOURCE B — FINAL 100 FRAMES"
+        "format": "AnimateDiff"
+      }
     },
     {
       "id": 3,
       "type": "UNETLoader",
       "pos": [
-        0,
-        0
+        1300,
+        1540
       ],
       "size": [
-        390,
-        100
+        360,
+        132
       ],
       "flags": {},
       "order": 2,
@@ -198,6 +166,7 @@
           ]
         }
       ],
+      "title": "H3 Diffusion Model",
       "properties": {
         "Node name for S&R": "UNETLoader"
       },
@@ -210,12 +179,12 @@
       "id": 4,
       "type": "CLIPLoader",
       "pos": [
-        0,
-        160
+        1300,
+        1772
       ],
       "size": [
-        390,
-        120
+        360,
+        156
       ],
       "flags": {},
       "order": 3,
@@ -230,6 +199,7 @@
           ]
         }
       ],
+      "title": "H3 Text Encoder",
       "properties": {
         "Node name for S&R": "CLIPLoader"
       },
@@ -243,12 +213,12 @@
       "id": 5,
       "type": "VAELoader",
       "pos": [
-        0,
-        352
+        1300,
+        2028
       ],
       "size": [
-        390,
-        90
+        360,
+        108
       ],
       "flags": {},
       "order": 4,
@@ -265,6 +235,7 @@
           ]
         }
       ],
+      "title": "Video VAE",
       "properties": {
         "Node name for S&R": "VAELoader"
       },
@@ -276,12 +247,12 @@
       "id": 6,
       "type": "VAELoader",
       "pos": [
-        0,
-        512
+        1300,
+        2236
       ],
       "size": [
-        390,
-        90
+        360,
+        108
       ],
       "flags": {},
       "order": 5,
@@ -297,6 +268,7 @@
           ]
         }
       ],
+      "title": "Audio VAE",
       "properties": {
         "Node name for S&R": "VAELoader"
       },
@@ -308,12 +280,12 @@
       "id": 7,
       "type": "MiniMaxH3SigmaShift",
       "pos": [
-        544,
-        0
+        1300,
+        2884
       ],
       "size": [
-        300,
-        110
+        360,
+        132
       ],
       "flags": {},
       "order": 6,
@@ -335,6 +307,7 @@
           ]
         }
       ],
+      "title": "Sigma Shift",
       "properties": {
         "Node name for S&R": "MiniMaxH3SigmaShift"
       },
@@ -347,12 +320,12 @@
       "id": 8,
       "type": "MiniMaxH3ImageToVideo",
       "pos": [
-        1024,
-        0
+        1300,
+        3116
       ],
       "size": [
-        520,
-        370
+        500,
+        420
       ],
       "flags": {},
       "order": 7,
@@ -370,13 +343,11 @@
         },
         {
           "name": "first_frame",
-          "shape": 7,
           "type": "IMAGE",
           "link": null
         },
         {
           "name": "last_frame",
-          "shape": 7,
           "type": "IMAGE",
           "link": null
         }
@@ -397,6 +368,7 @@
           ]
         }
       ],
+      "title": "Image / Keyframe Conditioning",
       "properties": {
         "Node name for S&R": "MiniMaxH3ImageToVideo"
       },
@@ -411,12 +383,12 @@
       "id": 9,
       "type": "MiniMaxH3ContexMaskedAVBridge",
       "pos": [
-        1696,
-        608
+        1950,
+        180
       ],
       "size": [
-        430,
-        360
+        360,
+        300
       ],
       "flags": {},
       "order": 8,
@@ -443,51 +415,19 @@
           "link": 7
         },
         {
-          "name": "start_audio",
-          "type": "AUDIO",
-          "link": 8
-        },
-        {
           "name": "end_frames",
           "type": "IMAGE",
           "link": 9
         },
         {
+          "name": "start_audio",
+          "type": "AUDIO",
+          "link": 8
+        },
+        {
           "name": "end_audio",
           "type": "AUDIO",
           "link": 10
-        },
-        {
-          "name": "start_fps",
-          "type": "FLOAT",
-          "widget": {
-            "name": "start_fps"
-          },
-          "link": null
-        },
-        {
-          "name": "end_fps",
-          "type": "FLOAT",
-          "widget": {
-            "name": "end_fps"
-          },
-          "link": null
-        },
-        {
-          "name": "preserve_frames",
-          "type": "INT",
-          "widget": {
-            "name": "preserve_frames"
-          },
-          "link": null
-        },
-        {
-          "name": "crop",
-          "type": "COMBO",
-          "widget": {
-            "name": "crop"
-          },
-          "link": null
         }
       ],
       "outputs": [
@@ -509,6 +449,7 @@
           "links": null
         }
       ],
+      "title": "Context Masked AVBridge",
       "properties": {
         "Node name for S&R": "MiniMaxH3ContexMaskedAVBridge"
       },
@@ -517,19 +458,18 @@
         24,
         39,
         "center"
-      ],
-      "title": "MiniMax H3 Masking · Two-Clip AV Bridge — PROTECT 39F + GENERATE 114F + PROTECT 39F"
+      ]
     },
     {
       "id": 10,
       "type": "RandomNoise",
       "pos": [
-        1696,
-        0
+        1300,
+        2444
       ],
       "size": [
-        250,
-        90
+        360,
+        132
       ],
       "flags": {},
       "order": 9,
@@ -544,6 +484,7 @@
           ]
         }
       ],
+      "title": "Scene Seed",
       "properties": {
         "Node name for S&R": "RandomNoise"
       },
@@ -556,12 +497,12 @@
       "id": 11,
       "type": "BasicGuider",
       "pos": [
-        1696,
-        448
+        1950,
+        580
       ],
       "size": [
-        270,
-        90
+        360,
+        104
       ],
       "flags": {},
       "order": 10,
@@ -587,6 +528,7 @@
           ]
         }
       ],
+      "title": "Basic Guider",
       "properties": {
         "Node name for S&R": "BasicGuider"
       },
@@ -596,12 +538,12 @@
       "id": 12,
       "type": "KSamplerSelect",
       "pos": [
-        1696,
-        160
+        1300,
+        2676
       ],
       "size": [
-        270,
-        70
+        360,
+        108
       ],
       "flags": {},
       "order": 11,
@@ -616,6 +558,7 @@
           ]
         }
       ],
+      "title": "Sampler",
       "properties": {
         "Node name for S&R": "KSamplerSelect"
       },
@@ -627,12 +570,12 @@
       "id": 13,
       "type": "BasicScheduler",
       "pos": [
-        1696,
-        288
+        1950,
+        784
       ],
       "size": [
-        270,
-        110
+        360,
+        156
       ],
       "flags": {},
       "order": 12,
@@ -653,6 +596,7 @@
           ]
         }
       ],
+      "title": "Sampling Schedule",
       "properties": {
         "Node name for S&R": "BasicScheduler"
       },
@@ -666,12 +610,12 @@
       "id": 14,
       "type": "SamplerCustomAdvanced",
       "pos": [
-        2272,
-        0
+        1950,
+        1040
       ],
       "size": [
-        420,
-        360
+        360,
+        164
       ],
       "flags": {},
       "order": 13,
@@ -718,6 +662,7 @@
           "links": null
         }
       ],
+      "title": "Sample Video + Audio",
       "properties": {
         "Node name for S&R": "SamplerCustomAdvanced"
       },
@@ -727,12 +672,12 @@
       "id": 15,
       "type": "VAEDecode",
       "pos": [
-        2272,
-        416
+        2460,
+        180
       ],
       "size": [
-        260,
-        90
+        360,
+        104
       ],
       "flags": {},
       "order": 14,
@@ -758,6 +703,7 @@
           ]
         }
       ],
+      "title": "VAEDecode",
       "properties": {
         "Node name for S&R": "VAEDecode"
       },
@@ -767,12 +713,12 @@
       "id": 16,
       "type": "VAEDecodeAudio",
       "pos": [
-        2272,
-        576
+        2460,
+        384
       ],
       "size": [
-        260,
-        90
+        360,
+        104
       ],
       "flags": {},
       "order": 15,
@@ -798,6 +744,7 @@
           ]
         }
       ],
+      "title": "VAEDecode Audio",
       "properties": {
         "Node name for S&R": "VAEDecodeAudio"
       },
@@ -807,12 +754,12 @@
       "id": 17,
       "type": "TrimAudioDuration",
       "pos": [
-        2848,
-        0
+        2460,
+        588
       ],
       "size": [
-        260,
-        110
+        360,
+        132
       ],
       "flags": {},
       "order": 16,
@@ -833,6 +780,7 @@
           ]
         }
       ],
+      "title": "Trim Audio Duration",
       "properties": {
         "Node name for S&R": "TrimAudioDuration"
       },
@@ -845,12 +793,12 @@
       "id": 18,
       "type": "AudioConcat",
       "pos": [
-        2848,
-        160
+        2970,
+        180
       ],
       "size": [
-        260,
-        110
+        360,
+        128
       ],
       "flags": {},
       "order": 17,
@@ -876,6 +824,7 @@
           ]
         }
       ],
+      "title": "Audio Concat",
       "properties": {
         "Node name for S&R": "AudioConcat"
       },
@@ -887,12 +836,12 @@
       "id": 19,
       "type": "AudioConcat",
       "pos": [
-        2848,
-        352
+        2970,
+        704
       ],
       "size": [
-        260,
-        110
+        360,
+        128
       ],
       "flags": {},
       "order": 18,
@@ -918,6 +867,7 @@
           ]
         }
       ],
+      "title": "Audio Concat",
       "properties": {
         "Node name for S&R": "AudioConcat"
       },
@@ -929,12 +879,12 @@
       "id": 20,
       "type": "ImageBatchExtendWithOverlap",
       "pos": [
-        2272,
-        736
+        2460,
+        820
       ],
       "size": [
-        380,
-        150
+        360,
+        196
       ],
       "flags": {},
       "order": 19,
@@ -949,14 +899,6 @@
           "name": "new_images",
           "type": "IMAGE",
           "link": 29
-        },
-        {
-          "name": "overlap",
-          "type": "INT",
-          "widget": {
-            "name": "overlap"
-          },
-          "link": null
         }
       ],
       "outputs": [
@@ -978,6 +920,7 @@
           ]
         }
       ],
+      "title": "Image Batch Extend With Overlap",
       "properties": {
         "Node name for S&R": "ImageBatchExtendWithOverlap"
       },
@@ -991,12 +934,12 @@
       "id": 21,
       "type": "ImageBatchExtendWithOverlap",
       "pos": [
-        2272,
-        960
+        2970,
+        408
       ],
       "size": [
-        380,
-        150
+        360,
+        196
       ],
       "flags": {},
       "order": 20,
@@ -1011,14 +954,6 @@
           "name": "new_images",
           "type": "IMAGE",
           "link": 31
-        },
-        {
-          "name": "overlap",
-          "type": "INT",
-          "widget": {
-            "name": "overlap"
-          },
-          "link": null
         }
       ],
       "outputs": [
@@ -1040,6 +975,7 @@
           ]
         }
       ],
+      "title": "Image Batch Extend With Overlap",
       "properties": {
         "Node name for S&R": "ImageBatchExtendWithOverlap"
       },
@@ -1053,12 +989,12 @@
       "id": 22,
       "type": "CreateVideo",
       "pos": [
-        3264,
-        0
+        3480,
+        180
       ],
       "size": [
-        280,
-        100
+        360,
+        176
       ],
       "flags": {},
       "order": 21,
@@ -1071,17 +1007,8 @@
         },
         {
           "name": "audio",
-          "shape": 7,
           "type": "AUDIO",
           "link": 33
-        },
-        {
-          "name": "fps",
-          "type": "FLOAT",
-          "widget": {
-            "name": "fps"
-          },
-          "link": null
         }
       ],
       "outputs": [
@@ -1093,23 +1020,26 @@
           ]
         }
       ],
+      "title": "Create Video",
       "properties": {
         "Node name for S&R": "CreateVideo"
       },
       "widgets_values": [
-        24
+        24,
+        "auto",
+        "sRGB"
       ]
     },
     {
       "id": 23,
       "type": "SaveVideo",
       "pos": [
-        3264,
-        160
+        3480,
+        456
       ],
       "size": [
-        520,
-        330
+        480,
+        440
       ],
       "flags": {},
       "order": 22,
@@ -1119,38 +1049,22 @@
           "name": "video",
           "type": "VIDEO",
           "link": 34
-        },
-        {
-          "name": "filename_prefix",
-          "type": "STRING",
-          "widget": {
-            "name": "filename_prefix"
-          },
-          "link": null
-        },
-        {
-          "name": "format",
-          "type": "COMBO",
-          "widget": {
-            "name": "format"
-          },
-          "link": null
-        },
-        {
-          "name": "codec",
-          "type": "COMBO",
-          "widget": {
-            "name": "codec"
-          },
-          "link": null
         }
       ],
-      "outputs": [],
+      "outputs": [
+        {
+          "name": "video",
+          "type": "VIDEO",
+          "links": null
+        }
+      ],
+      "title": "Save Video",
       "properties": {
         "Node name for S&R": "SaveVideo"
       },
       "widgets_values": [
         "video/cc0_soldier_crabs_masked_AV_bridge",
+        "auto",
         "auto",
         "auto"
       ]
@@ -1159,26 +1073,25 @@
       "id": 24,
       "type": "Note",
       "pos": [
-        0,
-        1536
+        80,
+        180
       ],
       "size": [
-        720,
-        448
+        1000,
+        330
       ],
       "flags": {},
       "order": 23,
       "mode": 0,
       "inputs": [],
       "outputs": [],
+      "title": "START HERE • 0.6",
       "properties": {
         "Node name for S&R": "Note"
       },
       "widgets_values": [
-        "CC0 TWO-CLIP BRIDGE DEMO\n\nThe same 13.049-second source is split into frames 0–98 and 213–312, leaving exactly 114 missing 24-fps frames. The bridge target is 192 frames: 39 protected frames from Source A + 114 generated middle frames + 39 protected frames from Source B. Assembly removes both repeated protected windows, reconstructing a 313-frame timeline.\n\nSOURCE: Light-blue soldier crabs on Bribie Island (2015), Watermark Resort Caloundra, CC0 1.0.\nhttps://commons.wikimedia.org/wiki/File:Light-blue_soldier_crabs_on_Bribie_Island.webm\n\nCopy soldier_crabs_bribie_island_cc0.webm from example_workflows/assets/ to ComfyUI/input/. This prompt does not reuse Crab Rave music, footage, choreography, or branding."
-      ],
-      "color": "#345a73",
-      "bgcolor": "rgba(24,24,27,.9)"
+        "0.6 RELEASE • Masked AV Bridge - Two Clips\n\n1. Install models and extra packs listed in example_workflows/README.md.\n2. Copy the supplied assets to ComfyUI/input; select source media where requested.\n3. Check both source intervals and the bridge target length; this standalone graph does not use a Plan.\n4. Follow the numbered columns left → right and inspect the saved results.\n\nWorkflow-specific setup and detailed wiring notes:\nexample_workflows/guides/Masked AV Bridge - Two Clips - MiniMax H3 0.6.md"
+      ]
     }
   ],
   "links": [
@@ -1243,7 +1156,7 @@
       1,
       2,
       9,
-      4,
+      5,
       "AUDIO"
     ],
     [
@@ -1251,7 +1164,7 @@
       2,
       0,
       9,
-      5,
+      4,
       "IMAGE"
     ],
     [
@@ -1457,15 +1370,74 @@
   ],
   "groups": [
     {
-      "id": 1,
-      "title": "0.6 GENERATION RUNTIME",
+      "title": "01 • PROJECT & SCENES",
       "bounding": [
-        -64.0,
-        -96.0,
-        3912.0,
-        2144.0
+        40,
+        90,
+        1080,
+        460
       ],
-      "color": "#744c8c",
+      "color": "#315566",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "title": "02 • MODELS & INPUTS",
+      "bounding": [
+        1260,
+        90,
+        580,
+        3486
+      ],
+      "color": "#393f58",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "title": "03 • SAMPLE & DECODE",
+      "bounding": [
+        1910,
+        90,
+        440,
+        1154
+      ],
+      "color": "#394c49",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "title": "04 • PREPARE SCENE",
+      "bounding": [
+        2420,
+        90,
+        440,
+        966
+      ],
+      "color": "#393f58",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "title": "05 • PREPARE SCENE",
+      "bounding": [
+        2930,
+        90,
+        440,
+        782
+      ],
+      "color": "#394c49",
+      "font_size": 24,
+      "flags": {}
+    },
+    {
+      "title": "06 • DELIVER",
+      "bounding": [
+        3440,
+        90,
+        560,
+        846
+      ],
+      "color": "#393f58",
       "font_size": 24,
       "flags": {}
     }
@@ -1473,10 +1445,10 @@
   "config": {},
   "extra": {
     "ds": {
-      "scale": 0.55,
+      "scale": 0.65,
       "offset": [
-        320.0,
-        160.0
+        30,
+        0
       ]
     },
     "comfyui_mcp": {

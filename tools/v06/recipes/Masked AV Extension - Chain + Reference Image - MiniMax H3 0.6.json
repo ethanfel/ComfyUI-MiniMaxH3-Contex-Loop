@@ -1,0 +1,689 @@
+{
+  "nodes": [
+    {
+      "key": "n1",
+      "type": "UNETLoader",
+      "settings": {
+        "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      },
+      "inputs": {},
+      "label": "Load Diffusion Model — H3 MODEL — REQUIRED"
+    },
+    {
+      "key": "n2",
+      "type": "CLIPLoader",
+      "settings": {
+        "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "type": "minimax",
+        "device": "default"
+      },
+      "inputs": {},
+      "label": "Load CLIP — H3 TEXT ENCODER"
+    },
+    {
+      "key": "n3",
+      "type": "KSamplerSelect",
+      "settings": {
+        "sampler_name": "res_multistep"
+      },
+      "inputs": {},
+      "label": "KSamplerSelect — Sampler algorithm"
+    },
+    {
+      "key": "n4",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+      },
+      "inputs": {},
+      "label": "Load VAE — H3 Video VAE"
+    },
+    {
+      "key": "n5",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+      },
+      "inputs": {},
+      "label": "Load VAE — H3 Audio VAE"
+    },
+    {
+      "key": "n6",
+      "type": "Note",
+      "settings": {
+        "text": "REF2VA PROMPT FORMAT — SIX SECTIONS\n\n1. subject_definitions:\n2. summary:\n3. retention_analysis:\n4. detailed_description:\n5. overall_soundscape:\n6. non_diegetic_music:\n\nWrite stable @tags in the Plan. Tagged Ref2VA activates only registered @tags present in the resolved scene prompt and compiles them to native <Picture N> labels; it does not insert definitions for you."
+      },
+      "inputs": {},
+      "label": "Note — REF2VA SIX-SECTION PROMPT FORMAT"
+    },
+    {
+      "key": "n9",
+      "type": "MiniMaxH3ChainLoopStart",
+      "settings": {
+        "start_clip": 1,
+        "scene_range": "",
+        "verify_resume_history": true
+      },
+      "inputs": {
+        "plan": [
+          "n36",
+          "plan"
+        ],
+        "external_context": [
+          "n40",
+          "external_context"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Start — LOOP START / RESUME"
+    },
+    {
+      "key": "n12",
+      "type": "MiniMaxH3ChainCurrent",
+      "settings": {
+        "align_audio_reference": false
+      },
+      "inputs": {
+        "state": [
+          "n9",
+          "state"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Current Shot — CURRENT REF2V SCENE — PROMPT / SEED / TIMING"
+    },
+    {
+      "key": "n13",
+      "type": "MiniMaxH3ChainAssemble",
+      "settings": {
+        "audio_source": "plan",
+        "filename": "cc0_soldier_crabs_ref2va_extension_recovered_%date:yyyy-MM-dd%",
+        "audio_bitrate": 256,
+        "copy_to_output": false,
+        "output_subfolder": "",
+        "blend_schedule": "plan",
+        "boundary_tone_match": "off",
+        "color_stabilization": "off"
+      },
+      "inputs": {
+        "manifest": [
+          "n30",
+          "manifest"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Assemble — RECOVERY: ASSEMBLE WITHOUT RENDERING",
+      "mode": 2
+    },
+    {
+      "key": "n15",
+      "type": "RandomNoise",
+      "settings": {
+        "noise_seed": 0,
+        "control_after_generate": "fixed"
+      },
+      "inputs": {
+        "noise_seed": [
+          "n12",
+          "noise_seed"
+        ]
+      },
+      "label": "RandomNoise — Per-shot noise seed"
+    },
+    {
+      "key": "n16",
+      "type": "MiniMaxH3TaggedReferenceToVideo",
+      "settings": {
+        "clip_index": 1,
+        "clip_count": 2,
+        "prompt": "subject_definitions:\n@crabs is the reference image for <Subject 1>, defining the real light-blue soldier crabs, blue-grey carapaces, tan jointed legs, dark eye stalks, natural scale, damp beach sand, low camera height, cloudy coastal light, distant shoreline, and photographic wildlife-documentary realism.\n<Subject 1> is the same colony of light-blue soldier crabs established by @crabs and the incoming protected audiovisual prefix.\n\nsummary:\n[video continuation + reference generation] The target continues the imported soldier-crab footage as one uninterrupted low-angle documentary shot, using @crabs only to stabilize species appearance while the incoming protected prefix controls current pose, motion, camera, light, environment, and timing.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - retain the colony's real anatomy, blue-grey shells, tan legs, eye stalks, scale variation, natural gait, and separation between individual crabs.\n@crabs: fully_preserved - retain its species appearance, sand-level viewpoint, cloudy coastal palette, shallow depth of field, and naturalistic photographic texture without pulling the moving crabs back to the still pose.\n\ndetailed_description:\n[Shot 1] Continue directly from the protected ending of the imported source video with no cut, reset, repeated action, or re-establishment. The same <Subject 1> crabs already crossing the damp sand complete their current steps at the same speed. The camera remains only a few centimeters above the beach and continues its gentle rightward drift. Foreground crabs pass close to the lens while smaller animals remain readable in the middle distance; preserve correct occlusion and never merge or duplicate bodies.\n\nThe densest part of the colony gradually turns toward a narrow reflective strip of wet sand. One foreground crab pauses, raises its carapace slightly, then sidesteps around another animal as the rest continue flowing behind it. A shallow ripple approaches from frame left, darkening the sand without becoming a dramatic wave. The crabs react independently with quick lateral adjustments, then resume their forward movement. Keep the shoreline buildings and heavy cloud layer stable in the distance. End with the camera and colony still moving right so the next extension inherits active motion rather than a held pose.\n\noverall_soundscape:\nContinue the source beach ambience without a seam: steady coastal wind, soft distant surf, faint water movement, and subtle leg clicks and sand scratches close to the microphone.\n\nnon_diegetic_music:\nN/A",
+        "width": 960,
+        "height": 544,
+        "length": 192,
+        "ref_image_size": "match",
+        "reference_policy": "strict",
+        "semantic_anchor_size": "512",
+        "semantic_anchor_mode": "timestamped_video",
+        "cache_for_upscale": true,
+        "conditioning_backend": "native_ref2va"
+      },
+      "inputs": {
+        "clip": [
+          "n2",
+          "CLIP"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ],
+        "audio_vae": [
+          "n5",
+          "VAE"
+        ],
+        "references": [
+          "n42",
+          "references"
+        ],
+        "clip_index": [
+          "n12",
+          "clip_index"
+        ],
+        "clip_count": [
+          "n12",
+          "clip_count"
+        ],
+        "prompt": [
+          "n12",
+          "prompt"
+        ],
+        "width": [
+          "n12",
+          "width"
+        ],
+        "height": [
+          "n12",
+          "height"
+        ],
+        "length": [
+          "n12",
+          "length"
+        ]
+      },
+      "label": "MiniMax H3 Tagged Ref2VA — TAGGED REF2VA — @crabs + MASKED AV PREFIX"
+    },
+    {
+      "key": "n17",
+      "type": "MiniMaxH3ChainContext",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n12",
+          "state"
+        ],
+        "conditioning": [
+          "n16",
+          "positive"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ],
+        "latent": [
+          "n16",
+          "latent"
+        ],
+        "audio_vae": [
+          "n5",
+          "VAE"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Context — MASKED AV CONTEXT — PRESERVE PREFIX / GENERATE FUTURE"
+    },
+    {
+      "key": "n18",
+      "type": "MiniMaxH3SigmaShift",
+      "settings": {
+        "shift_video": 12,
+        "shift_audio": 3
+      },
+      "inputs": {
+        "model": [
+          "n29",
+          "MODEL"
+        ]
+      }
+    },
+    {
+      "key": "n21",
+      "type": "BasicGuider",
+      "settings": {},
+      "inputs": {
+        "model": [
+          "n18",
+          "MODEL"
+        ],
+        "conditioning": [
+          "n17",
+          "conditioning"
+        ]
+      },
+      "label": "Basic Guider — Loop guider"
+    },
+    {
+      "key": "n22",
+      "type": "BasicScheduler",
+      "settings": {
+        "scheduler": "simple",
+        "steps": 20,
+        "denoise": 1
+      },
+      "inputs": {
+        "model": [
+          "n18",
+          "MODEL"
+        ],
+        "steps": [
+          "n12",
+          "steps"
+        ]
+      },
+      "label": "BasicScheduler — Per-shot scheduler steps"
+    },
+    {
+      "key": "n23",
+      "type": "SamplerCustomAdvanced",
+      "settings": {},
+      "inputs": {
+        "noise": [
+          "n15",
+          "NOISE"
+        ],
+        "guider": [
+          "n21",
+          "GUIDER"
+        ],
+        "sampler": [
+          "n3",
+          "SAMPLER"
+        ],
+        "sigmas": [
+          "n22",
+          "SIGMAS"
+        ],
+        "latent_image": [
+          "n17",
+          "latent"
+        ]
+      },
+      "label": "SamplerCustomAdvanced — H3 sampler — SINGLE LOOP BODY"
+    },
+    {
+      "key": "n24",
+      "type": "VAEDecode",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n23",
+          "output"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ]
+      },
+      "label": "VAE Decode — Decode current clip frames"
+    },
+    {
+      "key": "n25",
+      "type": "VAEDecodeAudio",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n23",
+          "output"
+        ],
+        "vae": [
+          "n5",
+          "VAE"
+        ]
+      },
+      "label": "VAE Decode Audio — Decode current clip audio"
+    },
+    {
+      "key": "n26",
+      "type": "MiniMaxH3LoopTrim",
+      "settings": {
+        "trim_frames": 0,
+        "fps": 24,
+        "match_tail": true,
+        "retain_overlap_frames": 39
+      },
+      "inputs": {
+        "images": [
+          "n24",
+          "IMAGE"
+        ],
+        "audio": [
+          "n25",
+          "AUDIO"
+        ],
+        "trim_frames": [
+          "n17",
+          "trim_frames"
+        ],
+        "state": [
+          "n12",
+          "state"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Trim — TRIM CONTEXT / AUTO-RESOLVE SCENE BLEND"
+    },
+    {
+      "key": "n27",
+      "type": "MiniMaxH3ChainSegmentSave",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n12",
+          "state"
+        ],
+        "images": [
+          "n26",
+          "images"
+        ],
+        "sampled_latent": [
+          "n23",
+          "output"
+        ],
+        "audio": [
+          "n26",
+          "audio"
+        ],
+        "images_with_overlap": [
+          "n26",
+          "images_with_overlap"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Segment + Checkpoint — SAVE DELIVERED + BLEND-READY SEGMENTS"
+    },
+    {
+      "key": "n28",
+      "type": "MiniMaxH3ChainAssemble",
+      "settings": {
+        "audio_source": "plan",
+        "filename": "cc0_soldier_crabs_ref2va_extension_%date:yyyy-MM-dd%",
+        "audio_bitrate": 256,
+        "copy_to_output": false,
+        "output_subfolder": "",
+        "blend_schedule": "plan",
+        "boundary_tone_match": "off",
+        "color_stabilization": "off"
+      },
+      "inputs": {
+        "manifest": [
+          "n34",
+          "manifest"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Assemble — FINAL ASSEMBLY — 5-FRAME VISUAL BLEND"
+    },
+    {
+      "key": "n29",
+      "type": "ModelAttentionBackend",
+      "settings": {
+        "attention": "pytorch attention"
+      },
+      "inputs": {
+        "model": [
+          "n1",
+          "MODEL"
+        ]
+      },
+      "label": "ModelAttentionBackend — COMFY KITCHEN ATTENTION"
+    },
+    {
+      "key": "n30",
+      "type": "MiniMaxH3ChainManifestLoad",
+      "settings": {},
+      "inputs": {
+        "plan": [
+          "n36",
+          "plan"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Load Manifest — RECOVERY: LOAD ALL SAVED CLIPS",
+      "mode": 2
+    },
+    {
+      "key": "n31",
+      "type": "Note",
+      "settings": {
+        "text": "The two amber recovery nodes are MUTED by default.\n\nIf all segments finished but final assembly did not, mute the main green Assemble node, enable both recovery nodes, and queue. They validate every SHA-256 checkpoint pair and assemble without rerendering the completed clips.\n\nFor an interrupted generation, leave recovery muted and set Loop Start's start_clip to the first unfinished clip."
+      },
+      "inputs": {},
+      "label": "Note — RECOVERY / ASSEMBLE LATER"
+    },
+    {
+      "key": "n32",
+      "type": "Note",
+      "settings": {
+        "text": "SOFT AV EXTENSION — THREE-SCENE LOOP + REFERENCE IMAGE\n\nThe source video's last 39 frames/65 audio steps protect scene 1. Soft AV keeps each picture prefix hard while releasing only the final eight audio ticks with a half-cosine feather. Each accepted generated scene then supplies the protected prefix for the next loop iteration. @crabs is active in all three prompts only as identity/appearance guidance; the incoming latent prefix remains authoritative for pose, motion, camera, light, and audio timing. Loop Trim retains all 39 repeated visual frames for linear seam blending, and the original source is prepended once during final assembly."
+      },
+      "inputs": {},
+      "label": "Note — REF2V STUDIO TAGGED — HOW TO USE"
+    },
+    {
+      "key": "n33",
+      "type": "MiniMaxH3ChainReview",
+      "settings": {
+        "enabled": true,
+        "play_notification_sound": false,
+        "auto_continue_timeout_minutes": 0,
+        "unload_models_while_waiting": false,
+        "assemble_partial_on_stop": true,
+        "partial_audio_source": "checkpointed",
+        "candidate_count": 1,
+        "review_each_candidate": false
+      },
+      "inputs": {
+        "state": [
+          "n12",
+          "state"
+        ],
+        "segment": [
+          "n27",
+          "segment"
+        ],
+        "audio": [
+          "n26",
+          "audio"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Review Gate — REVIEW GATE — APPROVE / EDIT+RETRY / REROLL / STOP"
+    },
+    {
+      "key": "n34",
+      "type": "MiniMaxH3ChainLoopEnd",
+      "settings": {
+        "between_scene_cleanup": "off"
+      },
+      "inputs": {
+        "flow": [
+          "n9",
+          "flow"
+        ],
+        "state": [
+          "n12",
+          "state"
+        ],
+        "images": [
+          "n26",
+          "images"
+        ],
+        "sampled_latent": [
+          "n23",
+          "output"
+        ],
+        "segment": [
+          "n33",
+          "segment"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop End — LOOP END — ADVANCE REF2V SCENE"
+    },
+    {
+      "key": "n35",
+      "type": "Note",
+      "settings": {
+        "text": "SOURCE ASSETS — CC0\n\nThe bundled 2015 soldier-crab WebM is CC0 1.0, as recorded by Wikimedia Commons. The PNG is one frame extracted from that same CC0 video.\n\nhttps://commons.wikimedia.org/wiki/File:Light-blue_soldier_crabs_on_Bribie_Island.webm\n\nCopy both soldier_crabs_bribie_island_cc0.webm and soldier_crabs_reference_cc0.png from example_workflows/assets/ to ComfyUI/input/. Prompts are original and do not reuse Crab Rave."
+      },
+      "inputs": {},
+      "label": "Note — REF2V PROMPT / IMAGE SOURCE"
+    },
+    {
+      "key": "n36",
+      "type": "MiniMaxH3ChainPlanStudio",
+      "settings": {
+        "start_clip": 1,
+        "scene_range": "",
+        "verify_resume_history": true,
+        "plan_json": "{\n  \"shots\": [\n    {\n      \"id\": \"intro\",\n      \"prompt\": \"Describe the opening shot.\"\n    },\n    {\n      \"id\": \"continuation\",\n      \"prompt\": \"Continue the same take.\"\n    }\n  ]\n}",
+        "run_name": "h3_chain",
+        "generation_fingerprint": "",
+        "width": 960,
+        "height": 544,
+        "context_length": 22,
+        "encode_mode": "video",
+        "anchor_mode": "head",
+        "crop": "disabled",
+        "audio_mode": "generated_audio",
+        "audio_context_length": 22,
+        "default_duration_seconds": 15.0,
+        "default_steps": 20,
+        "base_seed": 0,
+        "segment_crf": 18,
+        "video_blend_frames": 0,
+        "continuation_mode": "guide",
+        "alternate_take_json": ""
+      },
+      "inputs": {
+        "plan": [
+          "n38",
+          "plan"
+        ],
+        "tagged_references": [
+          "n42",
+          "references"
+        ],
+        "project_assets": [
+          "n42",
+          "project_assets"
+        ]
+      },
+      "label": "MiniMax H3 Plan Studio — TIMELINE / TAKES / TRIMS"
+    },
+    {
+      "key": "n37",
+      "type": "MiniMaxH3ChainRichScenePromptEditor",
+      "settings": {},
+      "inputs": {
+        "plan": [
+          "n36",
+          "plan"
+        ]
+      }
+    },
+    {
+      "key": "n38",
+      "type": "MiniMaxH3ChainPlanModern",
+      "settings": {
+        "plan_json": "{\n  \"prompt_prefix\": \"\",\n  \"shots\": [\n    {\n      \"id\": \"tidal_edge\",\n      \"prompt\": \"subject_definitions:\\n@crabs is the reference image for <Subject 1>, defining the real light-blue soldier crabs, blue-grey carapaces, tan jointed legs, dark eye stalks, natural scale, damp beach sand, low camera height, cloudy coastal light, distant shoreline, and photographic wildlife-documentary realism.\\n<Subject 1> is the same colony of light-blue soldier crabs established by @crabs and the incoming protected audiovisual prefix.\\n\\nsummary:\\n[video continuation + reference generation] The target continues the imported soldier-crab footage as one uninterrupted low-angle documentary shot, using @crabs only to stabilize species appearance while the incoming protected prefix controls current pose, motion, camera, light, environment, and timing.\\n\\nretention_analysis:\\n<Subject 1> (appears in [Shot 1]): fully_preserved - retain the colony's real anatomy, blue-grey shells, tan legs, eye stalks, scale variation, natural gait, and separation between individual crabs.\\n@crabs: fully_preserved - retain its species appearance, sand-level viewpoint, cloudy coastal palette, shallow depth of field, and naturalistic photographic texture without pulling the moving crabs back to the still pose.\\n\\ndetailed_description:\\n[Shot 1] Continue directly from the protected ending of the imported source video with no cut, reset, repeated action, or re-establishment. The same <Subject 1> crabs already crossing the damp sand complete their current steps at the same speed. The camera remains only a few centimeters above the beach and continues its gentle rightward drift. Foreground crabs pass close to the lens while smaller animals remain readable in the middle distance; preserve correct occlusion and never merge or duplicate bodies.\\n\\nThe densest part of the colony gradually turns toward a narrow reflective strip of wet sand. One foreground crab pauses, raises its carapace slightly, then sidesteps around another animal as the rest continue flowing behind it. A shallow ripple approaches from frame left, darkening the sand without becoming a dramatic wave. The crabs react independently with quick lateral adjustments, then resume their forward movement. Keep the shoreline buildings and heavy cloud layer stable in the distance. End with the camera and colony still moving right so the next extension inherits active motion rather than a held pose.\\n\\noverall_soundscape:\\nContinue the source beach ambience without a seam: steady coastal wind, soft distant surf, faint water movement, and subtle leg clicks and sand scratches close to the microphone.\\n\\nnon_diegetic_music:\\nN/A\",\n      \"length\": 192,\n      \"steps\": 20,\n      \"seed\": \"24051511\"\n    },\n    {\n      \"id\": \"channel_crossing\",\n      \"prompt\": \"subject_definitions:\\n@crabs is the continuity image for <Subject 1>, preserving the real light-blue soldier-crab anatomy, blue-grey shells, tan legs, eye stalks, natural scale, damp sand, low wildlife-camera viewpoint, cloudy coastal light, and documentary texture.\\n<Subject 1> is the same moving colony inherited from the protected audiovisual prefix and stabilized by @crabs.\\n\\nsummary:\\n[video continuation + reference generation] The uninterrupted sand-level shot follows <Subject 1> as the colony reorganizes around a shallow tidal channel while retaining the incoming movement and sound.\\n\\nretention_analysis:\\n<Subject 1> (appears in [Shot 1]): fully_preserved - preserve identity as a natural colony, correct crab anatomy, individual trajectories, gait phase, scale, and spatial separation across the continuation.\\n@crabs: fully_preserved - preserve species detail, beach palette, natural lens character, and low composition without copying its static arrangement.\\n\\ndetailed_description:\\n[Shot 1] Continue the exact motion already in progress from the protected H3 prefix. Do not restart the crabs from rest or reset the camera. The low camera keeps drifting right as <Subject 1> reaches the reflective tidal strip established at the end of the previous scene. The leading crabs descend the slight sand lip one by one, their legs touching the thin water layer and making small circular ripples. Animals behind them fan into two natural streams around a raised patch of sand.\\n\\nThe camera makes a slow, shallow push forward while maintaining its sand-level height. Focus transfers gradually from one large foreground crab to the moving cluster beyond it; the foreground animal crosses out of frame rather than vanishing. A breeze presses faint patterns into the shallow water. Several crabs briefly align in lateral motion, then separate naturally as they climb the opposite lip. Preserve the distant buildings, cloud direction, soft daylight, and realistic motion blur. End while the rear group is still entering the water and the leading group is climbing, leaving both near and far motion available to the next extension.\\n\\noverall_soundscape:\\nCarry the same wind and surf continuously. Add only synchronized delicate water taps, tiny splashes, shell clicks, and wet sand scratches caused by the visible crossing.\\n\\nnon_diegetic_music:\\nN/A\",\n      \"length\": 192,\n      \"steps\": 20,\n      \"seed\": \"24051512\"\n    },\n    {\n      \"id\": \"firm_sand\",\n      \"prompt\": \"subject_definitions:\\n@crabs is the continuity image for <Subject 1>, defining the real soldier-crab species, blue-grey shells, tan articulated legs, dark eye stalks, beach scale, cloudy natural light, low camera placement, and wildlife-documentary realism.\\n<Subject 1> is the same colony continuing from the protected audiovisual prefix, with no replacement animals or stylized redesign.\\n\\nsummary:\\n[video continuation + reference generation] The continuous documentary shot completes the tidal crossing and follows <Subject 1> onto firm sand, where their lateral paths form a brief natural visual rhythm before dispersing.\\n\\nretention_analysis:\\n<Subject 1> (appears in [Shot 1]): fully_preserved - retain correct anatomy, shell color, gait, individual continuity, scale, and non-anthropomorphic behavior.\\n@crabs: fully_preserved - retain the source species, beach environment, cloudy palette, shallow focus, and photographic realism while allowing new movement.\\n\\ndetailed_description:\\n[Shot 1] Continue immediately from the protected prefix with the leading <Subject 1> crabs already climbing out of the shallow tidal strip and the rear group still crossing. Preserve every visible action phase, the low rightward camera drift, focus distance, light direction, shoreline geography, and damp-sand texture. The camera eases backward slightly to reveal a broader section of the colony without jumping or cutting.\\n\\nAs the crabs reach firmer sand, several parallel paths create a short wave of coordinated lateral movement across the frame. The rhythm remains entirely natural: no upright dancing, human gestures, impossible jumps, or synchronized cloning. One large crab passes close to the lens, briefly filling the lower-right foreground before revealing dozens of smaller moving silhouettes behind it. Wind ruffles a thin film of water and a brighter break in the clouds gives the shells a restrained blue sheen. The colony gradually disperses across the beach while the camera slows but does not freeze. End on a stable wide low-angle composition with multiple crabs still moving and the original beach ambience intact.\\n\\noverall_soundscape:\\nContinue the coastal wind, distant surf, shallow-water movement, small shell clicks, and layered sand scratches at consistent level and perspective. No speech or abrupt synthetic sound.\\n\\nnon_diegetic_music:\\nN/A\",\n      \"length\": 192,\n      \"steps\": 20,\n      \"seed\": \"24051513\"\n    }\n  ]\n}",
+        "run_name": "masked_av_extension_chain_reference_image_minimax_h3_0_6_json",
+        "generation_fingerprint": "h3-v06-release-example",
+        "width": 960,
+        "height": 544,
+        "encode_mode": "video",
+        "crop": "disabled",
+        "default_duration_seconds": 8.0,
+        "default_steps": 20,
+        "base_seed": 0,
+        "segment_crf": 20,
+        "video_blend_frames": 39
+      },
+      "inputs": {
+        "chain_policy": [
+          "n41",
+          "chain_policy"
+        ],
+        "project_assets": [
+          "n42",
+          "project_assets"
+        ]
+      },
+      "label": "MiniMax H3 Production Plan — 0.6 SCENE COLUMNS"
+    },
+    {
+      "key": "n39",
+      "type": "VHS_LoadVideo",
+      "settings": {
+        "video": "soldier_crabs_bribie_island_cc0.webm",
+        "force_rate": 24,
+        "custom_width": 960,
+        "custom_height": 544,
+        "frame_load_cap": 0,
+        "skip_first_frames": 0,
+        "select_every_nth": 1,
+        "format": "AnimateDiff"
+      },
+      "inputs": {},
+      "label": "Load Video (Upload) 🎥🅥🅗🅢 — CC0 SOLDIER CRABS SOURCE VIDEO"
+    },
+    {
+      "key": "n40",
+      "type": "MiniMaxH3ChainExternalVideo",
+      "settings": {
+        "source_fps": 24,
+        "prepend_original": true
+      },
+      "inputs": {
+        "plan": [
+          "n36",
+          "plan"
+        ],
+        "source_frames": [
+          "n39",
+          "IMAGE"
+        ],
+        "source_audio": [
+          "n39",
+          "audio"
+        ]
+      },
+      "label": "MiniMax H3 Existing Video Context — CC0 SOURCE VIDEO → MASKED SCENE 1 PREFIX"
+    },
+    {
+      "key": "n41",
+      "type": "MiniMaxH3GenerationProfile",
+      "settings": {
+        "scene_continuity": "Hard picture + smooth audio",
+        "audio_profile": "Generate audio"
+      },
+      "inputs": {},
+      "label": "MiniMax H3 Generation Profile — RELEASE DEFAULTS"
+    },
+    {
+      "key": "n42",
+      "type": "MiniMaxH3ProjectAssetManager",
+      "settings": {
+        "run_name": "masked_av_extension_chain_reference_image_minimax_h3_0_6_json",
+        "catalog_json": "",
+        "semantic_anchor_size": "512",
+        "semantic_anchor_mode": "timestamped_video",
+        "operation_json": ""
+      },
+      "inputs": {},
+      "label": "MiniMax H3 Project Asset Carousel — IMPORT RELEASE REFERENCES"
+    },
+    {
+      "key": "n43",
+      "type": "MiniMaxH3ChainCheckpointManager",
+      "settings": {
+        "selection_json": ""
+      },
+      "inputs": {
+        "plan": [
+          "n36",
+          "plan"
+        ]
+      },
+      "label": "MiniMax H3 Checkpoint Manager — BRANCHES / PREVIEWS / RESTORE"
+    },
+    {
+      "key": "n44",
+      "type": "Note",
+      "settings": {
+        "text": "0.6 Studio quick start\n\n1. Open the Project Asset Carousel.\n2. Import soldier_crabs_reference_cc0.png; tag crabs (Picture).\n3. Edit scenes in Production Plan or Plan Studio.\n4. Queue; inspect, branch, trim, or restore in Checkpoint Manager."
+      },
+      "inputs": {},
+      "label": "0.6 STUDIO QUICK START"
+    }
+  ]
+}
