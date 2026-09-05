@@ -79,11 +79,13 @@ def comparable_plan(plan):
 
 def validate_sampling_defaults(path):
     workflow = load(path)
+    pixel = any(item.get("type") == "MiniMaxH3ChainUpscalePixelConditioning"
+                for item in workflow.get("nodes", []))
     for item in workflow.get("nodes", []):
         identity = "%s %s %s" % (
             item.get("type", ""), item.get("title", ""),
             json.dumps(item.get("widgets_values", [])))
-        assert not (
+        assert pixel or not (
             item.get("type") == "LoraLoaderModelOnly"
             and ("lightx" in identity.lower()
                  or "turbo" in identity.lower())), path.name
@@ -91,9 +93,9 @@ def validate_sampling_defaults(path):
             "%s %s" % (item.get("type", ""), item.get("title", ""))
         ).lower(), (path.name, item.get("type"))
         if item.get("type") == "KSamplerSelect":
-            assert item["widgets_values"] == ["res_multistep"], path.name
+            assert item["widgets_values"] == (["er_sde"] if pixel else ["res_multistep"]), path.name
         elif item.get("type") == "BasicScheduler":
-            assert item["widgets_values"][:2] == ["simple", 20], path.name
+            assert item["widgets_values"][:2] == (["beta", 3] if pixel else ["simple", 20]), path.name
         elif item.get("type") == "H3InjectSchedule":
             assert item["widgets_values"][:2] == ["simple", 20], path.name
         elif item.get("type") == "MiniMaxH3ChainPlan":
@@ -1119,6 +1121,8 @@ def main():
         EXAMPLES / "Ref2V Sequential Motion - EXPERIMENTAL - MiniMax H3.json")
     deferred_upscale_path = (
         EXAMPLES / "Deferred Upscale - H3 LBH 3D - MiniMax H3.json")
+    pixel_upscale_path = (
+        EXAMPLES / "Deferred Upscale - Pixel DLSS5 + USDU - EXPERIMENTAL - MiniMax H3.json")
     deferred_derope_path = (
         EXAMPLES /
         "Deferred Upscale + De-Rope - H3 LBH 3D - MiniMax H3.json")
@@ -1143,6 +1147,7 @@ def main():
         ref2v_source_audio_path.name,
         sequential_path.name,
         deferred_upscale_path.name,
+        pixel_upscale_path.name,
         deferred_derope_path.name,
         seedvr2_full_chain_path.name,
         masked_inpaint_path.name,
@@ -1155,7 +1160,8 @@ def main():
         workflow = load(path)
         if path in {
                 deferred_upscale_path, deferred_derope_path,
-                seedvr2_full_chain_path}:
+                seedvr2_full_chain_path, pixel_upscale_path}:
+            validate_links(workflow)
             continue
         if path == masked_bridge_path:
             validate_links(workflow)
@@ -1354,9 +1360,9 @@ def main():
             sequential, masked_inpaint, masked_ref_inpaint,
             masked_single_extension,
             masked_chain_extension, masked_bridge, deferred_upscale,
-            deferred_derope, seedvr2_full_chain)
+            deferred_derope, seedvr2_full_chain, load(pixel_upscale_path))
     }
-    assert len(uuids) == 18
+    assert len(uuids) == 19
 
     asset = EXAMPLES / "assets" / "jigen_market_garden_doom_opening.png"
     assert asset.is_file()

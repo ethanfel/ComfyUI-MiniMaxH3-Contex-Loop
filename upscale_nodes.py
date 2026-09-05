@@ -51,7 +51,7 @@ class _AnyStateType(str):
 DEROPE_STATE_TYPE = _AnyStateType(
     "H3_CHAIN_UPSCALE_STATE,H3_CHAIN_STATE")
 
-UPSCALE_BACKENDS = ("h3_latent", "ltx_2_5", "custom")
+UPSCALE_BACKENDS = ("h3_latent", "ltx_2_5", "custom", "pixel")
 CONDITIONING_SYNC_METHODS = (
     "nearest", "nearest-exact", "bilinear", "bicubic")
 MOTION_REFERENCE_MODES = (
@@ -637,7 +637,8 @@ def _conditioning_from_tagged_upscale_override(
         state: dict[str, Any], clip: Any, video_vae: Any, audio_vae: Any,
         references: Any, prompt: str, ref_image_size: str,
         motion_ref_mode: str, reference_policy: str,
-        target_video_latent: Any = None) -> tuple[Any, str, str]:
+        target_video_latent: Any = None,
+        target_size: tuple[int, int] | None = None) -> tuple[Any, str, str]:
     """Build one coherent live Ref2VA payload for a deferred upscale scene."""
     source = _source_segment(state)
     manifest = state["source_manifest"]
@@ -649,6 +650,8 @@ def _conditioning_from_tagged_upscale_override(
     height = int(compatibility.get("height", 0))
     if target_video_latent is not None:
         _video, width, height = _target_video_geometry(target_video_latent)
+    elif target_size is not None:
+        width, height = target_size
 
     compiled, summary, bindings = chain._compile_tagged_reference_prompt(
         references, scene, scene_count, prompt, reference_policy)
@@ -735,7 +738,8 @@ def _conditioning_from_tagged_upscale_override(
     conditioning = _mark_h3_upscale_motion_policy(
         conditioning, motion_ref_mode, ref_image_size,
         picture_refs_target_sized=bool(
-            target_video_latent is not None and ref_image_size == "match"))
+            (target_video_latent is not None or target_size is not None)
+            and ref_image_size == "match"))
     if slice_details:
         summary += "; " + "; ".join(slice_details)
     status = (
@@ -785,6 +789,11 @@ def _latent_checkpoint_tensors(latent: dict[str, Any]) -> tuple[dict[str, Any], 
 
 
 def _next_drift_context_steps(state: dict[str, Any], index: int) -> int:
+    # Pixel refinement keeps the RAW image clock but does not splice latent
+    # prefixes. Do not demand an unused HQ latent just because the parent used
+    # Drift-Control. All pre-existing backends retain their safety contract.
+    if state.get("profile_config", {}).get("backend") == "pixel":
+        return 0
     total = len(state["source_manifest"].get("segments") or ())
     if int(index) >= total:
         return 0
@@ -805,6 +814,8 @@ def _load_previous_upscaled_context(
         state: dict[str, Any], start_clip: int) -> tuple[dict[str, Any] | None,
                                                         str]:
     """Restore the prior HQ video tail for a resumed Drift-Control scene."""
+    if state.get("profile_config", {}).get("backend") == "pixel":
+        return None, "pixel refinement; no HQ latent continuity required"
     steps = _drift_prefix_steps(state, int(start_clip))
     if steps <= 0 or int(start_clip) <= 1:
         return None, "no resumed Drift-Control context required"
@@ -940,8 +951,10 @@ class MiniMaxH3ChainUpscaleAdapter:
                     "tooltip": "Child output folder under this run's upscaled directory."}),
                 "backend": (list(UPSCALE_BACKENDS), {
                     "default": "h3_latent",
-                    "tooltip": "Provenance label for this child recipe. It does "
-                               "not constrain which nodes you place in the loop."}),
+                    "tooltip": "Backend label for this child recipe. pixel is "
+                               "an experimental IMAGE-only pass: it does not "
+                               "require or splice Drift-Control HQ latents. "
+                               "Other backends retain latent continuity checks."}),
                 "recipe_json": ("STRING", {
                     "default": "{}", "multiline": True,
                     "tooltip": "Advanced, provenance-only backend/model/sigma "
@@ -1108,6 +1121,63 @@ class MiniMaxH3ChainUpscaleCurrent:
                 str(source.get("prompt") or ""), width, height, seed, trim,
                 raw, delivered, audio, state.get("previous_frames"),
                 state.get("previous_latent"), status)
+
+
+class MiniMaxH3ChainUpscalePixelCurrent:
+    """Decode one verified RAW scene, without a joint-AV decode wire."""
+
+    EXPERIMENTAL = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {
+            "state": (UPSCALE_STATE_TYPE, {
+                "tooltip": "Upscale Adapter state with backend=pixel. Source "
+                           "checkpoints and scene clocks remain unchanged."}),
+            "video_vae": ("VAE", {
+                "tooltip": "MiniMax H3 video VAE to decode one saved clean "
+                           "video latent, including its repeated RAW prefix."}),
+        }}
+
+    RETURN_TYPES = (UPSCALE_STATE_TYPE, "IMAGE", "AUDIO", "STRING", "INT",
+                    "INT", "INT", "INT", "STRING")
+    RETURN_NAMES = ("state", "images", "source_audio", "prompt", "seed",
+                    "clip_index", "raw_frames", "trim_frames", "status")
+    OUTPUT_TOOLTIPS = (
+        "Verified current state for conditioning, Segment Save and Loop End.",
+        "One complete RAW scene. Upscale/refine these frames without changing "
+        "their count; Segment Save removes the repeated head exactly once.",
+        "Delivered saved scene audio, or None for a silent source. For preview "
+        "only: Segment Save preserves this audio automatically. Do not wire "
+        "it to recovered_audio (RAW) or Assemble source_audio (whole run).",
+        "Original saved scene prompt.", "Original saved scene seed.",
+        "One-based scene index.", "Expected RAW frame count.",
+        "Repeated head frame count removed by Segment Save.",
+        "Decode route and exact RAW/delivered clock.",
+    )
+    FUNCTION = "current"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
+    DESCRIPTION = (
+        "Experimental pixel-upscale scene reader. Decodes the saved clean "
+        "VIDEO stream and recovers the original delivered audio separately. "
+        "Use any IMAGE upscaler, then pixel conditioning and image refinement. "
+        "No full-chain video allocation or upscaled latent is needed.")
+
+    def current(self, state, video_vae):
+        if state.get("profile_config", {}).get("backend") != "pixel":
+            raise ValueError("Pixel Current Scene requires Upscale Adapter backend=pixel.")
+        current = MiniMaxH3ChainUpscaleCurrent().current(state)
+        images, _buffer, route = chain._decode_checkpoint_video_for_streaming(
+            video_vae, current[2]["samples"], "memory", "")
+        if tuple(images.shape) != (current[11], current[8], current[7], 3):
+            raise ValueError(
+                "Pixel Current Scene decoded %s; expected %d RAW RGB frames "
+                "at %dx%d. Use the matching H3 video VAE; do not trim here." %
+                (tuple(images.shape), current[11], current[7], current[8]))
+        status = "%s; pixel decode: %s; original audio preserved" % (current[-1], route)
+        chain._LOG.info("H3 %s", status)
+        return (state, images, current[13], current[6], current[9], current[4],
+                current[11], current[10], status)
 
 
 class MiniMaxH3ChainDeropeGuard:
@@ -1556,11 +1626,16 @@ class MiniMaxH3ChainUpscaleReferenceConditioning:
                   motion_ref_mode="exclude_video_keep_audio",
                   tagged_references=None, audio_vae=None,
                   override_ref_image_size="inherit",
-                  override_reference_policy="strict"):
+                  override_reference_policy="strict", _target_size=None):
         if target_video_latent is not None and video_vae is None:
             raise ValueError(
                 "Target-resolution H3 conditioning needs both "
                 "target_video_latent and video_vae.")
+        target_size = _target_size
+        if target_video_latent is not None:
+            _video, target_width, target_height = _target_video_geometry(
+                target_video_latent)
+            target_size = (target_width, target_height)
         source = _source_segment(state)
         manifest = state["source_manifest"]
         compatibility = manifest.get("compatibility") or {}
@@ -1604,7 +1679,7 @@ class MiniMaxH3ChainUpscaleReferenceConditioning:
                     state, clip, video_vae, audio_vae, tagged_references,
                     custom_prompt or prompt, ref_image_size,
                     motion_ref_mode, override_reference_policy,
-                    target_video_latent))
+                    target_video_latent, target_size))
             if custom_prompt:
                 status += "; custom pass-2 prompt override"
             return conditioning, compiled, False, status
@@ -1616,9 +1691,8 @@ class MiniMaxH3ChainUpscaleReferenceConditioning:
                       length))
         if cached is not None:
             target_detail = None
-            if target_video_latent is not None:
-                _video, target_width, target_height = _target_video_geometry(
-                    target_video_latent)
+            if target_size is not None:
+                target_width, target_height = target_size
                 conditioning, target_detail = (
                     chain._conditioning_from_reference_cache_target(
                         clip, video_vae, cached, target_width, target_height,
@@ -1679,6 +1753,85 @@ class MiniMaxH3ChainUpscaleReferenceConditioning:
             status += "; custom pass-2 prompt override"
         status += "; motion refs=%s" % motion_ref_mode
         return conditioning, compiled, False, status
+
+
+class MiniMaxH3ChainUpscalePixelConditioning:
+    """Rebuild and synchronize in one step using real IMAGE dimensions."""
+
+    EXPERIMENTAL = True
+
+    @classmethod
+    def INPUT_TYPES(cls):
+        schema = MiniMaxH3ChainUpscaleReferenceConditioning.INPUT_TYPES()
+        schema["optional"].pop("target_video_latent")
+        schema["required"]["video_vae"] = schema["optional"].pop("video_vae")
+        schema["required"]["images"] = ("IMAGE", {
+            "tooltip": "Actual upscaled RAW images BEFORE USDU/refinement. "
+                       "Their width/height drive reference rebuilding. Connect "
+                       "the same images to the image refiner; no latent encode "
+                       "or guessed scale multiplier is needed."})
+        schema["required"]["method"] = (CONDITIONING_SYNC_METHODS, {
+            "default": "bilinear",
+            "tooltip": "Interpolation for eligible cached video/keyframe "
+                       "latents. Match picture refs are rebuilt from RGB "
+                       "masters; max pictures and audio remain unchanged."})
+        return schema
+
+    RETURN_TYPES = ("CONDITIONING", "IMAGE", "INT", "INT", "STRING", "BOOLEAN", "STRING")
+    RETURN_NAMES = ("positive", "images", "width", "height", "compiled_prompt",
+                    "reference_cache_used", "status")
+    OUTPUT_TOOLTIPS = (
+        "Target-sized positive conditioning. Connect to a fresh Basic Guider.",
+        "Unchanged upscaled RAW images for the pixel refiner.",
+        "Measured target width.", "Measured target height.",
+        "Actual encoded pass-2 prompt.", "Whether an automatic cache was restored.",
+        "Target size, scale, cache and motion-reference policy.",
+    )
+    FUNCTION = "condition"
+    CATEGORY = "conditioning/minimax/context_loop/upscale"
+    DESCRIPTION = (
+        "Experimental IMAGE-driven pass-2 conditioning. Combines reference "
+        "restore and spatial synchronization without an upscaled latent. "
+        "The actual image canvas must be H3-aligned (multiples of 32); no "
+        "silent resize, video encoding, audio sampling or prefix masking occurs.")
+
+    def condition(self, state, clip, images, video_vae, method="bilinear",
+                  missing_cache="text_only", motion_ref_mode="exclude_video_keep_audio",
+                  prompt_override="", tagged_references=None, audio_vae=None,
+                  override_ref_image_size="inherit", override_reference_policy="strict"):
+        if method not in CONDITIONING_SYNC_METHODS:
+            raise ValueError("Unknown H3 conditioning sync method %r." % method)
+        source = _source_segment(state)
+        if (not chain.torch.is_tensor(images) or images.ndim != 4
+                or int(images.shape[-1]) != 3
+                or int(images.shape[0]) != int(source["raw_frames"])):
+            raise ValueError("Pixel conditioning needs the complete RAW RGB scene, "
+                             "without frame trimming, interpolation or duplication.")
+        height, width = map(int, images.shape[1:3])
+        if width < 32 or height < 32 or width % 32 or height % 32:
+            raise ValueError("Pixel target %dx%d is not H3-aligned. Resize the images "
+                             "to multiples of 32 before conditioning and refinement." %
+                             (width, height))
+        compatibility = state["source_manifest"].get("compatibility") or {}
+        source_width, source_height = (int(compatibility.get(key, 0))
+                                       for key in ("width", "height"))
+        if source_width < 1 or source_height < 1:
+            raise ValueError("Source H3 manifest has no valid canvas dimensions.")
+        positive, compiled, used, status = (
+            MiniMaxH3ChainUpscaleReferenceConditioning().condition(
+                state, clip, missing_cache, video_vae=video_vae,
+                prompt_override=prompt_override, motion_ref_mode=motion_ref_mode,
+                tagged_references=tagged_references, audio_vae=audio_vae,
+                override_ref_image_size=override_ref_image_size,
+                override_reference_policy=override_reference_policy,
+                _target_size=(width, height)))
+        scale_x, scale_y = width / source_width, height / source_height
+        positive = _sync_h3_conditioning(
+            positive, scale_x, scale_y, method, "conditioning_policy")
+        status += "; pixel target %dx%d (x%.4g/y%.4g); no target latent" % (
+            width, height, scale_x, scale_y)
+        chain._LOG.info("H3 %s", status)
+        return positive, images, width, height, compiled, used, status
 
 
 class H3ConditioningSyncFromLatents:
@@ -2471,6 +2624,8 @@ class MiniMaxH3ChainUpscaleMerge:
 
 
 UPSCALE_NODE_CLASS_MAPPINGS = {
+    "MiniMaxH3ChainUpscalePixelCurrent": MiniMaxH3ChainUpscalePixelCurrent,
+    "MiniMaxH3ChainUpscalePixelConditioning": MiniMaxH3ChainUpscalePixelConditioning,
     "MiniMaxH3ChainUpscaleAdapter": MiniMaxH3ChainUpscaleAdapter,
     "MiniMaxH3ChainUpscaleCurrent": MiniMaxH3ChainUpscaleCurrent,
     "MiniMaxH3ChainDeropeGuard": MiniMaxH3ChainDeropeGuard,
@@ -2489,6 +2644,8 @@ UPSCALE_NODE_CLASS_MAPPINGS = {
 }
 
 UPSCALE_NODE_DISPLAY_NAME_MAPPINGS = {
+    "MiniMaxH3ChainUpscalePixelCurrent": "MiniMax H3 Pixel Upscale Current Scene (Experimental)",
+    "MiniMaxH3ChainUpscalePixelConditioning": "MiniMax H3 Pixel Upscale Conditioning (Experimental)",
     "MiniMaxH3ChainUpscaleAdapter": "MiniMax H3 Checkpoint Upscale Adapter",
     "MiniMaxH3ChainUpscaleCurrent": "MiniMax H3 Upscale Current Scene",
     "MiniMaxH3ChainDeropeGuard": "MiniMax H3 Chain De-Rope Guard",

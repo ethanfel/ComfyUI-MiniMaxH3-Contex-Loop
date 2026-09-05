@@ -94,6 +94,7 @@ first-install tests.
 | [SeedVR2 Full Chain](<Deferred Upscale - SeedVR2 Full Chain - MiniMax H3.json>) | [ethanfel SeedVR2 fork](https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler) | Decode the selected lineage into one disk-backed video, then upscale it in low-RAM chunks. |
 | [H3 LBH 3D](<Deferred Upscale - H3 LBH 3D - MiniMax H3.json>) | [Comfyui_Minimax_h3_latent_Upscaler](https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler) and its 3D checkpoint | Upscale each saved H3 scene in a resumable child loop. |
 | [H3 LBH 3D + De-Rope](<Deferred Upscale + De-Rope - H3 LBH 3D - MiniMax H3.json>) | LBH pack plus [ComfyUI-MAINodes](https://github.com/matlowai/ComfyUI-MAINodes) | Combine latent spatial upscale with the guarded De-Rope recovery path. |
+| [Pixel DLSS5 + USDU — Experimental](<Deferred Upscale - Pixel DLSS5 + USDU - EXPERIMENTAL - MiniMax H3.json>) | [DLSS5](https://github.com/Blueforcer/ComfyUI-DLSS5-Enhancer), [H3 USDU Guider fork](https://github.com/lisitskyaa/ComfyUI_UltimateSDUpscaleGuider_H3), Turbo v4 LoRA | Per-scene IMAGE refinement with actual-size conditioning and preserved audio; [setup and testing limits](<guides/Deferred Upscale - Pixel DLSS5 + USDU - EXPERIMENTAL - MiniMax H3.md>). |
 
 The attention override in both LBH examples is deliberately **bypassed**.
 Large canvases can exceed the prequantized attention path's stride limits, so

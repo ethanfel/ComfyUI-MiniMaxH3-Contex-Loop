@@ -751,6 +751,9 @@ def main():
                 "samples": [immediate_video, context_audio]},
             "segments": [],
             "_visual_context_state": {
+                # The nightly context builder validates the cached block
+                # signature before reusing a pre-resolved context state.
+                "_visual_context_signature": ((1, 39, -1, False),),
                 "_visual_context_target": 3,
                 "_visual_context_source": 1,
                 "_visual_context_lead_source": 0,
