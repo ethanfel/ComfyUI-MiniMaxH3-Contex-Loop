@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Checkpoint Manager failing to list older Runs whose checkpoints refer
+  to shared Run-level Plan, workflow, and API-prompt snapshots. These legacy
+  references are readable again and remain permanently excluded from
+  individual checkpoint deletion; revision-specific recovery archives keep
+  their existing ownership checks.
+
 - Fixed Windows mapped network drives used as ComfyUI input/output directories
   (#45). Root and artifact paths now resolve consistently before calculating
   relative paths, preventing drive-letter/UNC mount errors during segment and

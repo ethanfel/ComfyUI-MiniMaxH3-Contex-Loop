@@ -763,16 +763,27 @@ class CheckpointGraphManager:
             run_dir, "recovery_archives", record["revision"]))
         recovery_root = os.path.realpath(os.path.join(
             run_dir, "recovery_archives"))
+        # Older saves reference the mutable Run-level snapshots. They are
+        # valid recovery references, but never belong to one revision (even
+        # when only one revision still references them). Keep this whitelist
+        # exact and kind-specific; do not allow arbitrary files at Run root
+        # or follow a snapshot symlink into another file's ownership.
+        shared_archive_paths = {
+            kind: os.path.join(run_dir, key + ".json")
+            for key, kind in _ARCHIVE_KEYS.items()
+        }
         canonical = os.path.realpath(os.path.join(
             scan["checkpoint_dir"], "clip_%04d.json" % record["scene"]))
         artifacts = []
         for path, (kind, shared) in sorted(paths.items()):
+            is_shared_archive = path == shared_archive_paths.get(kind)
             if path == canonical:
                 raise ValueError("Refusing to manage an active checkpoint pointer.")
-            if not any(self._inside(root, path) for root in allowed_roots):
+            if (not is_shared_archive and
+                    not any(self._inside(root, path) for root in allowed_roots)):
                 raise ValueError("Checkpoint revision owns an unexpected path.")
             path_references = scan["artifact_path_counts"].get(path, 0)
-            shared = bool(shared or path_references > 1)
+            shared = bool(shared or is_shared_archive or path_references > 1)
             adopted_prefix = "clip_%04d.%s" % (
                 record["scene"], record.get("adopted_from_revision") or "")
             owns_named_path = os.path.basename(path).startswith(expected_prefix)
@@ -785,7 +796,7 @@ class CheckpointGraphManager:
                 expected_archive_root)
             if (not self._inside(scan["review_dir"], path) and
                     not owns_named_path and not adopts_named_path and
-                    not is_archive_path):
+                    not is_archive_path and not is_shared_archive):
                 raise ValueError(
                     "Checkpoint revision references a file owned by another revision.")
             try:
