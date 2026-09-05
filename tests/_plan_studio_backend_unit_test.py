@@ -229,6 +229,39 @@ async def check():
         assert timeline_records[1]["frame_count"] == 160
         assert editorial_frames == 840
 
+        newer_editorial = chain._save_run_editorial_document({
+            "run_name": "studio",
+            "base_revision": editorial["revision"],
+            "scene_order": [
+                {"scene": 1, "scene_id": "intro"},
+                {"scene": 2, "scene_id": "outro"},
+            ],
+            "chapters": [],
+            "placements": [{
+                "scene": 2, "scene_id": "outro", "start_frame": 501,
+            }],
+        })
+        assert newer_editorial["revision"] != editorial["revision"]
+        try:
+            chain._save_run_editorial_document({
+                "run_name": "studio",
+                "base_revision": editorial["revision"],
+                "scene_order": [
+                    {"scene": 1, "scene_id": "intro"},
+                    {"scene": 2, "scene_id": "outro"},
+                ],
+                "chapters": [],
+                "placements": [{
+                    "scene": 2, "scene_id": "outro", "start_frame": 502,
+                }],
+            })
+        except chain.EditorialConflictError as exc:
+            assert "was not overwritten" in str(exc)
+        else:
+            raise AssertionError("a stale Plan Studio final-cut write succeeded")
+        assert chain._load_run_editorial("studio")["placements"][0][
+            "start_frame"] == 501
+
         latent_editorial = chain._save_run_editorial_document({
             "run_name": "studio",
             "scene_order": [{"scene": 1, "scene_id": "intro"}],

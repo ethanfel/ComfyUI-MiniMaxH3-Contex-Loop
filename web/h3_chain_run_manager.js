@@ -16,7 +16,7 @@ import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
 } from "./h3_plan_restore_core.mjs?v=0.7.0";
-import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.2";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.0";
 
 const NODE_NAME = "MiniMaxH3ChainRunManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -440,6 +440,7 @@ function mount(node) {
     function renderSelection() {
         renderActiveRun();
         const run = selectedRun();
+        details.classList.remove("h3rm-error");
         const runIdentity = runManagerIdentity(activeRunName(), run);
         activeIdentity.textContent = runIdentity.activeLabel;
         activeIdentity.title = "Generation and asset saving use this run_name from the connected Plan.";
@@ -469,7 +470,13 @@ function mount(node) {
             .map(([name]) => name.replace("_", " ")).join(", ") || "no archive";
         details.textContent =
             `${scenes} · ${run.checkpoint_count} checkpoints · ${run.asset_count ?? 0} assets · ${formatBytes(run.archive_bytes)}\n` +
-            `Modified ${localTime(run.modified_at)} · ${source}`;
+            `Modified ${localTime(run.modified_at)} · ${source}` +
+            (run.recovery_error
+                ? `\nRecovery blocked: ${run.recovery_error}`
+                : run.immutable_recovery
+                    ? "\nRecovery source: committed immutable checkpoint snapshot"
+                    : "\nRecovery source: legacy root archive");
+        details.classList.toggle("h3rm-error", Boolean(run.recovery_error));
         load.disabled = state.busy || !run.restorable;
         open.disabled = state.busy;
     }

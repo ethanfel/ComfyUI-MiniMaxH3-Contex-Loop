@@ -16,6 +16,7 @@ import re
 import threading
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
@@ -23,7 +24,65 @@ from typing import Any
 PROJECT_OWNERSHIP_FORMAT = "h3_project_ownership_v1"
 PROJECT_OWNERSHIP_LEASE_SECONDS = 90.0
 _OWNER_ID_RE = re.compile(r"[A-Za-z0-9._:-]{16,192}")
-_RUN_LOCKS: dict[str, threading.RLock] = {}
+
+
+class _OwnershipMutationLock:
+    """Re-entrant thread and process lock for one ownership record."""
+
+    def __init__(self, path: str):
+        self.path = path + ".lock"
+        self._thread_lock = threading.RLock()
+        self._depth = 0
+        self._handle = None
+
+    def __enter__(self):
+        self._thread_lock.acquire()
+        try:
+            if self._depth == 0:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                handle = open(self.path, "a+b")
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        handle.seek(0, os.SEEK_END)
+                        if handle.tell() == 0:
+                            handle.write(b"\0")
+                            handle.flush()
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                except Exception:
+                    handle.close()
+                    raise
+                self._handle = handle
+            self._depth += 1
+            return self
+        except Exception:
+            self._thread_lock.release()
+            raise
+
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            self._depth -= 1
+            if self._depth == 0 and self._handle is not None:
+                handle, self._handle = self._handle, None
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                finally:
+                    handle.close()
+        finally:
+            self._thread_lock.release()
+
+
+_RUN_LOCKS: dict[str, _OwnershipMutationLock] = {}
 _RUN_LOCKS_GUARD = threading.Lock()
 
 
@@ -41,7 +100,13 @@ def _run_name(value: Any) -> str:
     normalized = re.sub(r"[^A-Za-z0-9._-]+", "_", requested).strip("._-")
     if not normalized:
         raise ValueError("A non-empty H3 chain run_name is required.")
-    return normalized[:160]
+    normalized = normalized[:96]
+    if requested != normalized:
+        raise ValueError(
+            "H3 run_name must be 1-96 characters, start and end with a "
+            "letter or number, and contain only letters, numbers, '.', '_' "
+            "or '-'. Use %r for this project." % normalized)
+    return normalized
 
 
 def _owner_id(value: Any) -> str:
@@ -55,9 +120,9 @@ def _owner_digest(owner_id: str) -> str:
     return hashlib.sha256(owner_id.encode("utf-8")).hexdigest()
 
 
-def _lock_for(path: str) -> threading.RLock:
+def _lock_for(path: str) -> _OwnershipMutationLock:
     with _RUN_LOCKS_GUARD:
-        return _RUN_LOCKS.setdefault(path, threading.RLock())
+        return _RUN_LOCKS.setdefault(path, _OwnershipMutationLock(path))
 
 
 def ownership_path(output_root: str, run_name: Any) -> str:
@@ -87,6 +152,17 @@ def _atomic_json(path: str, value: dict[str, Any]) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary, path)
+        try:
+            directory = os.open(os.path.dirname(path), os.O_RDONLY)
+        except OSError:
+            directory = None
+        if directory is not None:
+            try:
+                os.fsync(directory)
+            except OSError:
+                pass
+            finally:
+                os.close(directory)
     finally:
         try:
             os.unlink(temporary)
@@ -274,6 +350,58 @@ def release_project_ownership(
         return _public(record, owner)
 
 
+def _validate_project_ownership(
+        run: str, record: dict[str, Any] | None, proof: Any,
+        operation: str) -> dict[str, Any] | None:
+    if record is None or not bool(record.get("enabled", True)):
+        return None
+    if not isinstance(proof, dict):
+        raise ProjectOwnershipError(
+            "Project %s is protected by workflow ownership. This "
+            "workflow is read-only; use Force ownership in its Project "
+            "Asset Carousel before attempting to %s." % (run, operation))
+    try:
+        owner = _owner_id(proof.get("owner_id"))
+        epoch = int(proof.get("epoch"))
+    except (TypeError, ValueError) as exc:
+        raise ProjectOwnershipError(
+            "Project %s received an invalid workflow ownership proof. "
+            "Refresh the Project Asset Carousel." % run) from exc
+    expected_epoch = int(record.get("epoch", 0))
+    if (epoch != expected_epoch or
+            _owner_digest(owner) != str(record.get("owner_digest") or "")):
+        raise ProjectOwnershipError(
+            "Project %s is owned by another workflow (%s). This stale "
+            "workflow was blocked before it could %s. Use Force "
+            "ownership only if you intend to invalidate the other tab."
+            % (run, str(record.get("owner_label") or "active workflow"),
+               operation))
+    return {
+        "owner_id": owner,
+        "epoch": epoch,
+        "run_name": run,
+    }
+
+
+@contextmanager
+def project_write_guard(
+        output_root: str, run_name: Any, proof: Any,
+        operation: str = "modify this project",
+):
+    """Hold the ownership fence across one short durable commit.
+
+    Forced ownership changes use the same lock, so they cannot split a
+    validated checkpoint/editorial transaction. Long render work must not hold
+    this guard; validate once when it starts and acquire the guard again only
+    around its final pointer/catalog mutation.
+    """
+    run = _run_name(run_name)
+    path = ownership_path(output_root, run)
+    with _lock_for(path):
+        yield _validate_project_ownership(
+            run, _read(path, run), proof, operation)
+
+
 def require_project_ownership(
         output_root: str, run_name: Any, proof: Any,
         operation: str = "modify this project",
@@ -284,35 +412,6 @@ def require_project_ownership(
     render or sleeping browser does not lose ownership implicitly. An explicit
     forced takeover increments ``epoch`` and immediately fences that render.
     """
-    run = _run_name(run_name)
-    path = ownership_path(output_root, run)
-    with _lock_for(path):
-        record = _read(path, run)
-        if record is None or not bool(record.get("enabled", True)):
-            return None
-        if not isinstance(proof, dict):
-            raise ProjectOwnershipError(
-                "Project %s is protected by workflow ownership. This "
-                "workflow is read-only; use Force ownership in its Project "
-                "Asset Carousel before attempting to %s." % (run, operation))
-        try:
-            owner = _owner_id(proof.get("owner_id"))
-            epoch = int(proof.get("epoch"))
-        except (TypeError, ValueError) as exc:
-            raise ProjectOwnershipError(
-                "Project %s received an invalid workflow ownership proof. "
-                "Refresh the Project Asset Carousel." % run) from exc
-        expected_epoch = int(record.get("epoch", 0))
-        if (epoch != expected_epoch or
-                _owner_digest(owner) != str(record.get("owner_digest") or "")):
-            raise ProjectOwnershipError(
-                "Project %s is owned by another workflow (%s). This stale "
-                "workflow was blocked before it could %s. Use Force "
-                "ownership only if you intend to invalidate the other tab."
-                % (run, str(record.get("owner_label") or "active workflow"),
-                   operation))
-        return {
-            "owner_id": owner,
-            "epoch": epoch,
-            "run_name": run,
-        }
+    with project_write_guard(
+            output_root, run_name, proof, operation) as ownership:
+        return ownership

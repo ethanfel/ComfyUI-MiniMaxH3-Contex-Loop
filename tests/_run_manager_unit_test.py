@@ -2,6 +2,7 @@
 """Standalone H3 run discovery and Plan restoration checks."""
 
 import json
+import os
 import pathlib
 import tempfile
 
@@ -163,14 +164,87 @@ def main():
             "segment_crf": 19,
         })
 
+        # Root recovery files are compatibility mirrors and may be from
+        # different revisions after an interrupted promotion. The active
+        # checkpoint's immutable snapshot must win as one coherent unit.
+        snapshot_run = root / "h3_chains" / "variant_snapshot"
+        write(snapshot_run / "plan.json", {
+            "run_name": "variant_snapshot",
+            "editor_plan": {"shots": [{"id": "stale", "prompt": "stale"}]},
+        })
+        write(snapshot_run / "api_prompt.json", {
+            "1": {"class_type": "MiniMaxH3ChainPlan", "inputs": {
+                "run_name": "variant_snapshot", "width": 111,
+            }},
+        })
+        token = "a" * 32
+        snapshot = snapshot_run / "recovery_archives" / token
+        snapshot_editor = {
+            "prompt_prefix": "Coherent.",
+            "shots": [{"id": "current", "prompt": "current", "length": 39}],
+        }
+        write(snapshot / "plan.json", {
+            "format": "h3_chain_plan_archive_v1",
+            "run_name": "variant_snapshot",
+            "editor_plan": snapshot_editor,
+            "compatibility": {"width": 960, "height": 544},
+        })
+        write(snapshot / "api_prompt.json", {
+            "1": {"class_type": "MiniMaxH3ChainPlan", "inputs": {
+                "plan_json": json.dumps(snapshot_editor),
+                "run_name": "variant_snapshot", "width": 1280,
+            }},
+        })
+        write(snapshot_run / "checkpoints" / "clip_0001.json", {
+            "run_name": "variant_snapshot",
+            "segment": {"index": 1, "revision": token},
+            "archives": {
+                "plan": str((snapshot / "plan.json").relative_to(root)),
+                "api_prompt": str(
+                    (snapshot / "api_prompt.json").relative_to(root)),
+            },
+        })
+        old_token = "b" * 32
+        old_snapshot = snapshot_run / "recovery_archives" / old_token
+        old_editor = {
+            "shots": [{"id": "older_later_scene", "prompt": "stale tip"}],
+        }
+        write(old_snapshot / "plan.json", {
+            "run_name": "variant_snapshot", "editor_plan": old_editor,
+        })
+        write(snapshot_run / "checkpoints" / "clip_0002.json", {
+            "run_name": "variant_snapshot",
+            "segment": {"index": 2, "revision": old_token},
+            "archives": {
+                "plan": str((old_snapshot / "plan.json").relative_to(root)),
+            },
+        })
+        # A newly regenerated earlier scene is authoritative even while a
+        # higher stale pointer remains on disk until the loop reaches it.
+        scene_1_pointer = snapshot_run / "checkpoints" / "clip_0001.json"
+        scene_2_pointer = snapshot_run / "checkpoints" / "clip_0002.json"
+        os.utime(scene_2_pointer, ns=(1_000_000_000, 1_000_000_000))
+        os.utime(scene_1_pointer, ns=(2_000_000_000, 2_000_000_000))
+
         manager = RunArchiveManager(temporary)
         runs = manager.list_runs()
         assert {item["run_name"] for item in runs} == {
-            "variant_exact", "variant_fallback"}
+            "variant_exact", "variant_fallback", "variant_snapshot"}
         exact_summary = next(item for item in runs if item["run_name"] == "variant_exact")
         assert exact_summary["scene_count"] == 1
         assert exact_summary["checkpoint_count"] == 1
         assert exact_summary["restorable"]
+        snapshot_summary = next(
+            item for item in runs
+            if item["run_name"] == "variant_snapshot")
+        assert snapshot_summary["immutable_recovery"]
+        assert snapshot_summary["scene_count"] == 1
+
+        snapshot_payload = manager.load_plan("variant_snapshot")
+        assert snapshot_payload["immutable_recovery"]
+        assert json.loads(
+            snapshot_payload["plan_inputs"]["plan_json"]) == snapshot_editor
+        assert snapshot_payload["plan_inputs"]["width"] == 1280
 
         loaded = manager.load_run("variant_exact")
         assert json.loads(loaded["plan_inputs"]["plan_json"]) == editor_plan
@@ -237,6 +311,21 @@ def main():
                 "expert_context_length": 5,
             },
         }
+
+        # Never fall back to possibly mixed root mirrors when a committed
+        # checkpoint declares a snapshot that has become incomplete.
+        (snapshot / "plan.json").unlink()
+        damaged = next(
+            item for item in manager.list_runs()
+            if item["run_name"] == "variant_snapshot")
+        assert not damaged["restorable"]
+        assert "recovery_error" in damaged
+        try:
+            manager.load_plan("variant_snapshot")
+        except ValueError as exc:
+            assert "missing or outside" in str(exc)
+        else:
+            raise AssertionError("damaged immutable snapshot was accepted")
 
     print("H3 Run Manager: discovery, exact API restoration and Plan fallback pass")
 

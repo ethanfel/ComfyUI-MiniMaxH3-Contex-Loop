@@ -15,10 +15,11 @@ import torch
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE = "h3_review_length_unit"
+TEST_OUTPUT = tempfile.TemporaryDirectory(prefix="h3-review-length-test-")
 
 folder_paths = types.ModuleType("folder_paths")
-folder_paths.get_output_directory = lambda: str(ROOT)
-folder_paths.get_temp_directory = lambda: str(ROOT)
+folder_paths.get_output_directory = lambda: TEST_OUTPUT.name
+folder_paths.get_temp_directory = lambda: TEST_OUTPUT.name
 folder_paths.get_input_directory = lambda: str(ROOT)
 folder_paths.get_annotated_filepath = lambda value: str(value)
 sys.modules["folder_paths"] = folder_paths
@@ -277,7 +278,8 @@ async def check_candidate_batch():
     assert automatic_decision["action"] == "retry"
     assert automatic_decision["candidate_batch"]["target"] == 2
     assert len(automatic_decision["candidate_batch"]["candidates"]) == 1
-    assert automatic_decision["candidate_batch"]["kept_revisions"] == []
+    assert automatic_decision["candidate_batch"]["kept_revisions"] == [
+        automatic["revision"]]
     automatic_token = automatic_decision["candidate_batch"]["batch_token"]
     assert automatic_token in chain._ACTIVE_CANDIDATE_BATCHES
     progress = chain._ACTIVE_CANDIDATE_BATCHES[automatic_token]["public"]
@@ -444,7 +446,8 @@ async def check_candidate_batch():
         public = next(iter(chain._PENDING_REVIEWS.values()))["public"]
         assert public["candidate_count"] == 2
         assert public["candidate_generation_complete"] is True
-        assert public["kept_candidate_revisions"] == [first["revision"]]
+        assert public["kept_candidate_revisions"] == [
+            first["revision"], second["revision"]]
         assert [item["revision"] for item in public["candidates"]] == [
             first["revision"], second["revision"]]
         token = public["token"]
@@ -813,6 +816,7 @@ def check_exact_candidate_selection():
     original_load_revision = chain._load_checkpoint_revision
     original_st_load = chain._st_load
     original_atomic_json = chain._atomic_json
+    original_write_run_archives = chain._write_run_archives
     original_lock = chain.checkpoint_run_lock
     writes = []
     chain._load_checkpoint_revision = lambda *_args: (metadata, "selected.json")
@@ -822,6 +826,7 @@ def check_exact_candidate_selection():
         "audio": torch.zeros((1, 2, 2)),
     }
     chain._atomic_json = lambda path, value: writes.append((path, value))
+    chain._write_run_archives = lambda *_args, **_kwargs: {}
     chain.checkpoint_run_lock = lambda *_args: nullcontext()
     try:
         accepted, selected_state = chain._select_review_candidate({
@@ -843,6 +848,7 @@ def check_exact_candidate_selection():
         chain._load_checkpoint_revision = original_load_revision
         chain._st_load = original_st_load
         chain._atomic_json = original_atomic_json
+        chain._write_run_archives = original_write_run_archives
         chain.checkpoint_run_lock = original_lock
 
 
@@ -872,7 +878,8 @@ chain._PENDING_FINAL_REVIEW_PREVIEWS[final_key] = {
     "client_id": "originating-client",
 }
 chain._publish_final_review_preview(
-    final_manifest, str(ROOT / "final.mp4"), "assembled final")
+    final_manifest, str(pathlib.Path(TEST_OUTPUT.name) / "final.mp4"),
+    "assembled final")
 assert final_key not in chain._PENDING_FINAL_REVIEW_PREVIEWS
 assert fake_prompt_server.sent == [(
     "minimax_h3_context_loop_review_resolved",

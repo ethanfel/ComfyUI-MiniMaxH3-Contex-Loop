@@ -5,15 +5,17 @@ import importlib.util
 import json
 import pathlib
 import sys
+import tempfile
 import types
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
 PACKAGE = "h3_audio_policy_unit"
+TEST_OUTPUT = tempfile.TemporaryDirectory(prefix="h3-audio-policy-test-")
 
 folder_paths = types.ModuleType("folder_paths")
-folder_paths.get_output_directory = lambda: str(ROOT)
-folder_paths.get_temp_directory = lambda: str(ROOT)
+folder_paths.get_output_directory = lambda: TEST_OUTPUT.name
+folder_paths.get_temp_directory = lambda: TEST_OUTPUT.name
 folder_paths.get_input_directory = lambda: str(ROOT)
 folder_paths.get_annotated_filepath = lambda value: str(value)
 sys.modules["folder_paths"] = folder_paths

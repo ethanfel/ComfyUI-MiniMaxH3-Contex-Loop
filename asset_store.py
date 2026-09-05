@@ -27,6 +27,16 @@ def _safe_name(value: Any, fallback: str = "asset") -> str:
     return (text or fallback)[:128]
 
 
+def _strict_run_name(value: Any) -> str:
+    requested = str(value or "").strip()
+    normalized = _safe_name(requested, "")[:96]
+    if not normalized:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    if requested != normalized:
+        raise ValueError("H3 asset recovery requires the exact saved run name.")
+    return normalized
+
+
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(
         timespec="seconds").replace("+00:00", "Z")
@@ -39,7 +49,20 @@ def _atomic_json(path: str, value: Any) -> None:
         with open(temporary, "w", encoding="utf-8") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, path)
+        try:
+            directory = os.open(os.path.dirname(path), os.O_RDONLY)
+        except OSError:
+            directory = None
+        if directory is not None:
+            try:
+                os.fsync(directory)
+            except OSError:
+                pass
+            finally:
+                os.close(directory)
     finally:
         try:
             os.unlink(temporary)
@@ -96,9 +119,7 @@ class RunAssetStore:
         self.chains_root = os.path.join(self.output_root, "h3_chains")
 
     def _run_dir(self, run_name: Any) -> tuple[str, str]:
-        run = _safe_name(run_name, "")
-        if not run:
-            raise ValueError("A non-empty H3 chain run_name is required.")
+        run = _strict_run_name(run_name)
         path = os.path.realpath(os.path.join(self.chains_root, run))
         if not _inside(self.output_root, path):
             raise ValueError("H3 asset run path escapes the output directory.")

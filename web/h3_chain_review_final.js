@@ -5,7 +5,7 @@ import {
     planToJson,
     promptValueToText,
 } from "./h3_chain_plan_core.mjs?v=0.7.0";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.1";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
@@ -23,7 +23,7 @@ import {
     reviewPlanScenePrompt,
     reviewSeed,
 } from "./h3_chain_review_core.mjs?v=0.7.0";
-import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.2";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.0";
 
 const NODE_NAME = "MiniMaxH3ChainReview";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
@@ -939,7 +939,7 @@ function mount(node) {
     const candidateRow = document.createElement("div");
     candidateRow.className = "h3r-candidates";
     candidateRow.hidden = true;
-    candidateRow.title = "Preview each saved take. The active candidate's exact video and audio continuation tensors become the next scene's checkpoint state; checked alternatives remain in history.";
+    candidateRow.title = "Preview each saved take. The active candidate's exact video and audio continuation tensors become the next scene's checkpoint state. Every candidate remains saved by default; uncheck only takes you intentionally want removed after accepting another take.";
     const candidateNav = document.createElement("div");
     candidateNav.className = "h3r-candidate-nav";
     const candidatePrevious = document.createElement("button");
@@ -962,8 +962,8 @@ function mount(node) {
     candidateKeepLabel.className = "h3r-candidate-keep";
     const candidateKeep = document.createElement("input");
     candidateKeep.type = "checkbox";
-    candidateKeep.title = "Retain this take in checkpoint history even if another take becomes active. The active continuation is always retained; other unchecked alternatives are deleted after acceptance.";
-    candidateKeepLabel.append(candidateKeep, "Keep as alternative");
+    candidateKeep.title = "Keep this saved take in checkpoint history. Candidates are checked by default; an unchecked, unselected take is deleted only when you confirm acceptance.";
+    candidateKeepLabel.append(candidateKeep, "Keep saved");
     const candidateProgress = document.createElement("span");
     candidateProgress.className = "h3r-candidate-progress";
     candidateMeta.append(candidateKeepLabel, candidateProgress);

@@ -10,12 +10,15 @@ from __future__ import annotations
 import copy
 import hashlib
 import json
+import logging
 import mimetypes
 import os
 import re
 import shutil
 import subprocess
+import threading
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from fractions import Fraction
 from typing import Any
@@ -60,6 +63,16 @@ INPUT_BROWSER_EXCLUDED_DIRECTORIES = frozenset((
     "clipspace", "h3_projects",
 ))
 _TAG_RE = re.compile(r"[A-Za-z][A-Za-z0-9_-]{0,63}")
+_PROJECT_RE = re.compile(r"[A-Za-z0-9](?:[A-Za-z0-9._-]{0,94}[A-Za-z0-9])?")
+_CATALOG_LOCKS: dict[str, threading.RLock] = {}
+_CATALOG_LOCKS_GUARD = threading.Lock()
+
+
+class ProjectAssetConflictError(ValueError):
+    """The catalog changed after a caller loaded its editing snapshot."""
+
+
+_LOG = logging.getLogger("minimax_h3_context_loop.project_assets")
 
 
 def _utc_now() -> str:
@@ -74,10 +87,54 @@ def _safe_name(value: Any, fallback: str = "asset", limit: int = 128) -> str:
 
 
 def _safe_project(value: Any) -> str:
-    project = _safe_name(value, "", 96)
-    if not project:
+    requested = str(value or "").strip()
+    project = _safe_name(requested, "", 96)
+    if not requested or not project:
         raise ValueError("Run name cannot be blank.")
+    if requested != project or _PROJECT_RE.fullmatch(requested) is None:
+        raise ValueError(
+            "Run name must be 1-96 characters, start and end with a letter "
+            "or number, and contain only letters, numbers, '.', '_' or '-'. "
+            "Use %r for this project." % project)
     return project
+
+
+def _catalog_lock(path: str) -> threading.RLock:
+    normalized = os.path.realpath(path)
+    with _CATALOG_LOCKS_GUARD:
+        return _CATALOG_LOCKS.setdefault(normalized, threading.RLock())
+
+
+@contextmanager
+def _catalog_file_lock(path: str):
+    """Serialize catalog commits across ComfyUI processes sharing storage."""
+    lock_path = path + ".lock"
+    os.makedirs(os.path.dirname(lock_path), exist_ok=True)
+    handle = open(lock_path, "a+b")
+    try:
+        if os.name == "nt":
+            import msvcrt
+            handle.seek(0, os.SEEK_END)
+            if handle.tell() == 0:
+                handle.write(b"\0")
+                handle.flush()
+            handle.seek(0)
+            msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+        else:
+            import fcntl
+            fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        yield
+    finally:
+        try:
+            if os.name == "nt":
+                import msvcrt
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+        finally:
+            handle.close()
 
 
 def _safe_tag(value: Any, fallback: str = "asset") -> str:
@@ -182,7 +239,20 @@ def _atomic_json(path: str, value: Any) -> None:
         with open(temporary, "w", encoding="utf-8") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, path)
+        try:
+            directory = os.open(os.path.dirname(path), os.O_RDONLY)
+        except OSError:
+            directory = None
+        if directory is not None:
+            try:
+                os.fsync(directory)
+            except OSError:
+                pass
+            finally:
+                os.close(directory)
     finally:
         try:
             os.unlink(temporary)
@@ -385,13 +455,45 @@ class ProjectAssetStore:
     def load(self, project: Any, *, create: bool = False) -> dict[str, Any]:
         directory, name = self._project_dir(project)
         path = os.path.join(directory, "catalog.json")
-        if not os.path.isfile(path):
+        backup_path = os.path.join(self._backup_dir(name)[0], "catalog.json")
+        catalog = None
+        primary_error = None
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as handle:
+                    catalog = json.load(handle)
+            except (OSError, json.JSONDecodeError) as exc:
+                primary_error = exc
+        if catalog is None and os.path.isfile(backup_path):
+            # A writer may repair or replace the primary between our first
+            # read and recovery. Re-check it while holding the same process
+            # and filesystem locks used by catalog commits so an older mirror
+            # can never overwrite that newer accepted state.
+            with _catalog_lock(path), _catalog_file_lock(path):
+                if os.path.isfile(path):
+                    try:
+                        with open(path, "r", encoding="utf-8") as handle:
+                            catalog = json.load(handle)
+                        primary_error = None
+                    except (OSError, json.JSONDecodeError) as exc:
+                        primary_error = exc
+                if catalog is None:
+                    try:
+                        with open(backup_path, "r", encoding="utf-8") as handle:
+                            catalog = json.load(handle)
+                        os.makedirs(directory, exist_ok=True)
+                        _atomic_json(path, catalog)
+                    except (OSError, json.JSONDecodeError):
+                        if primary_error is not None:
+                            raise primary_error
+                        catalog = None
+        if catalog is None:
+            if primary_error is not None:
+                raise primary_error
             catalog = self._empty_catalog(name)
             if create:
                 return self._save_catalog(catalog)
             return catalog
-        with open(path, "r", encoding="utf-8") as handle:
-            catalog = json.load(handle)
         if (not isinstance(catalog, dict)
                 or catalog.get("format") != PROJECT_ASSET_FORMAT
                 or int(catalog.get("version", -1)) != PROJECT_ASSET_VERSION
@@ -403,10 +505,20 @@ class ProjectAssetStore:
             slots if isinstance(slots, list) else [])
         folders = catalog.get("folders")
         catalog["folders"] = folders if isinstance(folders, list) else []
+        storage_revision = str(catalog.get("storage_revision") or "")
+        if not re.fullmatch(r"[0-9a-f]{32}", storage_revision):
+            storage_revision = _canonical_fingerprint({
+                key: value for key, value in catalog.items()
+                if key != "storage_revision"
+            })[:32]
+        catalog["storage_revision"] = storage_revision
         return catalog
 
     def _save_catalog(self, catalog: dict[str, Any]) -> dict[str, Any]:
         directory, name = self._project_dir(catalog.get("project"))
+        path = os.path.join(directory, "catalog.json")
+        expected_storage_revision = str(
+            catalog.get("storage_revision") or "")
         assets = [dict(item) for item in catalog.get("assets", [])
                   if isinstance(item, dict)]
         slots = [dict(item) for item in catalog.get("reference_slots", [])
@@ -445,12 +557,46 @@ class ProjectAssetStore:
             "assets": [_entry_contract(item) for item in assets],
             "reference_slots": [_slot_contract(item) for item in slots],
         })
-        for group in ("images", "videos", "audio", "previews", ".uploads"):
-            os.makedirs(os.path.join(directory, group), exist_ok=True)
-        _atomic_json(os.path.join(directory, "catalog.json"), document)
-        backup, _name = self._backup_dir(name)
-        os.makedirs(backup, exist_ok=True)
-        _atomic_json(os.path.join(backup, "catalog.json"), document)
+        document["storage_revision"] = uuid.uuid4().hex
+        with _catalog_lock(path), _catalog_file_lock(path):
+            if os.path.isfile(path):
+                with open(path, "r", encoding="utf-8") as handle:
+                    current = json.load(handle)
+                current_storage_revision = str(
+                    current.get("storage_revision") or "")
+                if not re.fullmatch(
+                        r"[0-9a-f]{32}", current_storage_revision):
+                    current_storage_revision = _canonical_fingerprint({
+                        key: value for key, value in current.items()
+                        if key != "storage_revision"
+                    })[:32]
+                if (not expected_storage_revision
+                        and not assets and not slots and not folders):
+                    current["storage_revision"] = current_storage_revision
+                    return current
+                if expected_storage_revision != current_storage_revision:
+                    raise ProjectAssetConflictError(
+                        "Project assets changed in another request. Refresh "
+                        "the Carousel and repeat this edit; no catalog data "
+                        "was overwritten.")
+            elif expected_storage_revision:
+                raise ProjectAssetConflictError(
+                    "Project assets were removed or replaced after they were "
+                    "loaded. Refresh the Carousel before editing.")
+            for group in ("images", "videos", "audio", "previews", ".uploads"):
+                os.makedirs(os.path.join(directory, group), exist_ok=True)
+            backup, _name = self._backup_dir(name)
+            os.makedirs(backup, exist_ok=True)
+            # The input-side catalog is authoritative and atomically durable.
+            # Publish it first so an interrupted mirror refresh can never make
+            # a speculative catalog look newer than the accepted project.
+            _atomic_json(path, document)
+            try:
+                _atomic_json(os.path.join(backup, "catalog.json"), document)
+            except OSError as exc:
+                _LOG.warning(
+                    "Project %s catalog committed, but its output recovery "
+                    "mirror could not be refreshed: %s", name, exc)
         return document
 
     def public_catalog(self, project: Any) -> dict[str, Any]:
@@ -553,6 +699,9 @@ class ProjectAssetStore:
             cloned_catalog = copy.deepcopy(source_catalog)
             cloned_catalog["project"] = target_name
             cloned_catalog["updated_at"] = now
+            # The source token protects only the source catalog. The target is
+            # a new independent document and therefore starts without a base.
+            cloned_catalog["storage_revision"] = ""
             for entry in cloned_catalog.get("assets", []):
                 relative = str(entry.get("relative_path") or "")
                 entry["input_path"] = os.path.join(

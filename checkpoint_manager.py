@@ -29,8 +29,74 @@ _ARTIFACT_KINDS = {
     "revision_metadata": "Revision metadata",
     "review_preview": "Review preview",
     "active_pointer": "Active scene pointer",
+    "archive_plan": "Recovery Plan snapshot",
+    "archive_workflow": "Recovery workflow snapshot",
+    "archive_api_prompt": "Recovery API prompt snapshot",
 }
-_RUN_LOCKS: dict[tuple[str, str], threading.RLock] = {}
+_ARCHIVE_KEYS = {
+    "plan": "archive_plan",
+    "workflow": "archive_workflow",
+    "api_prompt": "archive_api_prompt",
+}
+
+
+class _RunMutationLock:
+    """Re-entrant thread and process lock for one Run's mutable pointers."""
+
+    def __init__(self, path: str):
+        self.path = path
+        self._thread_lock = threading.RLock()
+        self._depth = 0
+        self._handle = None
+
+    def __enter__(self):
+        self._thread_lock.acquire()
+        try:
+            if self._depth == 0:
+                os.makedirs(os.path.dirname(self.path), exist_ok=True)
+                handle = open(self.path, "a+b")
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        handle.seek(0, os.SEEK_END)
+                        if handle.tell() == 0:
+                            handle.write(b"\0")
+                            handle.flush()
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_LOCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+                except Exception:
+                    handle.close()
+                    raise
+                self._handle = handle
+            self._depth += 1
+            return self
+        except Exception:
+            self._thread_lock.release()
+            raise
+
+    def __exit__(self, exc_type, exc, traceback):
+        try:
+            self._depth -= 1
+            if self._depth == 0 and self._handle is not None:
+                handle, self._handle = self._handle, None
+                try:
+                    if os.name == "nt":
+                        import msvcrt
+                        handle.seek(0)
+                        msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+                    else:
+                        import fcntl
+                        fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+                finally:
+                    handle.close()
+        finally:
+            self._thread_lock.release()
+
+
+_RUN_LOCKS: dict[tuple[str, str], _RunMutationLock] = {}
 _RUN_LOCKS_GUARD = threading.Lock()
 _LOG = logging.getLogger("minimax_h3_context_loop.checkpoints")
 
@@ -49,13 +115,25 @@ def _safe_name(value: Any) -> str:
     return text.strip("._-")[:96]
 
 
-def checkpoint_run_lock(output_root: str, run_name: Any) -> threading.RLock:
-    """Return the process-local mutation lock shared by save and delete."""
+def _strict_run_name(value: Any) -> str:
+    requested = str(value or "").strip()
+    normalized = _safe_name(requested)
+    if not normalized:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    if requested != normalized:
+        raise ValueError("Checkpoint operation requires the exact saved run name.")
+    return normalized
+
+
+def checkpoint_run_lock(output_root: str, run_name: Any) -> _RunMutationLock:
+    """Return the cross-process mutation lock shared by save and delete."""
     root = os.path.realpath(os.path.abspath(output_root))
-    run = _safe_name(run_name)
+    run = _strict_run_name(run_name)
     key = (root, run)
     with _RUN_LOCKS_GUARD:
-        return _RUN_LOCKS.setdefault(key, threading.RLock())
+        lock_path = os.path.join(
+            root, "h3_chains", ".run_locks", run + ".lock")
+        return _RUN_LOCKS.setdefault(key, _RunMutationLock(lock_path))
 
 
 def checkpoint_revision_token(scene: Any, segment: Any) -> str:
@@ -112,9 +190,7 @@ class CheckpointGraphManager:
             return False
 
     def _run_dir(self, run_name: Any) -> tuple[str, str]:
-        run = _safe_name(run_name)
-        if not run:
-            raise ValueError("A non-empty H3 chain run_name is required.")
+        run = _strict_run_name(run_name)
         path = os.path.realpath(os.path.join(self.chains_root, run))
         if not self._inside(self.output_root, path):
             raise ValueError("H3 checkpoint run path escapes the output directory.")
@@ -154,6 +230,17 @@ class CheckpointGraphManager:
                 handle.flush()
                 os.fsync(handle.fileno())
             os.replace(temporary, path)
+            try:
+                directory = os.open(os.path.dirname(path), os.O_RDONLY)
+            except OSError:
+                directory = None
+            if directory is not None:
+                try:
+                    os.fsync(directory)
+                except OSError:
+                    pass
+                finally:
+                    os.close(directory)
         finally:
             try:
                 os.unlink(temporary)
@@ -248,7 +335,7 @@ class CheckpointGraphManager:
                 scene = int(match.group(1))
                 if (not isinstance(segment, dict) or
                         int(segment.get("index", -1)) != scene or
-                        _safe_name(metadata.get("run_name") or run) != run):
+                        str(metadata.get("run_name") or run).strip() != run):
                     continue
                 revision = checkpoint_revision_token(scene, segment)
                 if revision:
@@ -423,7 +510,7 @@ class CheckpointGraphManager:
                     scene = int(segment.get("index", int(match.group(1))))
                     revision = str(
                         segment.get("revision") or match.group(2)).lower()
-                    stored_run = _safe_name(metadata.get("run_name") or run)
+                    stored_run = str(metadata.get("run_name") or run).strip()
                     if (scene != int(match.group(1)) or
                             revision != match.group(2) or stored_run != run):
                         continue
@@ -588,6 +675,17 @@ class CheckpointGraphManager:
                     artifact_path_counts[self._artifact_path(artifact_value)] += 1
                 except ValueError:
                     continue
+            archives = record["_metadata"].get("archives")
+            if isinstance(archives, dict):
+                for archive_key in _ARCHIVE_KEYS:
+                    archive_value = archives.get(archive_key)
+                    if not isinstance(archive_value, str) or not archive_value:
+                        continue
+                    try:
+                        artifact_path_counts[
+                            self._artifact_path(archive_value)] += 1
+                    except ValueError:
+                        continue
         return {
             "run_dir": run_dir,
             "run_name": run,
@@ -630,7 +728,7 @@ class CheckpointGraphManager:
         run_dir = scan["run_dir"]
         allowed_roots = [os.path.realpath(os.path.join(run_dir, name)) for name in (
             "segments", "checkpoints", "generated_audio", "blend_segments",
-            "reviews")]
+            "reviews", "recovery_archives")]
         paths: dict[str, tuple[str, bool]] = {
             record["_metadata_path"]: ("revision_metadata", False),
         }
@@ -640,6 +738,13 @@ class CheckpointGraphManager:
                 continue
             path = self._artifact_path(value)
             paths.setdefault(path, (key, False))
+        archives = record["_metadata"].get("archives")
+        if isinstance(archives, dict):
+            for key, kind in _ARCHIVE_KEYS.items():
+                value = archives.get(key)
+                if not isinstance(value, str) or not value:
+                    continue
+                paths.setdefault(self._artifact_path(value), (kind, False))
         video_hash = record["segment_sha256"][:12]
         if video_hash and os.path.isdir(scan["review_dir"]):
             prefix = "clip_%04d.%s." % (record["scene"], video_hash)
@@ -654,6 +759,10 @@ class CheckpointGraphManager:
 
         expected_prefix = "clip_%04d.%s" % (
             record["scene"], record["revision"])
+        expected_archive_root = os.path.realpath(os.path.join(
+            run_dir, "recovery_archives", record["revision"]))
+        recovery_root = os.path.realpath(os.path.join(
+            run_dir, "recovery_archives"))
         canonical = os.path.realpath(os.path.join(
             scan["checkpoint_dir"], "clip_%04d.json" % record["scene"]))
         artifacts = []
@@ -670,8 +779,13 @@ class CheckpointGraphManager:
             adopts_named_path = bool(
                 record.get("adopted_from_revision") and
                 os.path.basename(path).startswith(adopted_prefix))
+            is_archive_path = self._inside(recovery_root, path)
+            owns_archive_path = (
+                is_archive_path and os.path.dirname(path) ==
+                expected_archive_root)
             if (not self._inside(scan["review_dir"], path) and
-                    not owns_named_path and not adopts_named_path):
+                    not owns_named_path and not adopts_named_path and
+                    not is_archive_path):
                 raise ValueError(
                     "Checkpoint revision references a file owned by another revision.")
             try:
@@ -690,7 +804,8 @@ class CheckpointGraphManager:
                 "exists": exists,
                 "size_bytes": size,
                 "shared": bool(shared),
-                "owned": not shared,
+                "owned": bool(not shared and (
+                    not is_archive_path or owns_archive_path)),
                 "_path": path,
                 "_mtime_ns": mtime_ns,
             })

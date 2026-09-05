@@ -14,6 +14,11 @@ except ImportError:  # Standalone unit tests import this module without a packag
     from asset_store import RunAssetStore
 
 try:
+    from .checkpoint_manager import checkpoint_run_lock
+except ImportError:  # Standalone unit tests import this module without a package.
+    from checkpoint_manager import checkpoint_run_lock
+
+try:
     from .contracts_v05 import (
         AUDIO_POLICY_VERSION,
         CONTINUATION_POLICIES,
@@ -81,12 +86,27 @@ H3_CONTEXT_LENGTHS = (
 CONTINUATION_MODES = tuple(CONTINUATION_POLICIES)
 SCENE_LORA_ROUTES = (
     "base", *(chr(ord("a") + offset) for offset in range(26)))
+ARCHIVE_FILENAMES = {
+    "plan": "plan.json",
+    "workflow": "workflow.json",
+    "api_prompt": "api_prompt.json",
+}
 
 
 def _safe_name(value: Any, fallback: str = "") -> str:
     text = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip())
     text = text.strip("._-")
     return (text or fallback)[:96]
+
+
+def _strict_run_name(value: Any) -> str:
+    requested = str(value or "").strip()
+    normalized = _safe_name(requested)
+    if not normalized:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    if requested != normalized:
+        raise ValueError("Run Manager requires the exact saved run name.")
+    return normalized
 
 
 def _read_json(path: str) -> Any:
@@ -135,7 +155,8 @@ def _api_prompt_inputs(document: Any, run_name: str) -> dict[str, Any]:
         if not isinstance(inputs, dict):
             continue
         candidates.append(inputs)
-        if _safe_name(inputs.get("run_name")) == run_name:
+        if (isinstance(inputs.get("run_name"), str) and
+                inputs["run_name"].strip() == run_name):
             exact.append(inputs)
     selected = exact[0] if exact else (candidates[0] if len(candidates) == 1 else None)
     if selected is None:
@@ -164,7 +185,8 @@ def _workflow_inputs(document: Any, run_name: str) -> dict[str, Any]:
             continue
         candidate = (node.get("type"), widgets)
         candidates.append(candidate)
-        if len(widgets) > 1 and _safe_name(widgets[1]) == run_name:
+        if (len(widgets) > 1 and isinstance(widgets[1], str) and
+                widgets[1].strip() == run_name):
             exact.append(candidate)
     selected = exact[0] if exact else (candidates[0] if len(candidates) == 1 else None)
     if selected is None:
@@ -374,14 +396,102 @@ class RunArchiveManager:
         self.assets = RunAssetStore(self.output_root, input_root)
 
     def _run_dir(self, run_name: Any) -> tuple[str, str]:
-        run = _safe_name(run_name)
-        if not run:
-            raise ValueError("A non-empty H3 chain run_name is required.")
+        run = _strict_run_name(run_name)
         path = os.path.realpath(os.path.join(self.chains_root, run))
         root = os.path.realpath(self.output_root)
         if os.path.commonpath([root, path]) != root:
             raise ValueError("H3 run path escapes the output directory.")
         return path, run
+
+    def _active_archive_paths(
+            self, directory: str, run: str) -> dict[str, str] | None:
+        """Return the active tip's coherent immutable recovery snapshot.
+
+        The root archive files are compatibility mirrors and are promoted one
+        at a time. A process failure between those replacements can therefore
+        leave them from different revisions. The most recently committed
+        active checkpoint pointer is the actual commit record and names one
+        immutable snapshot. Commit time, rather than the highest scene number,
+        matters while an earlier scene is being regenerated and later stale
+        pointers have not yet been replaced.
+        """
+        checkpoint_dir = os.path.join(directory, "checkpoints")
+        if not os.path.isdir(checkpoint_dir):
+            return None
+        pointers = []
+        for filename in os.listdir(checkpoint_dir):
+            match = re.fullmatch(r"clip_(\d{4})\.json", filename)
+            if match is not None:
+                path = os.path.join(checkpoint_dir, filename)
+                try:
+                    modified_ns = os.stat(path).st_mtime_ns
+                except OSError:
+                    continue
+                pointers.append((
+                    modified_ns, int(match.group(1)), filename))
+        if not pointers:
+            return None
+        _modified_ns, _scene, filename = max(pointers)
+        try:
+            metadata = _read_json(os.path.join(checkpoint_dir, filename))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise ValueError(
+                "Active checkpoint pointer is unreadable: %s" % exc) from exc
+        if not isinstance(metadata, dict):
+            raise ValueError("Active checkpoint pointer is not a JSON object.")
+        archives = metadata.get("archives")
+        if archives is None:
+            return None
+        if (isinstance(archives, dict)
+                and not any(archives.get(key) for key in ARCHIVE_FILENAMES)):
+            return None
+        if str(metadata.get("run_name") or "").strip() != run:
+            raise ValueError("Active checkpoint pointer belongs to another run.")
+        segment = metadata.get("segment")
+        revision = (str(segment.get("revision") or "").strip().lower()
+                    if isinstance(segment, dict) else "")
+        if re.fullmatch(r"[0-9a-f]{32}", revision) is None:
+            raise ValueError(
+                "Active checkpoint recovery snapshot has no valid revision.")
+        if not isinstance(archives, dict):
+            raise ValueError(
+                "Active checkpoint recovery references are invalid.")
+        snapshot_root = os.path.realpath(os.path.join(
+            directory, "recovery_archives", revision))
+        paths = {}
+        for key, archive_filename in ARCHIVE_FILENAMES.items():
+            value = archives.get(key)
+            if value is None:
+                continue
+            if not isinstance(value, str) or not value:
+                raise ValueError(
+                    "Active checkpoint recovery %s path is invalid." % key)
+            candidate = os.path.realpath(
+                value if os.path.isabs(value)
+                else os.path.join(self.output_root, value))
+            expected = os.path.realpath(os.path.join(
+                snapshot_root, archive_filename))
+            if candidate != expected or not os.path.isfile(candidate):
+                raise ValueError(
+                    "Active checkpoint recovery %s is missing or outside "
+                    "revision %s." % (key, revision[:8]))
+            paths[key] = candidate
+        if "plan" not in paths:
+            raise ValueError("Active checkpoint recovery snapshot has no Plan.")
+        return paths
+
+    def _archive_paths(
+            self, directory: str, run: str
+    ) -> tuple[dict[str, str], bool]:
+        with checkpoint_run_lock(self.output_root, run):
+            active = self._active_archive_paths(directory, run)
+        if active is not None:
+            return active, True
+        return ({
+            key: os.path.join(directory, filename)
+            for key, filename in ARCHIVE_FILENAMES.items()
+            if os.path.isfile(os.path.join(directory, filename))
+        }, False)
 
     def list_runs(self) -> list[dict[str, Any]]:
         if not os.path.isdir(self.chains_root):
@@ -394,11 +504,18 @@ class RunArchiveManager:
             if not run_name or run_name != entry.name:
                 continue
             directory = entry.path
-            plan_path = os.path.join(directory, "plan.json")
-            api_path = os.path.join(directory, "api_prompt.json")
-            workflow_path = os.path.join(directory, "workflow.json")
-            archive_paths = [path for path in (plan_path, api_path, workflow_path)
-                             if os.path.isfile(path)]
+            recovery_error = None
+            try:
+                archive_map, immutable = self._archive_paths(
+                    directory, run_name)
+            except (OSError, TypeError, ValueError,
+                    json.JSONDecodeError) as exc:
+                archive_map, immutable = {}, False
+                recovery_error = str(exc)
+            plan_path = archive_map.get("plan", "")
+            api_path = archive_map.get("api_prompt", "")
+            workflow_path = archive_map.get("workflow", "")
+            archive_paths = list(archive_map.values())
             checkpoint_dir = os.path.join(directory, "checkpoints")
             asset_manifest = os.path.join(directory, "references", "manifest.json")
             checkpoints = 0
@@ -428,10 +545,13 @@ class RunArchiveManager:
                     + int(asset_summary.get("asset_bytes") or 0)),
                 **asset_summary,
                 "sources": {
-                    "api_prompt": os.path.isfile(api_path),
-                    "workflow": os.path.isfile(workflow_path),
-                    "plan": os.path.isfile(plan_path),
+                    "api_prompt": bool(api_path),
+                    "workflow": bool(workflow_path),
+                    "plan": bool(plan_path),
                 },
+                "immutable_recovery": immutable,
+                **({"recovery_error": recovery_error}
+                   if recovery_error else {}),
             })
         runs.sort(key=lambda item: item["modified_at"], reverse=True)
         return runs
@@ -446,8 +566,9 @@ class RunArchiveManager:
         policy_inputs: dict[str, dict[str, Any]] = {}
         sources = []
         warnings = []
-        plan_path = os.path.join(directory, "plan.json")
-        if os.path.isfile(plan_path):
+        archive_map, immutable = self._archive_paths(directory, run)
+        plan_path = archive_map.get("plan", "")
+        if plan_path:
             try:
                 archive = _read_json(plan_path)
                 restored.update(_archive_inputs(archive, run))
@@ -457,8 +578,8 @@ class RunArchiveManager:
             except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
                 warnings.append("plan.json: %s" % exc)
 
-        workflow_path = os.path.join(directory, "workflow.json")
-        if os.path.isfile(workflow_path):
+        workflow_path = archive_map.get("workflow", "")
+        if workflow_path:
             try:
                 values = _workflow_inputs(_read_json(workflow_path), run)
                 if values:
@@ -467,8 +588,8 @@ class RunArchiveManager:
             except (OSError, json.JSONDecodeError) as exc:
                 warnings.append("workflow.json: %s" % exc)
 
-        api_path = os.path.join(directory, "api_prompt.json")
-        if os.path.isfile(api_path):
+        api_path = archive_map.get("api_prompt", "")
+        if api_path:
             try:
                 values = _api_prompt_inputs(_read_json(api_path), run)
                 if values:
@@ -490,6 +611,7 @@ class RunArchiveManager:
             "policy_inputs": policy_inputs,
             "sources": sources,
             "warnings": warnings,
+            "immutable_recovery": immutable,
         }
 
     def load_run(self, run_name: Any) -> dict[str, Any]:

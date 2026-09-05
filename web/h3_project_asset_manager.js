@@ -10,11 +10,11 @@ import {
     publishProjectAssetCatalogChanged,
     serializedProjectAssetCatalog,
     serializedProjectAssetIdentity,
-} from "./h3_project_asset_sync_core.mjs?v=0.7.1";
+} from "./h3_project_asset_sync_core.mjs?v=0.7.0";
 import {
     projectMutationOptions,
     registerProjectOwnership,
-} from "./h3_project_ownership.mjs?v=0.7.2";
+} from "./h3_project_ownership.mjs?v=0.7.0";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const SEMANTIC_SETTING_WIDGETS = [
@@ -439,7 +439,17 @@ function mount(node) {
         ) ? node.properties.h3_project_asset_expanded_folders.map(String) : []),
         previewMode: previewSelect.value === "full" ? "full" : "light",
     };
-    const project = () => String(runNameInput.value || "").trim();
+    // The text field is only a draft until switchProject finishes flushing
+    // the previous Run. Every mutation continues to target the serialized,
+    // committed widget value meanwhile.
+    const project = () => String(
+        runNameWidget?.value ?? runNameInput.value ?? "",
+    ).trim();
+    const validProjectName = (value) => (
+        /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,94}[A-Za-z0-9])?$/.test(
+            String(value ?? "").trim(),
+        )
+    );
     function showOwnership(payload) {
         const proof = ownership.proof();
         if (ownershipWidget) ownershipWidget.value = proof
@@ -1875,8 +1885,13 @@ function mount(node) {
         );
         return true;
     }
-    async function refresh() {
+    async function refresh({switchPrepared = false} = {}) {
         const requestedProject = project();
+        if (!switchPrepared && ownership.runName
+                && ownership.runName !== requestedProject) {
+            await switchProject(requestedProject, false);
+            return;
+        }
         const sequence = ++refreshSequence;
         if (!requestedProject) {
             void refreshProjectSuggestions();
@@ -2099,8 +2114,52 @@ function mount(node) {
         clearFileDropState();
         void uploadFiles(files, {dropped: true});
     }, dropListenerOptions);
-    function switchProject(selectedProject) {
-        if (!state.projectNames.has(selectedProject)) return false;
+    async function flushProjectEditors(runName) {
+        if (!runName) return;
+        const rootGraph = node.graph?.rootGraph ?? node.graph ?? app.graph;
+        const editors = [];
+        const visit = (graph) => {
+            for (const candidate of graph?._nodes ?? graph?.nodes ?? []) {
+                if (candidate !== node
+                        && typeof candidate?._h3FlushProjectWrites === "function") {
+                    editors.push(candidate);
+                }
+                if (candidate?.subgraph) visit(candidate.subgraph);
+            }
+        };
+        visit(rootGraph);
+        const results = await Promise.allSettled(editors.map(
+            (editorNode) => editorNode._h3FlushProjectWrites(runName),
+        ));
+        const failed = results.find((result) => result.status === "rejected");
+        if (failed) throw failed.reason;
+    }
+
+    async function performProjectSwitch(selectedProject, requireExisting = true) {
+        selectedProject = String(selectedProject ?? "").trim();
+        if (requireExisting && !state.projectNames.has(selectedProject)) return false;
+        if (!validProjectName(selectedProject)) {
+            setStatus(
+                "Run name must be 1-96 characters, start/end with a letter or number, and use only letters, numbers, '.', '_' or '-'.",
+                true,
+            );
+            return false;
+        }
+        const previousProject = String(ownership.runName ?? "");
+        if (previousProject && previousProject !== selectedProject) {
+            try {
+                setStatus(`Saving pending edits for ${previousProject}…`);
+                await flushProjectEditors(previousProject);
+                if (ownership.owned) await ownership.release();
+            } catch (error) {
+                setStatus(
+                    `Stayed on ${previousProject}: pending edits could not be saved (${error.message}).`,
+                    true,
+                );
+                runNameInput.value = previousProject;
+                return false;
+            }
+        }
         refreshSequence += 1;
         state.selected = "";
         state.folder = "";
@@ -2112,21 +2171,32 @@ function mount(node) {
         }
         syncDownstreamPlan(node, selectedProject);
         node.graph?.setDirtyCanvas?.(true, true);
-        void refresh();
+        await refresh({switchPrepared:true});
         return true;
+    }
+    let projectSwitchPromise = Promise.resolve(false);
+    function switchProject(selectedProject, requireExisting = true) {
+        // Blur, Enter, graph synchronization, and the project dropdown can
+        // request a switch nearly together. Serialize them so an older slow
+        // flush/refresh can never commit after the user's newer selection.
+        const operation = projectSwitchPromise
+            .catch(() => false)
+            .then(() => performProjectSwitch(
+                selectedProject, requireExisting,
+            ));
+        projectSwitchPromise = operation;
+        return operation;
     }
     runNameInput.addEventListener("input", () => {
         refreshSequence += 1;
-        void ownership.select("");
         const draft = String(runNameInput.value || "");
-        if (runNameWidget) {
-            runNameWidget.value = draft;
-            runNameWidget.callback?.(draft);
-        }
-        setStatus("Press Enter or leave the Run name field to load this project.");
+        setStatus(validProjectName(draft)
+            ? "Press Enter or leave the Run name field to load this project."
+            : "Run names use letters, numbers, '.', '_' and '-' only.",
+            !validProjectName(draft));
     });
     runNameInput.addEventListener("change", () => {
-        if (!switchProject(project())) void refresh();
+        void switchProject(runNameInput.value, false);
     });
     runNameInput.addEventListener("keydown", (event) => {
         if (event.key !== "Enter") return;
@@ -2136,7 +2206,7 @@ function mount(node) {
     projectMenu.addEventListener("change", () => {
         const selectedProject = String(projectMenu.value || "");
         projectMenu.value = "";
-        if (selectedProject) switchProject(selectedProject);
+        if (selectedProject) void switchProject(selectedProject);
     });
     previewSelect.addEventListener("change", () => {
         state.previewMode = previewSelect.value === "full" ? "full" : "light";

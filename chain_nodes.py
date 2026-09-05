@@ -33,6 +33,7 @@ import time
 import uuid
 import wave
 from collections import deque
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from fractions import Fraction
 from typing import Any
@@ -94,6 +95,7 @@ from .run_manager import RunArchiveManager, archive_policy_inputs
 from .asset_store import MAX_DIRECT_ASSET_BINDINGS, RunAssetStore
 from .project_assets import (
     PROJECT_ASSET_FORMAT,
+    ProjectAssetConflictError,
     ProjectAssetStore,
 )
 from .av_timing import (
@@ -147,6 +149,7 @@ from .project_ownership import (
     claim_project_ownership,
     heartbeat_project_ownership,
     ownership_status,
+    project_write_guard,
     release_project_ownership,
     require_project_ownership,
 )
@@ -218,10 +221,18 @@ def _request_project_ownership(request: Any) -> dict[str, Any] | None:
     return _project_ownership_proof({"owner_id": owner_id, "epoch": epoch})
 
 
+def _project_write_commit_guard(run_name: Any, proof: Any, operation: str):
+    """Guard a known project while retaining legacy anonymous live reviews."""
+    if not str(run_name or "").strip():
+        return nullcontext(None)
+    return project_write_guard(
+        _output_root(), run_name, _project_ownership_proof(proof), operation)
+
+
 def _require_project_write(run_name: Any, proof: Any,
                            operation: str) -> dict[str, Any] | None:
     return require_project_ownership(
-        _output_root(), _safe_name(run_name, ""),
+        _output_root(), _strict_run_name(run_name),
         _project_ownership_proof(proof), operation)
 
 
@@ -321,6 +332,10 @@ _PENDING_FINAL_REVIEW_PREVIEWS: dict[
     tuple[str, str], dict[str, Any]
 ] = {}
 _FFMPEG_PROBE_CACHE: dict[str, bool] = {}
+
+
+class EditorialConflictError(ValueError):
+    """The final-cut sidecar changed after a browser loaded its snapshot."""
 
 
 def _canonical_json(value: Any) -> str:
@@ -640,6 +655,20 @@ def _safe_name(value: str, fallback: str = "chain") -> str:
     text = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip())
     text = text.strip("._-")
     return (text or fallback)[:96]
+
+
+def _strict_run_name(value: Any) -> str:
+    """Return an exact Run identity; never redirect input to another Run."""
+    requested = str(value or "").strip()
+    normalized = _safe_name(requested, "")
+    if not normalized:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    if requested != normalized:
+        raise ValueError(
+            "H3 run_name must be 1-96 characters, start and end with a "
+            "letter or number, and contain only letters, numbers, '.', '_' "
+            "or '-'. Use %r for this Run." % normalized)
+    return normalized
 
 
 def _expand_filename_date(value: str, now: datetime | None = None) -> str:
@@ -4381,8 +4410,11 @@ def _run_local_reference_cache(
         run_name: Any, scene: int, value: Any) -> dict[str, Any] | None:
     """Return a verified run-local equivalent of one cache descriptor."""
     descriptor = _reference_cache_descriptor(value)
-    normalized_run = _safe_name(run_name, "")
-    if descriptor is None or not normalized_run or int(scene) < 1:
+    try:
+        normalized_run = _strict_run_name(run_name)
+    except ValueError:
+        return None
+    if descriptor is None or int(scene) < 1:
         return None
     root = os.path.abspath(os.path.join(
         _run_dir({"run_name": normalized_run}), "reference_cache"))
@@ -6907,6 +6939,9 @@ def _normalize_plan(
     chain_policy: Any = None,
     legacy_prompt_seed: int = 0,
 ) -> dict[str, Any]:
+    requested_run_name = str(run_name or "").strip()
+    normalized_run_name = (_strict_run_name(requested_run_name)
+                           if requested_run_name else "h3_chain")
     try:
         raw = json.loads(str(plan_json or ""))
     except json.JSONDecodeError as exc:
@@ -7598,7 +7633,7 @@ def _normalize_plan(
         compatibility["context_storage_length"] = context_storage_length
     plan = {
         "version": PLAN_VERSION,
-        "run_name": _safe_name(run_name, "h3_chain"),
+        "run_name": normalized_run_name,
         "prompt_prefix": prompt_prefix,
         "shots": shots,
         "compatibility": compatibility,
@@ -7733,7 +7768,8 @@ def _run_manager_source_track_timeline(
 
 def _run_dir(plan: dict[str, Any]) -> str:
     root = os.path.realpath(_output_root())
-    path = os.path.realpath(os.path.join(root, "h3_chains", plan["run_name"]))
+    run_name = _strict_run_name(plan.get("run_name"))
+    path = os.path.realpath(os.path.join(root, "h3_chains", run_name))
     try:
         inside = os.path.commonpath((root, path)) == root
     except ValueError:
@@ -7801,9 +7837,7 @@ def _request_is_loopback(request: Any) -> bool:
 
 
 def _open_run_output_directory(run_name: Any) -> dict[str, Any]:
-    normalized = _safe_name(run_name, "")
-    if not normalized:
-        raise ValueError("A non-empty H3 chain run_name is required.")
+    normalized = _strict_run_name(run_name)
     path = _run_dir({"run_name": normalized})
     os.makedirs(path, exist_ok=True)
     opened, error = _launch_directory(path)
@@ -7935,7 +7969,8 @@ def _run_folder_deletion_preview(run_name: Any) -> dict[str, Any]:
 
 
 def _delete_run_folder(run_name: Any, snapshot: Any,
-                       confirmation: Any) -> dict[str, Any]:
+                       confirmation: Any,
+                       ownership_proof: Any = None) -> dict[str, Any]:
     path, chains_root, normalized = _run_folder_delete_target(run_name)
     if str(confirmation or "") != normalized:
         raise ValueError(
@@ -7944,7 +7979,10 @@ def _delete_run_folder(run_name: Any, snapshot: Any,
     if re.fullmatch(r"[0-9a-f]{64}", expected) is None:
         raise ValueError(
             "Complete-folder deletion requires a current preview snapshot.")
-    with checkpoint_run_lock(_output_root(), normalized):
+    with checkpoint_run_lock(
+            _output_root(), normalized), project_write_guard(
+                _output_root(), normalized, ownership_proof,
+                "delete the complete run folder"):
         preview = _run_folder_deletion_preview(normalized)
         if not secrets.compare_digest(expected, preview["snapshot"]):
             raise _RunFolderDeleteChanged(preview)
@@ -7999,7 +8037,7 @@ def _video_output_item(path: str) -> dict[str, str]:
 
 def _final_review_preview_key(document: dict[str, Any]) -> tuple[str, str]:
     return (
-        _safe_name(document.get("run_name"), "h3_chain"),
+        _strict_run_name(document.get("run_name")),
         str(document.get("plan_hash") or ""),
     )
 
@@ -8088,7 +8126,20 @@ def _atomic_text(path: str, value: str) -> None:
         # CRLF. Prompt hashes are defined over the normalized UTF-8 text.
         with open(temporary, "wb") as handle:
             handle.write(str(value).encode("utf-8"))
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, path)
+        try:
+            directory = os.open(os.path.dirname(path), os.O_RDONLY)
+        except OSError:
+            directory = None
+        if directory is not None:
+            try:
+                os.fsync(directory)
+            except OSError:
+                pass
+            finally:
+                os.close(directory)
     finally:
         _safe_unlink(temporary)
 
@@ -8134,7 +8185,20 @@ def _atomic_json(path: str, value: Any) -> None:
         with open(temporary, "w", encoding="utf-8") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2, sort_keys=True)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, path)
+        try:
+            directory = os.open(os.path.dirname(path), os.O_RDONLY)
+        except OSError:
+            directory = None
+        if directory is not None:
+            try:
+                os.fsync(directory)
+            except OSError:
+                pass
+            finally:
+                os.close(directory)
     finally:
         _safe_unlink(temporary)
 
@@ -8145,9 +8209,7 @@ def _read_json(path: str) -> Any:
 
 
 def _run_editorial_path(run_name: Any) -> str:
-    normalized = _safe_name(run_name, "")
-    if not normalized:
-        raise ValueError("A non-empty H3 chain run_name is required.")
+    normalized = _strict_run_name(run_name)
     return os.path.join(
         _output_root(), "h3_chains", normalized, "editorial.json")
 
@@ -8155,9 +8217,7 @@ def _run_editorial_path(run_name: Any) -> str:
 def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise ValueError("H3 run editorial data must be a JSON object.")
-    normalized_run = _safe_name(run_name, "")
-    if not normalized_run:
-        raise ValueError("A non-empty H3 chain run_name is required.")
+    normalized_run = _strict_run_name(run_name)
     raw_order = value.get("scene_order", [])
     raw_chapters = value.get("chapters", [])
     raw_placements = value.get("placements", [])
@@ -8385,7 +8445,7 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
             "media_mode": "picture_only",
         })
     replacements.sort(key=lambda item: int(item["scene"]))
-    return {
+    document = {
         "format": "h3_chain_editorial_v1",
         "run_name": normalized_run,
         "updated_at": str(value.get("updated_at") or
@@ -8400,12 +8460,24 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
         "alternate_draft": alternate_draft,
         "replacements": replacements,
     }
+    stored_revision = str(value.get("revision") or "").strip().lower()
+    document["revision"] = (
+        stored_revision if re.fullmatch(r"[0-9a-f]{32}", stored_revision)
+        else _fingerprint(document)[:32])
+    return document
 
 
 def _load_run_editorial(run_name: Any) -> dict[str, Any]:
-    normalized = _safe_name(run_name, "")
+    requested = str(run_name or "").strip()
+    try:
+        normalized = _strict_run_name(requested) if requested else ""
+    except ValueError as exc:
+        _LOG.warning(
+            "Ignoring H3 editorial request with an invalid Run name: %s", exc)
+        normalized = ""
     empty = {
         "format": "h3_chain_editorial_v1", "run_name": normalized,
+        "revision": "",
         "chapters": [], "scene_order": [], "placements": [], "trims": [],
         "locked_scene_ids": [],
         "subtitles": {"mode": "off", "asset_id": "", "offset_seconds": 0.0},
@@ -8553,6 +8625,7 @@ def _select_editorial_alternate(
         editorial["updated_at"] = datetime.now(timezone.utc).isoformat(
             timespec="seconds").replace("+00:00", "Z")
         normalized = _normalize_run_editorial(editorial, plan["run_name"])
+        normalized["revision"] = uuid.uuid4().hex
         _atomic_json(_run_editorial_path(plan["run_name"]), normalized)
     return normalized
 
@@ -8638,8 +8711,8 @@ def _editorial_presentation_segments(
             continue
         revision = str(replacement["alternate_revision"])
         metadata_path = _versioned_path(
-            _artifact_paths({"run_name": _safe_name(run_name, "h3_chain")},
-                            scene)["metadata"], revision)
+            _artifact_paths({"run_name": run_name}, scene)["metadata"],
+            revision)
         if not os.path.isfile(metadata_path):
             raise FileNotFoundError(
                 "Selected scene %d alternate revision is missing: %s" %
@@ -9252,7 +9325,7 @@ def _matching_plan_node_ids(api_prompt: Any,
         candidates.append(candidate)
         run_name = inputs.get("run_name")
         if (isinstance(run_name, str) and
-                _safe_name(run_name, "h3_chain") == plan["run_name"]):
+                run_name.strip() == plan["run_name"]):
             exact.append(candidate)
     selected = exact or (candidates if len(candidates) == 1 else [])
     for _node_id, inputs in selected:
@@ -9298,7 +9371,7 @@ def _patched_workflow(workflow: Any, plan: dict[str, Any],
                     else None)
         if (node_id in plan_node_ids or
                 (isinstance(run_name, str) and
-                 _safe_name(run_name, "h3_chain") == plan["run_name"])):
+                 run_name.strip() == plan["run_name"])):
             selected.append(node)
     if not selected and len(candidates) == 1:
         selected = candidates
@@ -9309,37 +9382,201 @@ def _patched_workflow(workflow: Any, plan: dict[str, Any],
     return document
 
 
-def _write_run_archives(plan: dict[str, Any], api_prompt: Any = None,
-                        extra_pnginfo: Any = None) -> dict[str, str]:
-    """Persist recovery documents and return output-relative paths.
-
-    `plan.json` is always written and represents the exact effective revision,
-    including review-gate prompt/seed changes. The frontend workflow and API
-    prompt are written when ComfyUI supplies their standard hidden metadata.
-    Existing workflow archives are retained if a non-Comfy caller later saves
-    another segment without hidden metadata.
-    """
+def _run_archive_documents(
+        plan: dict[str, Any], api_prompt: Any = None,
+        extra_pnginfo: Any = None) -> dict[str, Any]:
+    """Build one internally consistent recovery snapshot in memory."""
     paths = _run_archive_paths(plan)
     archived_plan = _archivable_plan(plan)
     archived_plan["format"] = "h3_chain_plan_archive_v1"
     archived_plan["editor_plan"] = _effective_editor_plan(plan)
-    _atomic_json(paths["plan"], archived_plan)
+    documents: dict[str, Any] = {"plan": archived_plan}
 
     patched_prompt, plan_node_ids = _matching_plan_node_ids(api_prompt, plan)
+    if patched_prompt is None and os.path.isfile(paths["api_prompt"]):
+        try:
+            patched_prompt, plan_node_ids = _matching_plan_node_ids(
+                _read_json(paths["api_prompt"]), plan)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            patched_prompt = None
     if patched_prompt is not None:
-        _atomic_json(paths["api_prompt"], patched_prompt)
+        documents["api_prompt"] = patched_prompt
 
     workflow = None
     if isinstance(extra_pnginfo, dict):
         workflow = extra_pnginfo.get("workflow")
+    if workflow is None and os.path.isfile(paths["workflow"]):
+        try:
+            workflow = _read_json(paths["workflow"])
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            workflow = None
     patched_workflow = _patched_workflow(workflow, plan, plan_node_ids)
     if patched_workflow is not None:
-        _atomic_json(paths["workflow"], patched_workflow)
+        documents["workflow"] = patched_workflow
+    return documents
 
-    return _available_run_archives(plan)
+
+def _run_archive_snapshot_paths(
+        plan: dict[str, Any], revision: str) -> dict[str, str]:
+    token = str(revision or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{32}", token) is None:
+        raise ValueError("Recovery archive revision must be a revision id.")
+    root = os.path.join(_run_dir(plan), "recovery_archives", token)
+    return {
+        "plan": os.path.join(root, "plan.json"),
+        "workflow": os.path.join(root, "workflow.json"),
+        "api_prompt": os.path.join(root, "api_prompt.json"),
+    }
+
+
+def _promote_run_archive_snapshot(
+        plan: dict[str, Any], archives: dict[str, str]) -> dict[str, str]:
+    """Publish canonical recovery files from an immutable snapshot."""
+    canonical = _run_archive_paths(plan)
+    validated, _revision = _validated_run_archive_snapshot(plan, archives)
+    promoted = {}
+    for key, source in validated.items():
+        document = _read_json(source)
+        _atomic_json(canonical[key], document)
+        promoted[key] = _relative_output_path(canonical[key])
+    return promoted
+
+
+def _validated_run_archive_snapshot(
+        plan: dict[str, Any], archives: Any,
+        expected_revision: str | None = None
+) -> tuple[dict[str, str], str]:
+    """Validate that archive references form one in-run immutable snapshot."""
+    if not isinstance(archives, dict):
+        raise ValueError("Recovery archive references are not a JSON object.")
+    plan_value = archives.get("plan")
+    if not isinstance(plan_value, str) or not plan_value:
+        raise ValueError("Recovery archive snapshot has no Plan document.")
+    plan_source = _absolute_output_path(plan_value)
+    revision = os.path.basename(os.path.dirname(plan_source)).lower()
+    if re.fullmatch(r"[0-9a-f]{32}", revision) is None:
+        raise ValueError("Recovery archive snapshot has an invalid revision id.")
+    if expected_revision is not None and revision != str(
+            expected_revision or "").strip().lower():
+        raise ValueError("Recovery archive belongs to a different revision.")
+    expected = _run_archive_snapshot_paths(plan, revision)
+    validated = {}
+    for key in ("plan", "workflow", "api_prompt"):
+        value = archives.get(key)
+        if value is None:
+            continue
+        if not isinstance(value, str) or not value:
+            raise ValueError("Recovery archive %s path is invalid." % key)
+        source = _absolute_output_path(value)
+        if source != os.path.realpath(expected[key]):
+            raise ValueError(
+                "Recovery archive %s is outside revision %s." %
+                (key, revision[:8]))
+        if not os.path.isfile(source):
+            raise FileNotFoundError(
+                "Recovery archive %s is missing: %s" % (key, source))
+        validated[key] = source
+    if "plan" not in validated:
+        raise ValueError("Recovery archive snapshot has no Plan document.")
+    return validated, revision
+
+
+def _checkpoint_run_archives(
+        plan: dict[str, Any], metadata: dict[str, Any]) -> dict[str, str]:
+    """Return one checkpoint's validated immutable recovery documents."""
+    archives = metadata.get("archives") if isinstance(metadata, dict) else None
+    if archives is None:
+        return {}
+    if (isinstance(archives, dict)
+            and not any(archives.get(key) for key in (
+                "plan", "workflow", "api_prompt"))):
+        # Some transitional builds serialized an empty placeholder. It carries
+        # no snapshot claim, so retain the legacy root-archive fallback.
+        return {}
+    segment = metadata.get("segment")
+    revision = (str(segment.get("revision") or "").strip().lower()
+                if isinstance(segment, dict) else "")
+    validated, _token = _validated_run_archive_snapshot(
+        plan, archives, revision)
+    return {key: _relative_output_path(path)
+            for key, path in validated.items()}
+
+
+def _remove_run_archive_snapshot(
+        plan: dict[str, Any], revision: str) -> None:
+    paths = _run_archive_snapshot_paths(plan, revision)
+    root = os.path.dirname(paths["plan"])
+    if os.path.isdir(root):
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def _write_run_archives(
+        plan: dict[str, Any], api_prompt: Any = None,
+        extra_pnginfo: Any = None, *, revision: str | None = None,
+        promote: bool = True) -> dict[str, str]:
+    """Persist an immutable recovery snapshot, then optionally promote it.
+
+    Scene publication passes its own revision and promotes only after its
+    canonical checkpoint pointer commits. Other callers receive a fresh
+    recovery revision. Canonical ``plan.json`` / workflow files remain for
+    older recovery tools, while every committed scene keeps exact snapshot
+    paths that are never overwritten.
+    """
+    token = str(revision or uuid.uuid4().hex).lower()
+    snapshot_paths = _run_archive_snapshot_paths(plan, token)
+    documents = _run_archive_documents(plan, api_prompt, extra_pnginfo)
+    try:
+        for key, document in documents.items():
+            _atomic_json(snapshot_paths[key], document)
+    except Exception:
+        _remove_run_archive_snapshot(plan, token)
+        raise
+    archives = {
+        key: _relative_output_path(snapshot_paths[key])
+        for key in documents
+    }
+    if promote:
+        with checkpoint_run_lock(
+                _output_root(), plan["run_name"]), project_write_guard(
+                    _output_root(), plan["run_name"],
+                    plan.get("_project_ownership"),
+                    "publish Run recovery archives"):
+            _promote_run_archive_snapshot(plan, archives)
+    return archives
+
+
+def _promote_checkpoint_run_archives(
+        plan: dict[str, Any], metadata: dict[str, Any]) -> dict[str, str]:
+    """Promote the exact recovery snapshot stored with a checkpoint."""
+    archives = _checkpoint_run_archives(plan, metadata)
+    if archives:
+        with checkpoint_run_lock(_output_root(), plan["run_name"]):
+            return _promote_run_archive_snapshot(plan, archives)
+    # Legacy revisions predate immutable archive snapshots. Rebuild their
+    # canonical recovery documents from the restored effective Plan.
+    return _write_run_archives(plan)
 
 
 def _available_run_archives(plan: dict[str, Any]) -> dict[str, str]:
+    checkpoint_dir = os.path.join(_run_dir(plan), "checkpoints")
+    if os.path.isdir(checkpoint_dir):
+        active = []
+        for filename in os.listdir(checkpoint_dir):
+            match = re.fullmatch(r"clip_(\d{4})\.json", filename)
+            if match is not None:
+                path = os.path.join(checkpoint_dir, filename)
+                try:
+                    modified_ns = os.stat(path).st_mtime_ns
+                except OSError:
+                    continue
+                active.append((
+                    modified_ns, int(match.group(1)), filename))
+        if active:
+            _modified_ns, _scene, filename = max(active)
+            metadata = _read_json(os.path.join(checkpoint_dir, filename))
+            exact = _checkpoint_run_archives(plan, metadata)
+            if exact:
+                return exact
     paths = _run_archive_paths(plan)
     return {key: _relative_output_path(path) for key, path in paths.items()
             if os.path.isfile(path)}
@@ -10629,6 +10866,7 @@ def _load_resume_state(
         plan: dict[str, Any], start_clip: int,
         verify_history: bool = True, source_timeline: Any = None,
         source_audio: Any = None) -> dict[str, Any]:
+    _recover_checkpoint_pointer_transactions(plan.get("run_name"))
     previous_index = start_clip - 1
     context_sources = _resume_context_predecessors(plan, int(start_clip))
     consumed_predecessors = set(context_sources["scenes"])
@@ -14734,7 +14972,10 @@ class MiniMaxH3ChainExternalVideo:
                     "audio_sha256": _file_sha256(paths["audio"]),
                     "audio_sample_rate": int(normalized_audio["sample_rate"]),
                 })
-            _atomic_json(paths["metadata"], prelude)
+            with _project_write_commit_guard(
+                    plan["run_name"], plan.get("_project_ownership"),
+                    "publish existing-video project artifacts"):
+                _atomic_json(paths["metadata"], prelude)
             prelude["metadata"] = _relative_output_path(paths["metadata"])
             external_context["prelude"] = prelude
 
@@ -16960,9 +17201,7 @@ def _plan_studio_preview_cleanup() -> None:
 
 
 def _plan_studio_presentation_path(run_name: Any) -> str:
-    normalized = _safe_name(run_name, "")
-    if not normalized:
-        raise ValueError("A non-empty H3 chain run_name is required.")
+    normalized = _strict_run_name(run_name)
     return _absolute_output_path(os.path.join(
         "h3_chains", normalized, "plan_studio_presentation.json"))
 
@@ -16993,11 +17232,10 @@ def _validated_plan_studio_source_audio_record(value: Any) -> dict[str, Any]:
 
 def _save_plan_studio_presentation(
         payload: dict[str, Any], records: dict[str, dict[str, Any]],
-        source_audio: dict[str, Any] | None) -> None:
+        source_audio: dict[str, Any] | None,
+        ownership_proof: Any = None) -> None:
     """Persist UI-only media discovery without changing the generation plan."""
-    run_name = _safe_name(payload.get("run_name"), "")
-    if not run_name:
-        return
+    run_name = _strict_run_name(payload.get("run_name"))
     public = dict(payload)
     public["run_name"] = run_name
     public["token"] = ""
@@ -17017,14 +17255,15 @@ def _save_plan_studio_presentation(
         "records": safe_records,
         "source_audio": safe_source_audio,
     }
-    _atomic_json(_plan_studio_presentation_path(run_name), document)
+    with _project_write_commit_guard(
+            run_name, ownership_proof,
+            "update the Plan Studio presentation"):
+        _atomic_json(_plan_studio_presentation_path(run_name), document)
 
 
 def _restore_plan_studio_presentation(run_name: Any) -> dict[str, Any]:
     """Restore a saved presentation and issue a fresh in-memory media token."""
-    normalized = _safe_name(run_name, "")
-    if not normalized:
-        raise ValueError("A non-empty H3 chain run_name is required.")
+    normalized = _strict_run_name(run_name)
     path = _plan_studio_presentation_path(normalized)
     if not os.path.isfile(path):
         raise FileNotFoundError(
@@ -17032,7 +17271,7 @@ def _restore_plan_studio_presentation(run_name: Any) -> dict[str, Any]:
     document = _read_json(path)
     if not isinstance(document, dict) or int(document.get("version", 0)) != 1:
         raise ValueError("Saved Plan Studio presentation is invalid.")
-    if _safe_name(document.get("run_name"), "") != normalized:
+    if str(document.get("run_name") or "").strip() != normalized:
         raise ValueError("Saved Plan Studio presentation belongs to another run.")
     public = document.get("public")
     records = document.get("records")
@@ -17275,7 +17514,8 @@ def _register_plan_studio_source_previews(
     source_has_audio = source_audio_kind != "none"
     if not records and source_audio is None and not timeline_available:
         try:
-            _save_plan_studio_presentation(payload, {}, None)
+            _save_plan_studio_presentation(
+                payload, {}, None, plan.get("_project_ownership"))
         except OSError as exc:
             _LOG.warning("Plan Studio could not save its empty track: %s", exc)
         return payload
@@ -17327,7 +17567,8 @@ def _register_plan_studio_source_previews(
         "status": "; ".join(status_parts) + ".",
     })
     try:
-        _save_plan_studio_presentation(payload, records, source_audio)
+        _save_plan_studio_presentation(
+            payload, records, source_audio, plan.get("_project_ownership"))
     except OSError as exc:
         _LOG.warning("Plan Studio could not save its track: %s", exc)
     return payload
@@ -17731,9 +17972,9 @@ def _project_asset_model_upscale(image: Any, upscale_model: Any) -> Any:
 def _execute_project_asset_model_operation(
         store: ProjectAssetStore, run_name: str, operation: dict[str, Any],
         upscale_model: Any, ownership_proof: Any = None) -> dict[str, Any]:
+    run_name = _strict_run_name(run_name)
     operation_project = str(operation.get("project") or "").strip()
-    if (operation_project
-            and _safe_name(operation_project, "") != _safe_name(run_name, "")):
+    if operation_project and operation_project != run_name:
         raise ValueError(
             "Pending project asset operation belongs to another Run name.")
     existing = store.operation_asset(
@@ -17763,28 +18004,30 @@ def _execute_project_asset_model_operation(
         # Model execution can outlive a browser ownership takeover. Recheck
         # the fencing epoch immediately before publishing the derived asset;
         # a stale workflow may finish compute but cannot alter the catalog.
-        _require_project_write(
-            run_name, ownership_proof, "publish an upscaled image variant")
-        return store.register_derived_image(
-            run_name, operation.get("asset_id"), temporary,
-            tag=operation.get("tag", ""),
-            folder_id=(operation.get("folder_id")
-                       if "folder_id" in operation else None),
-            operation_id=operation.get("operation_id", ""),
-            transform={
-                "kind": "model_upscale_crop",
-                "crop": {key: geometry[key]
-                         for key in ("x", "y", "width", "height")},
-                "target": {
-                    "width": geometry["target_width"],
-                    "height": geometry["target_height"],
-                },
-                "source": {
-                    "width": geometry["source_width"],
-                    "height": geometry["source_height"],
-                },
-                "model_scale": float(getattr(upscale_model, "scale", 1.0)),
-            })
+        with _project_write_commit_guard(
+                run_name, ownership_proof,
+                "publish an upscaled image variant"):
+            return store.register_derived_image(
+                run_name, operation.get("asset_id"), temporary,
+                tag=operation.get("tag", ""),
+                folder_id=(operation.get("folder_id")
+                           if "folder_id" in operation else None),
+                operation_id=operation.get("operation_id", ""),
+                transform={
+                    "kind": "model_upscale_crop",
+                    "crop": {key: geometry[key]
+                             for key in ("x", "y", "width", "height")},
+                    "target": {
+                        "width": geometry["target_width"],
+                        "height": geometry["target_height"],
+                    },
+                    "source": {
+                        "width": geometry["source_width"],
+                        "height": geometry["source_height"],
+                    },
+                    "model_scale": float(
+                        getattr(upscale_model, "scale", 1.0)),
+                })
     finally:
         _safe_unlink(temporary)
 
@@ -17969,9 +18212,12 @@ class MiniMaxH3ProjectAssetManager:
             completed_operation = str(
                 (result.get("asset") or {}).get("id") or "")
         if tagged_references is not None and can_write:
-            store.sync_reference_slots(
-                run_name,
-                _project_asset_reference_templates(tagged_references))
+            with _project_write_commit_guard(
+                    run_name, ownership_json,
+                    "synchronize project reference slots"):
+                store.sync_reference_slots(
+                    run_name,
+                    _project_asset_reference_templates(tagged_references))
         catalog = store.public_catalog(run_name)
         references = _make_tagged_references([])
         semantic_entries = []
@@ -18222,21 +18468,30 @@ class MiniMaxH3ChainRunManager:
             managed_plan = dict(plan)
             managed_plan["source_timeline"] = (
                 _source_timeline_recovery_record(managed_timeline))
-            _atomic_json(
-                os.path.join(_run_dir(plan), "source_timeline.json"),
-                managed_plan["source_timeline"])
+            with _project_write_commit_guard(
+                    plan["run_name"], plan.get("_project_ownership"),
+                    "archive Run Manager source media"):
+                _atomic_json(
+                    os.path.join(_run_dir(plan), "source_timeline.json"),
+                    managed_plan["source_timeline"])
         try:
             if bindings:
-                result = RunAssetStore(_output_root(), _input_root()).save(
-                    plan["run_name"], bindings, {
-                        "images": bool(archive_images),
-                        "audio": bool(archive_audio),
-                        "video": bool(archive_video),
-                    })
+                with _project_write_commit_guard(
+                        plan["run_name"], plan.get("_project_ownership"),
+                        "archive Run Manager project assets"):
+                    result = RunAssetStore(
+                        _output_root(), _input_root()).save(
+                            plan["run_name"], bindings, {
+                                "images": bool(archive_images),
+                                "audio": bool(archive_audio),
+                                "video": bool(archive_video),
+                            })
                 if result.get("warnings"):
                     _LOG.warning(
                         "H3 Run Manager asset archive warnings for %s: %s",
                         plan["run_name"], "; ".join(result["warnings"]))
+        except ProjectOwnershipError:
+            raise
         except (OSError, TypeError, ValueError) as exc:
             # Recovery metadata is supplementary and must never waste a long
             # H3 generation that already reached this pass-through.
@@ -18834,8 +19089,12 @@ class MiniMaxH3ChainCurrent:
         # execution reaches Current Shot; subsequent editor changes branch
         # from it while the Plan JSON remains compact.
         try:
-            PromptHistoryStore(_output_root()).mark_executed(
-                plan["run_name"], shot["id"], shot.get("scene_prompt", ""))
+            with _project_write_commit_guard(
+                    plan["run_name"], plan.get("_project_ownership"),
+                    "mark prompt history executed"):
+                PromptHistoryStore(_output_root()).mark_executed(
+                    plan["run_name"], shot["id"],
+                    shot.get("scene_prompt", ""))
         except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
             _LOG.warning("H3 prompt history could not mark scene %s executed: %s",
                          shot["id"], exc)
@@ -19786,9 +20045,10 @@ class MiniMaxH3ChainSegmentSave:
         os.makedirs(os.path.dirname(paths["blend_segment"]), exist_ok=True)
         os.makedirs(os.path.dirname(paths["checkpoint"]), exist_ok=True)
         alternate_take = _alternate_take_descriptor(plan)
+        transaction = uuid.uuid4().hex
+        archive_snapshot_created = False
         archives = (_available_run_archives(plan)
-                    if alternate_take is not None else
-                    _write_run_archives(plan, prompt, extra_pnginfo))
+                    if alternate_take is not None else {})
         if (alternate_take is not None and
                 int(alternate_take["scene"]) != index):
             raise ValueError(
@@ -19822,7 +20082,6 @@ class MiniMaxH3ChainSegmentSave:
             # save behaves as a new immutable sibling, not a replacement.
             replacing_scene = False
 
-        transaction = uuid.uuid4().hex
         published_segment = _versioned_path(paths["segment"], transaction)
         published_blend = (
             _versioned_path(paths["blend_segment"], transaction)
@@ -19835,6 +20094,11 @@ class MiniMaxH3ChainSegmentSave:
         checkpoint_tmp = "%s.%s.tmp" % (published_checkpoint, uuid.uuid4().hex)
         committed = False
         try:
+            if alternate_take is None:
+                archives = _write_run_archives(
+                    plan, prompt, extra_pnginfo,
+                    revision=transaction, promote=False)
+                archive_snapshot_created = True
             source_dependency = state.get(
                 "current_source_reference_dependency")
             if (source_dependency is None
@@ -20192,7 +20456,11 @@ class MiniMaxH3ChainSegmentSave:
                     plan["source_timeline"])
             # This metadata replacement is the transaction's commit point. Until
             # it succeeds, resume keeps referencing the previous immutable pair.
-            with checkpoint_run_lock(_output_root(), plan["run_name"]):
+            with checkpoint_run_lock(
+                    _output_root(), plan["run_name"]), project_write_guard(
+                        _output_root(), plan["run_name"],
+                        plan.get("_project_ownership"),
+                        "publish a scene checkpoint"):
                 # Force ownership may have happened while the segment video or
                 # checkpoint was being encoded. Fence again at the canonical
                 # pointer commit; the finally block removes this stale job's
@@ -20201,22 +20469,44 @@ class MiniMaxH3ChainSegmentSave:
                 _atomic_json(published_metadata, metadata)
                 if alternate_take is None:
                     _atomic_json(paths["metadata"], metadata)
-                    editorial = _load_run_editorial(plan["run_name"])
-                    editorial, cleared_editorial = (
-                        _editorial_after_base_revision_change(
-                            editorial, index, str(shot["id"]), transaction))
-                    if cleared_editorial:
-                        normalized_editorial = _normalize_run_editorial(
-                            editorial, plan["run_name"])
-                        _atomic_json(
-                            _run_editorial_path(plan["run_name"]),
-                            normalized_editorial)
-                        _LOG.info(
-                            "H3 Chain cleared scene %d %s after accepting "
-                            "new base revision %s; alternate artifacts were "
-                            "retained.", index, " and ".join(
-                                cleared_editorial), transaction[:8])
-            committed = True
+                    # The canonical pointer is the durable commit point. From
+                    # here on, cleanup must retain the new immutable artifacts
+                    # even if an advisory editorial/root-archive refresh fails.
+                    committed = True
+                    try:
+                        editorial = _load_run_editorial(plan["run_name"])
+                        editorial, cleared_editorial = (
+                            _editorial_after_base_revision_change(
+                                editorial, index, str(shot["id"]), transaction))
+                        if cleared_editorial:
+                            normalized_editorial = _normalize_run_editorial(
+                                editorial, plan["run_name"])
+                            normalized_editorial["revision"] = uuid.uuid4().hex
+                            _atomic_json(
+                                _run_editorial_path(plan["run_name"]),
+                                normalized_editorial)
+                            _LOG.info(
+                                "H3 Chain cleared scene %d %s after accepting "
+                                "new base revision %s; alternate artifacts "
+                                "were retained.", index, " and ".join(
+                                    cleared_editorial), transaction[:8])
+                    except (OSError, TypeError, ValueError,
+                            json.JSONDecodeError) as exc:
+                        _LOG.warning(
+                            "H3 Chain committed clip %d but could not reconcile "
+                            "its editorial selection: %s", index, exc)
+                    try:
+                        if archives:
+                            _promote_run_archive_snapshot(plan, archives)
+                    except (OSError, TypeError, ValueError,
+                            json.JSONDecodeError) as exc:
+                        # The active scene points at the immutable snapshot, so
+                        # compatibility promotion failure is non-fatal.
+                        _LOG.warning(
+                            "H3 Chain committed clip %d but could not refresh "
+                            "its legacy root recovery files: %s", index, exc)
+                else:
+                    committed = True
         finally:
             _safe_unlink(checkpoint_tmp)
             if not committed:
@@ -20228,6 +20518,8 @@ class MiniMaxH3ChainSegmentSave:
                     _safe_unlink(published_audio)
                 _safe_unlink(published_prompt)
                 _safe_unlink(published_metadata)
+                if archive_snapshot_created:
+                    _remove_run_archive_snapshot(plan, transaction)
 
         retained = (
             "; original generation checkpoint retained"
@@ -20491,9 +20783,7 @@ def _review_public_candidates(
 
 
 def _deferred_review_dir(run_name: Any) -> str:
-    normalized = _safe_name(run_name, "")
-    if not normalized:
-        raise ValueError("A non-empty H3 chain run_name is required.")
+    normalized = _strict_run_name(run_name)
     return os.path.join(_run_dir({"run_name": normalized}), "pending_reviews")
 
 
@@ -20531,14 +20821,18 @@ def _persist_deferred_review(
         "candidates": candidates,
         "public": public,
     }
-    with checkpoint_run_lock(_output_root(), str(plan["run_name"])):
+    with checkpoint_run_lock(
+            _output_root(), str(plan["run_name"])), project_write_guard(
+                _output_root(), str(plan["run_name"]),
+                plan.get("_project_ownership"),
+                "publish a pending scene review"):
         _atomic_json(path, document)
     return path
 
 
 def _load_deferred_review(run_name: Any, token: Any) -> tuple[
         dict[str, Any], str]:
-    normalized = _safe_name(run_name, "")
+    normalized = _strict_run_name(run_name)
     path = _deferred_review_path(normalized, token)
     if not os.path.isfile(path):
         raise FileNotFoundError(
@@ -20558,9 +20852,7 @@ def _load_deferred_review(run_name: Any, token: Any) -> tuple[
 
 
 def _list_deferred_review_records(run_name: Any) -> list[dict[str, Any]]:
-    normalized = _safe_name(run_name, "")
-    if not normalized:
-        raise ValueError("A non-empty H3 chain run_name is required.")
+    normalized = _strict_run_name(run_name)
     directory = _deferred_review_dir(normalized)
     if not os.path.isdir(directory):
         return []
@@ -20659,7 +20951,15 @@ def _review_requested_kept_revisions(
         body: dict[str, Any], candidates: list[dict[str, Any]],
         selected_revision: str = "") -> list[str]:
     """Validate the user's keep marks against this exact pending batch."""
-    raw = body.get("candidate_revisions", [])
+    # Older frontends did not send keep marks at all. Treat omission as
+    # preserve-all; an explicit empty list remains the user's instruction to
+    # prune every unselected candidate.
+    raw = body.get("candidate_revisions")
+    if "candidate_revisions" not in body:
+        raw = [
+            str(candidate.get("segment", {}).get("revision") or "")
+            for candidate in candidates if isinstance(candidate, dict)
+        ]
     if raw is None:
         raw = []
     if not isinstance(raw, list):
@@ -20784,7 +21084,7 @@ def _select_review_candidate(
         _atomic_json(canonical, metadata)
         # Keep disk recovery aligned with the promoted take even if ComfyUI is
         # interrupted before the following scene reaches Segment Save.
-        _write_run_archives(selected_plan)
+        _promote_checkpoint_run_archives(selected_plan, metadata)
     accepted = dict(_public_segment(selected))
     accepted["_h3_review_decision"] = {
         "action": "candidate_selected",
@@ -21172,6 +21472,12 @@ class MiniMaxH3ChainReview:
                         "candidate_batch_token": batch_token,
                     }
 
+        # Saving is the safe default. A take is removed only after the user
+        # explicitly unchecks it in a review UI and accepts another take.
+        current_revision = str(segment.get("revision") or "")
+        if current_revision and current_revision not in kept_revisions:
+            kept_revisions.append(current_revision)
+
         if (candidate_index < candidate_target
                 and not inspect_each_candidate
                 and queued_decision is None):
@@ -21468,15 +21774,20 @@ class MiniMaxH3ChainReview:
         accepted_state = state
         cleanup = None
         if action in ("approve", "stop"):
-            accepted_segment, accepted_state = _select_review_candidate(
-                state, segment, decision)
-            selected_revision = str(
-                accepted_segment.get("revision") or "")
-            kept = list(decision.get("kept_candidate_revisions") or ())
-            if selected_revision and selected_revision not in kept:
-                kept.append(selected_revision)
-            cleanup = _prune_review_candidates(
-                accepted_state["plan"], index, candidates, kept)
+            with checkpoint_run_lock(
+                    _output_root(), plan["run_name"]), project_write_guard(
+                        _output_root(), plan["run_name"],
+                        plan.get("_project_ownership"),
+                        "apply a scene review decision"):
+                accepted_segment, accepted_state = _select_review_candidate(
+                    state, segment, decision)
+                selected_revision = str(
+                    accepted_segment.get("revision") or "")
+                kept = list(decision.get("kept_candidate_revisions") or ())
+                if selected_revision and selected_revision not in kept:
+                    kept.append(selected_revision)
+                cleanup = _prune_review_candidates(
+                    accepted_state["plan"], index, candidates, kept)
         candidate_number = int(decision.get("candidate_number", 0))
         candidate_total = int(decision.get("candidate_count", 0))
         candidate_note = (
@@ -21892,22 +22203,25 @@ class MiniMaxH3ChainLoopEnd:
             # Publishing the alternate updates final-cut state. Recheck at
             # that commit boundary in case ownership changed after this Loop
             # End invocation began.
-            _require_plan_write(
-                plan, "publish an accepted alternate take")
-            editorial = _select_editorial_alternate(plan, public_alternate)
-            values = list(state.get("segments", [])) + [public_alternate]
-            manifest = _manifest_from_segments(plan, values, complete=False)
-            manifest["format"] = "h3_chain_alternate_manifest_v1"
-            manifest["alternate_take"] = _json_document(alternate_take)
-            manifest["editorial_replacement"] = next(
-                item for item in editorial["replacements"]
-                if int(item["scene"]) == index)
-            alternate_dir = os.path.join(_run_dir(plan), "alternates")
-            os.makedirs(alternate_dir, exist_ok=True)
-            manifest_path = os.path.join(
-                alternate_dir, "scene_%04d.%s.manifest.json" %
-                (index, str(segment["revision"])))
-            _atomic_json(manifest_path, manifest)
+            with checkpoint_run_lock(
+                    _output_root(), plan["run_name"]), project_write_guard(
+                        _output_root(), plan["run_name"],
+                        plan.get("_project_ownership"),
+                        "publish an accepted alternate take"):
+                editorial = _select_editorial_alternate(plan, public_alternate)
+                values = list(state.get("segments", [])) + [public_alternate]
+                manifest = _manifest_from_segments(plan, values, complete=False)
+                manifest["format"] = "h3_chain_alternate_manifest_v1"
+                manifest["alternate_take"] = _json_document(alternate_take)
+                manifest["editorial_replacement"] = next(
+                    item for item in editorial["replacements"]
+                    if int(item["scene"]) == index)
+                alternate_dir = os.path.join(_run_dir(plan), "alternates")
+                os.makedirs(alternate_dir, exist_ok=True)
+                manifest_path = os.path.join(
+                    alternate_dir, "scene_%04d.%s.manifest.json" %
+                    (index, str(segment["revision"])))
+                _atomic_json(manifest_path, manifest)
             manifest_json = json.dumps(
                 manifest, ensure_ascii=False, indent=2, sort_keys=True)
             context_length = min(
@@ -21977,9 +22291,10 @@ class MiniMaxH3ChainLoopEnd:
                     "through_clip_%04d.manifest.json" % end_clip)
             # Recursive execution and cleanup can leave a sizeable interval
             # between the entry check and final manifest publication.
-            _require_plan_write(
-                plan, "publish the scene-loop manifest")
-            _atomic_json(manifest_path, manifest)
+            with _project_write_commit_guard(
+                    plan["run_name"], plan.get("_project_ownership"),
+                    "publish the scene-loop manifest"):
+                _atomic_json(manifest_path, manifest)
         manifest_json = json.dumps(manifest, ensure_ascii=False, indent=2,
                                    sort_keys=True)
         return (manifest, manifest_json, next_state["previous_frames"],
@@ -22075,15 +22390,16 @@ class MiniMaxH3ChainManifestLoad:
             kind = "partial"
         manifest_persisted = True
         try:
-            _require_plan_write(
-                prepared_plan, "rewrite a reconstructed recovery manifest")
+            with _project_write_commit_guard(
+                    prepared_plan["run_name"],
+                    prepared_plan.get("_project_ownership"),
+                    "rewrite a reconstructed recovery manifest"):
+                _atomic_json(manifest_path, manifest)
         except ProjectOwnershipError:
             # Recovery inspection and export remain safe from a non-owner.
             # Return the verified in-memory manifest without letting a stale
             # workflow change even this derived project file.
             manifest_persisted = False
-        if manifest_persisted:
-            _atomic_json(manifest_path, manifest)
         manifest_json = json.dumps(
             manifest, ensure_ascii=False, indent=2, sort_keys=True)
         status = "loaded and verified %s manifest through clip %d/%d from %s" % (
@@ -22855,8 +23171,8 @@ def _blend_video_records(
                         "H3 Chain scheduled blend recovery has no temporary "
                         "artifact owner.")
                 final_dir = os.path.join(
-                    _output_root(), "h3_chains",
-                    _safe_name(manifest.get("run_name"), "h3_chain"), "final")
+                    _run_dir({"run_name": manifest.get("run_name")}),
+                    "final")
                 os.makedirs(final_dir, exist_ok=True)
                 path = os.path.join(
                     final_dir, ".scheduled_blend_clip_%04d.%s.mkv" %
@@ -23879,7 +24195,7 @@ def _checkpoint_export_segments(manifest: dict[str, Any]) -> list[dict[str, Any]
 
 
 def _png_export_hash_cache_path(manifest: dict[str, Any]) -> str:
-    run_name = _safe_name(manifest.get("run_name"), "h3_chain")
+    run_name = _strict_run_name(manifest.get("run_name"))
     root = _output_root()
     path = os.path.abspath(os.path.join(
         root, "h3_chains", run_name, ".png_export_hash_cache.json"))
@@ -23949,7 +24265,7 @@ def _verify_png_export_checkpoint(
 
 
 def _new_export_directory(manifest: dict[str, Any], export_name: str) -> str:
-    run_name = _safe_name(manifest.get("run_name"), "h3_chain")
+    run_name = _strict_run_name(manifest.get("run_name"))
     name = _safe_name(export_name, "png_sequence")
     base = os.path.abspath(os.path.join(
         _output_root(), "h3_chains", run_name, "frames", name))
@@ -25092,7 +25408,7 @@ class MiniMaxH3ChainLatentVideoAdapter:
                 "scene_id": str(item.get("scene_id") or ""),
                 "out_frame": int(item.get("out_frame", 0)),
             } for item in editorial.get("trims", [])])
-        run_name = _safe_name(manifest.get("run_name"), "h3_chain")
+        run_name = _strict_run_name(manifest.get("run_name"))
         cache_dir = os.path.join(
             _output_root(), "h3_chains", run_name, "upscaled", "seedvr2",
             "source")
@@ -25458,7 +25774,7 @@ class MiniMaxH3ChainAssemble:
                 upscale_manifest, upscale_segments)
         segments = _validate_manifest(manifest)
         prelude = _validate_prelude(manifest)
-        run_name = _safe_name(manifest.get("run_name"), "h3_chain")
+        run_name = _strict_run_name(manifest.get("run_name"))
         editorial, editorial_records, editorial_extension_frames = (
             _editorial_timeline_records(run_name, segments))
         presentation_segments = _editorial_presentation_segments(
@@ -25586,7 +25902,7 @@ class MiniMaxH3ChainAssemble:
                 "end": float(cue["end"]) + subtitle_shift,
             } for cue in subtitle_cues]
 
-        run_dir = os.path.join(_output_root(), "h3_chains", run_name)
+        run_dir = _run_dir({"run_name": run_name})
         if upscale_manifest is not None:
             final_dir = upscale_support._profile_paths(
                 upscale_manifest["run_name"],
@@ -25892,8 +26208,10 @@ async def _submit_candidate_batch_command(request):
         return web.json_response(
             {"error": "This H3 candidate batch is no longer running."},
             status=404)
+    run_name = str(entry.get("run_name") or "")
+    ownership_proof = _request_project_ownership(request)
     rejection = _project_write_rejection(
-        request, entry.get("run_name", ""), "change candidate review state")
+        request, run_name, "change candidate review state")
     if rejection is not None:
         return rejection
     action = str(body.get("action") or "")
@@ -25937,11 +26255,26 @@ async def _submit_candidate_batch_command(request):
         # The activate-only checkpoint endpoint has already committed the
         # selected immutable lineage. Align run recovery metadata now that
         # targeted cancellation is confirmed, then prune only unkept takes.
-        _write_run_archives(selected_plan)
-        cleanup = _prune_review_candidates(
-            selected_plan, scene, candidates,
-            list(command.get("kept_revisions") or ()))
-        _ACTIVE_CANDIDATE_BATCHES.pop(token, None)
+        try:
+            with checkpoint_run_lock(
+                    _output_root(), run_name), project_write_guard(
+                        _output_root(), run_name, ownership_proof,
+                        "finalize a candidate review"):
+                selected_metadata, _selected_metadata_path = (
+                    _load_checkpoint_revision(
+                        str(selected_plan["run_name"]), scene,
+                        requested_revision))
+                _promote_checkpoint_run_archives(
+                    selected_plan, selected_metadata)
+                cleanup = _prune_review_candidates(
+                    selected_plan, scene, candidates,
+                    list(command.get("kept_revisions") or ()))
+                _ACTIVE_CANDIDATE_BATCHES.pop(token, None)
+        except ProjectOwnershipError as exc:
+            return web.json_response({
+                "error": str(exc), "code": "h3_project_read_only",
+                "run_name": run_name,
+            }, status=423)
         return web.json_response({
             "ok": True,
             "action": "finalize",
@@ -25984,20 +26317,33 @@ async def _submit_candidate_batch_command(request):
             requested_revision if action == "accept" else "")
     except ValueError as exc:
         return web.json_response({"error": str(exc)}, status=400)
-    entry["kept_revisions"] = kept
-    if action != "update":
-        entry["command"] = {
-            "action": action,
-            "candidate_revision": requested_revision,
-            "kept_revisions": kept,
-        }
-    entry["updated"] = time.monotonic()
-    public = entry.get("public")
-    if isinstance(public, dict):
-        public["kept_candidate_revisions"] = kept
-        if action != "update":
-            public["candidate_batch_command_pending"] = action
-        public["server_now"] = time.time()
+    try:
+        with project_write_guard(
+                _output_root(), run_name, ownership_proof,
+                "change candidate review state"):
+            if _ACTIVE_CANDIDATE_BATCHES.get(token) is not entry:
+                return web.json_response(
+                    {"error": "This H3 candidate batch is no longer running."},
+                    status=409)
+            entry["kept_revisions"] = kept
+            if action != "update":
+                entry["command"] = {
+                    "action": action,
+                    "candidate_revision": requested_revision,
+                    "kept_revisions": kept,
+                }
+            entry["updated"] = time.monotonic()
+            public = entry.get("public")
+            if isinstance(public, dict):
+                public["kept_candidate_revisions"] = kept
+                if action != "update":
+                    public["candidate_batch_command_pending"] = action
+                public["server_now"] = time.time()
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+            "run_name": run_name,
+        }, status=423)
     response = {
         "ok": True,
         "action": action,
@@ -26043,8 +26389,10 @@ async def _submit_review_decision(request):
     if pending is None:
         return web.json_response(
             {"error": "This H3 review is no longer pending."}, status=404)
+    run_name = str(pending.get("public", {}).get("run_name") or "")
+    ownership_proof = _request_project_ownership(request)
     rejection = _project_write_rejection(
-        request, pending.get("public", {}).get("run_name", ""),
+        request, run_name,
         "change review state")
     if rejection is not None:
         return rejection
@@ -26193,7 +26541,18 @@ async def _submit_review_decision(request):
             future.set_result(decision)
 
     try:
-        pending["loop"].call_soon_threadsafe(resolve_on_execution_loop)
+        with _project_write_commit_guard(
+                run_name, ownership_proof, "change review state"):
+            if _PENDING_REVIEWS.get(token) is not pending:
+                return web.json_response(
+                    {"error": "This H3 review is no longer pending."},
+                    status=409)
+            pending["loop"].call_soon_threadsafe(resolve_on_execution_loop)
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+            "run_name": run_name,
+        }, status=423)
     except RuntimeError:
         return web.json_response(
             {"error": "This H3 review execution loop is no longer running."},
@@ -26250,16 +26609,12 @@ async def _list_pending_reviews(_request):
 
 
 async def _list_deferred_reviews(request):
-    run_name = _safe_name(request.query.get("run_name", ""), "")
-    if not run_name:
-        return web.json_response(
-            {"error": "A non-empty H3 chain run_name is required."}, status=400)
     try:
+        run_name = _strict_run_name(request.query.get("run_name", ""))
         reviews = _list_deferred_review_records(run_name)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return web.json_response(
-            {"error": "Could not list pending H3 reviews: %s" % exc},
-            status=500)
+            {"error": "Could not list pending H3 reviews: %s" % exc}, status=400)
     return web.json_response({"run_name": run_name, "reviews": reviews})
 
 
@@ -26288,7 +26643,8 @@ async def _submit_deferred_review(request):
             {"error": "Pending H3 review requires a JSON object."},
             status=400)
     try:
-        run_name = _safe_name(body.get("run_name", ""), "")
+        run_name = _strict_run_name(body.get("run_name", ""))
+        ownership_proof = _request_project_ownership(request)
         rejection = _project_write_rejection(
             request, run_name, "finalize a pending review")
         if rejection is not None:
@@ -26336,24 +26692,27 @@ async def _submit_deferred_review(request):
                 run_name, scene, revision)
             return web.json_response(response)
 
-        active_path = os.path.join(
-            _run_dir({"run_name": run_name}), "checkpoints",
-            "clip_%04d.json" % scene)
-        active_metadata = _read_json(active_path)
-        active_segment = (active_metadata.get("segment")
-                          if isinstance(active_metadata, dict) else None)
-        if (not isinstance(active_segment, dict) or str(
-                active_segment.get("revision") or "") != revision):
-            raise ValueError(
-                "Activate the selected checkpoint lineage before finalizing "
-                "this pending review.")
-        selected_plan = _plan_with_review_revision(
-            document["plan"], scene, response["scene_prompt"],
-            int(response["seed"]), response["length"])
-        _write_run_archives(selected_plan)
-        cleanup = _prune_review_candidates(
-            selected_plan, scene, document["candidates"], kept)
-        with checkpoint_run_lock(_output_root(), run_name):
+        with checkpoint_run_lock(
+                _output_root(), run_name), project_write_guard(
+                    _output_root(), run_name, ownership_proof,
+                    "finalize a pending review"):
+            active_path = os.path.join(
+                _run_dir({"run_name": run_name}), "checkpoints",
+                "clip_%04d.json" % scene)
+            active_metadata = _read_json(active_path)
+            active_segment = (active_metadata.get("segment")
+                              if isinstance(active_metadata, dict) else None)
+            if (not isinstance(active_segment, dict) or str(
+                    active_segment.get("revision") or "") != revision):
+                raise ValueError(
+                    "Activate the selected checkpoint lineage before "
+                    "finalizing this pending review.")
+            selected_plan = _plan_with_review_revision(
+                document["plan"], scene, response["scene_prompt"],
+                int(response["seed"]), response["length"])
+            _promote_checkpoint_run_archives(selected_plan, active_metadata)
+            cleanup = _prune_review_candidates(
+                selected_plan, scene, document["candidates"], kept)
             _safe_unlink(path)
         response.update({
             "deleted_candidate_count": len(cleanup["deleted"]),
@@ -26361,6 +26720,11 @@ async def _submit_deferred_review(request):
             "reclaimed_bytes": cleanup["reclaimed_bytes"],
         })
         return web.json_response(response)
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+            "run_name": locals().get("run_name", ""),
+        }, status=423)
     except FileNotFoundError as exc:
         return web.json_response({"error": str(exc)}, status=404)
     except (OSError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
@@ -26405,6 +26769,7 @@ def _checkpoint_audio_sidecar(
 def _load_checkpoint_revision(
         run_name: str, scene: Any, revision: Any
 ) -> tuple[dict[str, Any], str]:
+    run_name = _strict_run_name(run_name)
     index = int(scene)
     token = str(revision or "").strip().lower()
     if index < 1 or index > MAX_SHOTS:
@@ -26421,8 +26786,8 @@ def _load_checkpoint_revision(
     metadata = _read_json(metadata_path)
     if not isinstance(metadata, dict):
         raise ValueError("Checkpoint revision metadata is not a JSON object.")
-    stored_run = str(metadata.get("run_name") or run_name)
-    if _safe_name(stored_run, "") != run_name:
+    stored_run = str(metadata.get("run_name") or run_name).strip()
+    if stored_run != run_name:
         raise ValueError("Checkpoint revision belongs to a different run.")
     segment = metadata.get("segment")
     if not isinstance(segment, dict):
@@ -26444,15 +26809,25 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         raise ValueError(
             "Checkpoint Manager selection is not a JSON object. Select a "
             "checkpoint revision again.")
-    run_name = _safe_name(selection.get("run_name"), "")
-    if not run_name:
-        raise ValueError("Checkpoint Manager selection has no saved run.")
+    run_name = _strict_run_name(selection.get("run_name"))
     lineage = selection.get("lineage")
     if not isinstance(lineage, list) or not lineage:
         raise ValueError(
             "Checkpoint Manager has no selected checkpoint lineage.")
 
-    plan_path = _run_archive_paths({"run_name": run_name})["plan"]
+    tip = lineage[-1]
+    if (not isinstance(tip, dict)
+            or int(tip.get("scene", 0)) != len(lineage)):
+        raise ValueError(
+            "Checkpoint Manager lineage must contain contiguous scenes "
+            "1 through %d." % len(lineage))
+    tip_metadata, _tip_metadata_path = _load_checkpoint_revision(
+        run_name, len(lineage), tip.get("revision"))
+    selected_archives = _checkpoint_run_archives(
+        {"run_name": run_name}, tip_metadata)
+    plan_path = (_absolute_output_path(selected_archives["plan"])
+                 if selected_archives else
+                 _run_archive_paths({"run_name": run_name})["plan"])
     if not os.path.isfile(plan_path):
         raise FileNotFoundError(
             "Selected H3 run has no archived recovery Plan: %s" % plan_path)
@@ -26608,7 +26983,9 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         "duration_seconds": total_frames / float(FPS),
         "segments": segments,
     }
-    archives = _available_run_archives({"run_name": run_name})
+    archives = (_checkpoint_run_archives(
+        {"run_name": run_name}, loaded[-1])
+        or _available_run_archives({"run_name": run_name}))
     if archives:
         manifest["archives"] = archives
     if isinstance(archived_plan.get("prelude"), dict):
@@ -26703,6 +27080,108 @@ def _checkpoint_plan_revision(segment: dict[str, Any]) -> dict[str, Any]:
     return revision
 
 
+def _recover_checkpoint_pointer_transactions(run_name: Any) -> int:
+    """Finish or roll back interrupted checkpoint-pointer restorations."""
+    requested = str(run_name or "").strip()
+    normalized = _safe_name(requested, "")
+    if not normalized or requested != normalized:
+        raise ValueError("Checkpoint recovery requires the exact saved Run name.")
+    checkpoint_dir = os.path.join(
+        _output_root(), "h3_chains", normalized, "checkpoints")
+    transaction_dir = os.path.join(checkpoint_dir, ".transactions")
+    if not os.path.isdir(checkpoint_dir):
+        return 0
+    recovered = 0
+    with checkpoint_run_lock(_output_root(), normalized):
+        journal_names = (sorted(os.listdir(transaction_dir))
+                         if os.path.isdir(transaction_dir) else [])
+        for filename in journal_names:
+            if re.fullmatch(r"restore\.[0-9a-f]{32}\.json", filename) is None:
+                continue
+            path = os.path.join(transaction_dir, filename)
+            try:
+                journal = _read_json(path)
+                if (not isinstance(journal, dict)
+                        or journal.get("format") !=
+                        "h3_checkpoint_pointer_restore_v1"
+                        or str(journal.get("run_name") or "") != normalized
+                        or journal.get("state") not in ("prepared", "committed")):
+                    raise ValueError("invalid restore journal")
+                originals = journal.get("originals", [])
+                retired = journal.get("retired", [])
+                if not isinstance(originals, list) or not isinstance(retired, list):
+                    raise ValueError("invalid restore journal entries")
+                if journal["state"] == "prepared":
+                    for item in originals:
+                        name = str(item.get("filename") or "")
+                        if re.fullmatch(r"clip_\d{4}\.json", name) is None:
+                            raise ValueError("unsafe restore pointer name")
+                        canonical = os.path.join(checkpoint_dir, name)
+                        document = item.get("document")
+                        if document is None:
+                            _safe_unlink(canonical)
+                        elif isinstance(document, dict):
+                            _atomic_json(canonical, document)
+                        else:
+                            raise ValueError("invalid original pointer document")
+                    for item in retired:
+                        canonical_name = str(item.get("canonical") or "")
+                        temporary_name = str(item.get("temporary") or "")
+                        if (re.fullmatch(r"clip_\d{4}\.json", canonical_name)
+                                is None or re.fullmatch(
+                                    r"clip_\d{4}\.json\.restore\.[0-9a-f]{32}\.tmp",
+                                    temporary_name) is None):
+                            raise ValueError("unsafe retired pointer name")
+                        temporary = os.path.join(
+                            checkpoint_dir, temporary_name)
+                        if os.path.isfile(temporary):
+                            os.replace(
+                                temporary,
+                                os.path.join(checkpoint_dir, canonical_name))
+                else:
+                    for item in retired:
+                        temporary_name = str(item.get("temporary") or "")
+                        if re.fullmatch(
+                                r"clip_\d{4}\.json\.restore\.[0-9a-f]{32}\.tmp",
+                                temporary_name) is None:
+                            raise ValueError("unsafe retired pointer name")
+                        _safe_unlink(os.path.join(
+                            checkpoint_dir, temporary_name))
+                _safe_unlink(path)
+                recovered += 1
+            except (OSError, TypeError, ValueError,
+                    json.JSONDecodeError) as exc:
+                _LOG.error(
+                    "H3 checkpoint restore journal %s needs manual recovery: %s",
+                    path, exc)
+        # Builds predating the journal can leave one renamed pointer behind if
+        # the process loses power between os.replace and cleanup. Restore it
+        # only when no canonical pointer exists; immutable revision sidecars
+        # remain authoritative and no media is deleted here.
+        legacy: dict[str, list[str]] = {}
+        for filename in os.listdir(checkpoint_dir):
+            match = re.fullmatch(
+                r"(clip_\d{4}\.json)\.restore\.[0-9a-f]{32}\.tmp",
+                filename)
+            if match is not None:
+                legacy.setdefault(match.group(1), []).append(filename)
+        for canonical_name, temporary_names in legacy.items():
+            canonical = os.path.join(checkpoint_dir, canonical_name)
+            if os.path.exists(canonical):
+                continue
+            newest = max(
+                temporary_names,
+                key=lambda item: os.path.getmtime(os.path.join(
+                    checkpoint_dir, item)),
+            )
+            os.replace(os.path.join(checkpoint_dir, newest), canonical)
+            recovered += 1
+            _LOG.warning(
+                "H3 restored interrupted legacy checkpoint pointer %s.",
+                canonical)
+    return recovered
+
+
 async def _restore_checkpoint_revisions(request):
     try:
         body = await request.json()
@@ -26711,13 +27190,13 @@ async def _restore_checkpoint_revisions(request):
             {"error": "Checkpoint recovery requires a JSON request."},
             status=400)
     try:
-        run_name = _safe_name(body.get("run_name", ""), "")
-        if not run_name:
-            raise ValueError("A non-empty H3 chain run_name is required.")
+        run_name = _strict_run_name(body.get("run_name", ""))
+        ownership_proof = _request_project_ownership(request)
         rejection = _project_write_rejection(
             request, run_name, "activate checkpoint revisions")
         if rejection is not None:
             return rejection
+        _recover_checkpoint_pointer_transactions(run_name)
         activate_only = body.get("activate_only") is True
         scope_start_scene = int(body.get("scope_start_scene", 1))
         scope_end_scene = int(body.get("scope_end_scene", MAX_SHOTS))
@@ -26752,6 +27231,7 @@ async def _restore_checkpoint_revisions(request):
                 "chapter branch." % (scope_start_scene, resume_scene - 1))
 
         graph = CheckpointGraphManager(_output_root()).graph(run_name)
+        graph_hash = str(graph.get("graph_hash") or "")
         graph_records = {
             (int(item.get("scene", 0)),
              str(item.get("revision") or "").lower()): item
@@ -26868,31 +27348,68 @@ async def _restore_checkpoint_revisions(request):
         committed = []
         retired = []
         transaction = uuid.uuid4().hex
-        with checkpoint_run_lock(_output_root(), run_name):
+        with checkpoint_run_lock(
+                _output_root(), run_name), project_write_guard(
+                    _output_root(), run_name, ownership_proof,
+                    "activate checkpoint revisions"):
+            current_graph_hash = str(CheckpointGraphManager(
+                _output_root()).graph(run_name).get("graph_hash") or "")
+            if current_graph_hash != graph_hash:
+                raise ValueError(
+                    "Checkpoint revisions changed while this restore was "
+                    "being prepared. Refresh Checkpoint Manager and select "
+                    "the branch again; no pointers were changed.")
+            retirement_plan = []
+            for filename in sorted(os.listdir(checkpoint_dir)):
+                match = re.fullmatch(r"clip_(\d{4})\.json", filename)
+                pointer_scene = (int(match.group(1))
+                                 if match is not None else -1)
+                if (match is None or pointer_scene < resume_scene or
+                        pointer_scene > scope_end_scene):
+                    continue
+                canonical = os.path.join(checkpoint_dir, filename)
+                temporary = "%s.restore.%s.tmp" % (canonical, transaction)
+                retirement_plan.append((canonical, temporary))
+            for scene, _metadata, _metadata_path in loaded:
+                canonical = os.path.join(
+                    checkpoint_dir, "clip_%04d.json" % scene)
+                originals[canonical] = (
+                    _read_json(canonical) if os.path.isfile(canonical) else None)
+            journal_path = os.path.join(
+                checkpoint_dir, ".transactions",
+                "restore.%s.json" % transaction)
+            journal = {
+                "format": "h3_checkpoint_pointer_restore_v1",
+                "run_name": run_name,
+                "transaction": transaction,
+                "state": "prepared",
+                "originals": [{
+                    "filename": os.path.basename(canonical),
+                    "document": document,
+                } for canonical, document in originals.items()],
+                "retired": [{
+                    "canonical": os.path.basename(canonical),
+                    "temporary": os.path.basename(temporary),
+                } for canonical, temporary in retirement_plan],
+            }
+            _atomic_json(journal_path, journal)
             try:
                 # Loading an earlier branch is a rollback only inside its
                 # editorial chapter. Retire mutable pointers at and after the
                 # resume scene through the scope end while preserving every
                 # immutable revision file and every other chapter's pointers.
-                for filename in sorted(os.listdir(checkpoint_dir)):
-                    match = re.fullmatch(r"clip_(\d{4})\.json", filename)
-                    pointer_scene = (int(match.group(1))
-                                     if match is not None else -1)
-                    if (match is None or pointer_scene < resume_scene or
-                            pointer_scene > scope_end_scene):
-                        continue
-                    canonical = os.path.join(checkpoint_dir, filename)
-                    temporary = "%s.restore.%s.tmp" % (canonical, transaction)
+                for canonical, temporary in retirement_plan:
                     os.replace(canonical, temporary)
                     retired.append((canonical, temporary))
                 for scene, metadata, _metadata_path in loaded:
                     canonical = os.path.join(
                         checkpoint_dir, "clip_%04d.json" % scene)
-                    originals[canonical] = (_read_json(canonical)
-                                            if os.path.isfile(canonical) else None)
                     _atomic_json(canonical, metadata)
                     committed.append(canonical)
+                journal["state"] = "committed"
+                _atomic_json(journal_path, journal)
             except Exception:
+                rollback_failed = False
                 for canonical in reversed(committed):
                     original = originals.get(canonical)
                     try:
@@ -26901,18 +27418,23 @@ async def _restore_checkpoint_revisions(request):
                         else:
                             _atomic_json(canonical, original)
                     except Exception:
+                        rollback_failed = True
                         _LOG.exception(
                             "Could not roll back checkpoint pointer %s", canonical)
                 for canonical, temporary in reversed(retired):
                     try:
                         os.replace(temporary, canonical)
                     except Exception:
+                        rollback_failed = True
                         _LOG.exception(
                             "Could not restore retired checkpoint pointer %s",
                             canonical)
+                if not rollback_failed:
+                    _safe_unlink(journal_path)
                 raise
             for _canonical, temporary in retired:
                 _safe_unlink(temporary)
+            _safe_unlink(journal_path)
 
         restored = [
             _checkpoint_plan_revision(metadata["segment"])
@@ -26943,6 +27465,12 @@ async def _restore_checkpoint_revisions(request):
             ) % ((scope_start_scene, resume_scene - 1) if activate_only else
                  (scope_start_scene, resume_scene - 1, resume_scene)),
         })
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc),
+            "code": "h3_project_read_only",
+            "run_name": locals().get("run_name", ""),
+        }, status=423)
     except FileNotFoundError as exc:
         return web.json_response({"error": str(exc)}, status=404)
     except (OSError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
@@ -26977,17 +27505,31 @@ async def _attribute_checkpoint_revision(request):
         return web.json_response(
             {"error": "Checkpoint candidate attribution requires a JSON object."},
             status=400)
-    rejection = _project_write_rejection(
-        request, body.get("run_name", ""),
-        "attribute a checkpoint candidate")
-    if rejection is not None:
-        return rejection
     try:
+        run_name = _strict_run_name(body.get("run_name", ""))
+        ownership_proof = _request_project_ownership(request)
+        rejection = _project_write_rejection(
+            request, run_name, "attribute a checkpoint candidate")
+        if rejection is not None:
+            return rejection
+
+        def attribute_owned():
+            with checkpoint_run_lock(
+                    _output_root(), run_name), project_write_guard(
+                        _output_root(), run_name, ownership_proof,
+                        "attribute a checkpoint candidate"):
+                return CheckpointGraphManager(_output_root()).attribute(
+                    run_name, body.get("parent_scene"),
+                    body.get("parent_revision"), body.get("candidate_scene"),
+                    body.get("candidate_revision"))
+
         payload = await asyncio.to_thread(
-            CheckpointGraphManager(_output_root()).attribute,
-            body.get("run_name"), body.get("parent_scene"),
-            body.get("parent_revision"), body.get("candidate_scene"),
-            body.get("candidate_revision"))
+            attribute_owned)
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+            "run_name": locals().get("run_name", ""),
+        }, status=423)
     except FileNotFoundError as exc:
         return web.json_response({"error": str(exc)}, status=404)
     except (OSError, TypeError, ValueError, json.JSONDecodeError, KeyError) as exc:
@@ -27006,15 +27548,25 @@ async def _delete_checkpoint_revision(request):
         return web.json_response({
             "error": "Checkpoint revision deletion requires a JSON object.",
         }, status=400)
-    rejection = _project_write_rejection(
-        request, body.get("run_name", ""),
-        "delete a checkpoint revision")
-    if rejection is not None:
-        return rejection
     try:
-        payload = CheckpointGraphManager(_output_root()).delete(
-            body.get("run_name"), body.get("scene"), body.get("revision"),
-            body.get("snapshot"))
+        run_name = _strict_run_name(body.get("run_name", ""))
+        ownership_proof = _request_project_ownership(request)
+        rejection = _project_write_rejection(
+            request, run_name, "delete a checkpoint revision")
+        if rejection is not None:
+            return rejection
+        with checkpoint_run_lock(
+                _output_root(), run_name), project_write_guard(
+                    _output_root(), run_name, ownership_proof,
+                    "delete a checkpoint revision"):
+            payload = CheckpointGraphManager(_output_root()).delete(
+                run_name, body.get("scene"), body.get("revision"),
+                body.get("snapshot"))
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+            "run_name": locals().get("run_name", ""),
+        }, status=423)
     except CheckpointDeleteBlocked as exc:
         return web.json_response(
             {"error": str(exc), "preview": exc.preview}, status=409)
@@ -27028,6 +27580,7 @@ async def _delete_checkpoint_revision(request):
 def _saved_checkpoint_listing(
         run_name: str, include_graph: bool = True) -> dict[str, Any]:
     """Read checkpoint metadata without blocking ComfyUI's event loop."""
+    _recover_checkpoint_pointer_transactions(run_name)
     checkpoint_dir = os.path.join(
         _output_root(), "h3_chains", run_name, "checkpoints")
     review_dir = os.path.join(
@@ -27215,10 +27768,10 @@ def _saved_checkpoint_listing(
 
 
 async def _list_saved_checkpoints(request):
-    run_name = _safe_name(request.query.get("run_name", ""), "")
-    if not run_name:
-        return web.json_response(
-            {"error": "A non-empty H3 chain run_name is required."}, status=400)
+    try:
+        run_name = _strict_run_name(request.query.get("run_name", ""))
+    except (TypeError, ValueError) as exc:
+        return web.json_response({"error": str(exc)}, status=400)
     include_graph = str(request.query.get(
         "include_graph", "true")).strip().lower() not in (
             "0", "false", "no")
@@ -27238,7 +27791,7 @@ async def _list_saved_checkpoints(request):
     return web.json_response(payload)
 
 
-def _save_run_editorial_document(body: Any) -> dict[str, Any]:
+def _save_run_editorial_document_unlocked(body: Any) -> dict[str, Any]:
     if not isinstance(body, dict):
         raise ValueError("H3 run editorial data must be a JSON object.")
     document = dict(body)
@@ -27321,8 +27874,37 @@ def _save_run_editorial_document(body: Any) -> dict[str, Any]:
                 (scene, str(segment.get("id") or ""),
                  str(trim["scene_id"])))
         _editorial_trimmed_segment(segment, normalized)
+    normalized["revision"] = uuid.uuid4().hex
     _atomic_json(_run_editorial_path(normalized["run_name"]), normalized)
     return normalized
+
+
+def _save_run_editorial_document(
+        body: Any, ownership_proof: Any = None) -> dict[str, Any]:
+    """Validate and conditionally replace one Run's editorial document."""
+    if not isinstance(body, dict):
+        raise ValueError("H3 run editorial data must be a JSON object.")
+    run_name = _strict_run_name(body.get("run_name"))
+    with checkpoint_run_lock(
+            _output_root(), run_name), project_write_guard(
+                _output_root(), run_name, ownership_proof,
+                "update the final cut"):
+        if "base_revision" in body:
+            expected = str(body.get("base_revision") or "").strip().lower()
+            if expected and re.fullmatch(r"[0-9a-f]{32}", expected) is None:
+                raise ValueError(
+                    "Editorial base_revision must be a revision id or blank.")
+            path = _run_editorial_path(run_name)
+            current_revision = ""
+            if os.path.isfile(path):
+                current = _normalize_run_editorial(_read_json(path), run_name)
+                current_revision = str(current.get("revision") or "")
+            if expected != current_revision:
+                raise EditorialConflictError(
+                    "This Run's final cut changed in another workflow. "
+                    "Refresh Plan Studio before editing again; the newer "
+                    "editorial data was not overwritten.")
+        return _save_run_editorial_document_unlocked(body)
 
 
 async def _update_run_editorial(request):
@@ -27335,12 +27917,24 @@ async def _update_run_editorial(request):
         return web.json_response({
             "error": "H3 run editorial data requires a JSON object.",
         }, status=400)
-    rejection = _project_write_rejection(
-        request, body.get("run_name", ""), "update the final cut")
-    if rejection is not None:
-        return rejection
     try:
-        payload = await asyncio.to_thread(_save_run_editorial_document, body)
+        run_name = _strict_run_name(body.get("run_name", ""))
+        ownership_proof = _request_project_ownership(request)
+        rejection = _project_write_rejection(
+            request, run_name, "update the final cut")
+        if rejection is not None:
+            return rejection
+        payload = await asyncio.to_thread(
+            _save_run_editorial_document, body, ownership_proof)
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+            "run_name": locals().get("run_name", ""),
+        }, status=423)
+    except EditorialConflictError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_editorial_conflict",
+        }, status=409)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
     return web.json_response({"ok": True, "editorial": payload})
@@ -27407,14 +28001,21 @@ async def _delete_complete_run_folder(request):
         return web.json_response(
             {"error": "Complete run-folder deletion requires a JSON object."},
             status=400)
-    rejection = _project_write_rejection(
-        request, body.get("run_name", ""), "delete the complete run folder")
-    if rejection is not None:
-        return rejection
     try:
+        run_name = _strict_run_name(body.get("run_name", ""))
+        ownership_proof = _request_project_ownership(request)
+        rejection = _project_write_rejection(
+            request, run_name, "delete the complete run folder")
+        if rejection is not None:
+            return rejection
         payload = await asyncio.to_thread(
-            _delete_run_folder, body.get("run_name"), body.get("snapshot"),
-            body.get("confirmation"))
+            _delete_run_folder, run_name, body.get("snapshot"),
+            body.get("confirmation"), ownership_proof)
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+            "run_name": locals().get("run_name", ""),
+        }, status=423)
     except _RunFolderDeleteChanged as exc:
         return web.json_response(
             {"error": str(exc), "preview": exc.preview}, status=409)
@@ -27457,40 +28058,51 @@ async def _update_prompt_history(request):
             {"error": "The prompt-history request must contain a JSON object."},
             status=400)
     action = str(body.get("action") or "")
+    run_name = body.get("run_name", "")
+    ownership_proof = _request_project_ownership(request)
     rejection = _project_write_rejection(
-        request, body.get("run_name", ""), "change prompt history")
+        request, run_name, "change prompt history")
     if rejection is not None:
         return rejection
     store = PromptHistoryStore(_output_root())
     try:
         if action == "save":
             payload = await asyncio.to_thread(
-                store.save_draft,
-                body.get("run_name"), body.get("scene_id"),
+                _owned_project_mutation, run_name, ownership_proof,
+                "change prompt history", store.save_draft,
+                run_name, body.get("scene_id"),
                 body.get("prompt", ""), body.get("parent_revision"))
         elif action == "activate":
             payload = await asyncio.to_thread(
-                store.activate,
-                body.get("run_name"), body.get("scene_id"),
+                _owned_project_mutation, run_name, ownership_proof,
+                "change prompt history", store.activate,
+                run_name, body.get("scene_id"),
                 body.get("revision"))
         elif action == "label":
             payload = await asyncio.to_thread(
-                store.set_label,
-                body.get("run_name"), body.get("scene_id"),
+                _owned_project_mutation, run_name, ownership_proof,
+                "change prompt history", store.set_label,
+                run_name, body.get("scene_id"),
                 body.get("revision"), body.get("label", ""))
         elif action == "archive":
             payload = await asyncio.to_thread(
-                store.set_archived,
-                body.get("run_name"), body.get("scene_id"),
+                _owned_project_mutation, run_name, ownership_proof,
+                "change prompt history", store.set_archived,
+                run_name, body.get("scene_id"),
                 body.get("revision"), body.get("archived", True))
         elif action == "delete":
             payload = await asyncio.to_thread(
-                store.delete_draft,
-                body.get("run_name"), body.get("scene_id"),
+                _owned_project_mutation, run_name, ownership_proof,
+                "change prompt history", store.delete_draft,
+                run_name, body.get("scene_id"),
                 body.get("revision"))
         else:
             return web.json_response(
                 {"error": "Unknown prompt-history action."}, status=400)
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+        }, status=423)
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
     return web.json_response(payload)
@@ -27530,29 +28142,35 @@ async def _save_run_assets(request):
     if not isinstance(body, dict):
         return web.json_response(
             {"error": "The asset request must contain a JSON object."}, status=400)
-    rejection = _project_write_rejection(
-        request, body.get("run_name", ""), "archive run assets")
-    if rejection is not None:
-        return rejection
     try:
+        run_name = _strict_run_name(body.get("run_name", ""))
+        ownership_proof = _request_project_ownership(request)
+        rejection = _project_write_rejection(
+            request, run_name, "archive run assets")
+        if rejection is not None:
+            return rejection
         payload = await asyncio.to_thread(
+            _owned_project_mutation, run_name, ownership_proof,
+            "archive run assets",
             RunAssetStore(_output_root(), _input_root()).save,
-            body.get("run_name"), body.get("bindings"), {
+            run_name, body.get("bindings"), {
                 "images": bool(body.get("archive_images", True)),
                 "audio": bool(body.get("archive_audio", True)),
                 "video": bool(body.get("archive_video", False)),
             })
+    except ProjectOwnershipError as exc:
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+            "run_name": locals().get("run_name", ""),
+        }, status=423)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
         return web.json_response({"error": str(exc)}, status=400)
     return web.json_response(payload)
 
 
 async def _plan_studio_presentation(request):
-    run_name = _safe_name(request.query.get("run_name", ""), "")
-    if not run_name:
-        return web.json_response(
-            {"error": "A non-empty H3 chain run_name is required."}, status=400)
     try:
+        run_name = _strict_run_name(request.query.get("run_name", ""))
         payload = await asyncio.to_thread(
             _restore_plan_studio_presentation, run_name)
     except FileNotFoundError as exc:
@@ -27566,6 +28184,7 @@ async def _plan_studio_presentation(request):
 
 def _plan_studio_checkpoint_thumbnail_record(
         run_name: str, scene: Any, revision: Any) -> dict[str, Any]:
+    run_name = _strict_run_name(run_name)
     index = int(scene)
     token = str(revision or "").strip().lower()
     if index < 1 or index > MAX_SHOTS:
@@ -27590,7 +28209,7 @@ def _plan_studio_checkpoint_thumbnail_record(
     segment = metadata.get("segment") if isinstance(metadata, dict) else None
     if not isinstance(segment, dict):
         raise ValueError("Checkpoint revision has no segment record.")
-    if (_safe_name(metadata.get("run_name") or run_name, "") != run_name or
+    if (str(metadata.get("run_name") or run_name).strip() != run_name or
             int(segment.get("index", -1)) != index or
             str(segment.get("revision") or "").lower() != token):
         raise ValueError("Checkpoint revision identity does not match its metadata.")
@@ -27702,11 +28321,8 @@ async def _ensure_plan_studio_checkpoint_thumbnail(
 
 
 async def _plan_studio_checkpoint_thumbnail(request):
-    run_name = _safe_name(request.query.get("run_name", ""), "")
-    if not run_name:
-        return web.json_response(
-            {"error": "A non-empty H3 chain run_name is required."}, status=400)
     try:
+        run_name = _strict_run_name(request.query.get("run_name", ""))
         record = await asyncio.to_thread(
             _plan_studio_checkpoint_thumbnail_record, run_name,
             request.query.get("scene", 0), request.query.get("revision", ""))
@@ -28139,6 +28755,28 @@ def _project_asset_store() -> ProjectAssetStore:
     return ProjectAssetStore(_input_root(), _output_root())
 
 
+def _owned_project_mutation(
+        run_name: Any, ownership_proof: Any, operation: str,
+        callback: Any, *args: Any, **kwargs: Any) -> Any:
+    """Fence one short catalog/history mutation through its durable write."""
+    run = _strict_run_name(run_name)
+    with project_write_guard(
+            _output_root(), run, ownership_proof, operation):
+        return callback(*args, **kwargs)
+
+
+def _project_asset_error_response(exc: Exception):
+    if isinstance(exc, ProjectOwnershipError):
+        return web.json_response({
+            "error": str(exc), "code": "h3_project_read_only",
+        }, status=423)
+    return web.json_response({
+        "error": str(exc),
+        **({"code": "h3_project_asset_conflict"}
+           if isinstance(exc, ProjectAssetConflictError) else {}),
+    }, status=409 if isinstance(exc, ProjectAssetConflictError) else 400)
+
+
 async def _project_asset_catalog(request):
     try:
         project = request.query.get("project", "")
@@ -28146,7 +28784,7 @@ async def _project_asset_catalog(request):
             _project_asset_store().public_catalog, project)
         return web.json_response(catalog)
     except (OSError, TypeError, ValueError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_projects(request):
@@ -28156,7 +28794,7 @@ async def _project_asset_projects(request):
             request.query.get("q", ""))
         return web.json_response({"items": items})
     except (OSError, TypeError, ValueError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_sources(request):
@@ -28191,7 +28829,7 @@ async def _project_asset_sources(request):
             raise ValueError("Asset source must be input, project, or chains.")
         return web.json_response({"source": source, "items": items})
     except (OSError, TypeError, ValueError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_upload(request):
@@ -28208,6 +28846,7 @@ async def _project_asset_upload(request):
         if upload is None:
             raise ValueError("Upload request contains no file.")
         project = fields.get("project", "")
+        ownership_proof = _request_project_ownership(request)
         rejection = _project_write_rejection(
             request, project, "upload a project asset")
         if rejection is not None:
@@ -28231,12 +28870,13 @@ async def _project_asset_upload(request):
         positional = ((project, slot_id, temporary)
                       if slot_id else (project, temporary))
         result = await asyncio.to_thread(
-            importer, *positional,
+            _owned_project_mutation, project, ownership_proof,
+            "upload a project asset", importer, *positional,
             role=fields.get("role", ""), tag=fields.get("tag", ""),
             original_name=filename, source_kind="upload")
         return web.json_response(result)
     except (OSError, TypeError, ValueError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
     finally:
         if temporary:
             _safe_unlink(temporary)
@@ -28247,8 +28887,10 @@ async def _project_asset_import(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset import request must be a JSON object.")
+        project = body.get("project", "")
+        ownership_proof = _request_project_ownership(request)
         rejection = _project_write_rejection(
-            request, body.get("project", ""), "import a project asset")
+            request, project, "import a project asset")
         if rejection is not None:
             return rejection
         store = _project_asset_store()
@@ -28257,8 +28899,9 @@ async def _project_asset_import(request):
             path = store.input_path(body.get("path"))
         elif source == "project":
             result = await asyncio.to_thread(
-                store.import_project_asset,
-                body.get("project", ""), body.get("source_project", ""),
+                _owned_project_mutation, project, ownership_proof,
+                "import a project asset", store.import_project_asset,
+                project, body.get("source_project", ""),
                 body.get("asset_id", ""), slot_id=body.get("slot_id", ""))
             return web.json_response(result)
         elif source == "chains":
@@ -28272,11 +28915,11 @@ async def _project_asset_import(request):
         slot_id = str(body.get("slot_id") or "")
         importer = (store.bind_reference_slot
                     if slot_id else store.import_file)
-        project = body.get("project", "")
         positional = ((project, slot_id, path)
                       if slot_id else (project, path))
         result = await asyncio.to_thread(
-            importer, *positional,
+            _owned_project_mutation, project, ownership_proof,
+            "import a project asset", importer, *positional,
             role=body.get("role", ""), tag=body.get("tag", ""),
             original_name=body.get("original_name", ""),
             source_kind=source,
@@ -28284,7 +28927,7 @@ async def _project_asset_import(request):
                 body.get("options"), dict) else None)
         return web.json_response(result)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_update(request):
@@ -28292,17 +28935,20 @@ async def _project_asset_update(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset update request must be a JSON object.")
+        project = body.get("project", "")
+        ownership_proof = _request_project_ownership(request)
         rejection = _project_write_rejection(
-            request, body.get("project", ""), "update a project asset")
+            request, project, "update a project asset")
         if rejection is not None:
             return rejection
         result = await asyncio.to_thread(
-            _project_asset_store().update,
-            body.get("project", ""), body.get("asset_id"),
+            _owned_project_mutation, project, ownership_proof,
+            "update a project asset", _project_asset_store().update,
+            project, body.get("asset_id"),
             body.get("changes"))
         return web.json_response(result)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_duplicate(request):
@@ -28310,19 +28956,22 @@ async def _project_asset_duplicate(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset duplication request must be a JSON object.")
+        project = body.get("project", "")
+        ownership_proof = _request_project_ownership(request)
         rejection = _project_write_rejection(
-            request, body.get("project", ""), "duplicate a project asset")
+            request, project, "duplicate a project asset")
         if rejection is not None:
             return rejection
         result = await asyncio.to_thread(
-            _project_asset_store().duplicate,
-            body.get("project", ""), body.get("asset_id"),
+            _owned_project_mutation, project, ownership_proof,
+            "duplicate a project asset", _project_asset_store().duplicate,
+            project, body.get("asset_id"),
             tag=body.get("tag", ""),
             folder_id=(body.get("folder_id")
                        if "folder_id" in body else None))
         return web.json_response(result)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_duplicate_project(request):
@@ -28342,7 +28991,7 @@ async def _project_asset_duplicate_project(request):
     except FileExistsError as exc:
         return web.json_response({"error": str(exc)}, status=409)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_derive(request):
@@ -28350,13 +28999,16 @@ async def _project_asset_derive(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Image variant request must be a JSON object.")
+        project = body.get("project", "")
+        ownership_proof = _request_project_ownership(request)
         rejection = _project_write_rejection(
-            request, body.get("project", ""), "create an image variant")
+            request, project, "create an image variant")
         if rejection is not None:
             return rejection
         result = await asyncio.to_thread(
-            _project_asset_store().derive_image,
-            body.get("project", ""), body.get("asset_id"),
+            _owned_project_mutation, project, ownership_proof,
+            "create an image variant", _project_asset_store().derive_image,
+            project, body.get("asset_id"),
             crop=body.get("crop"), target=body.get("target"),
             resample=body.get("resample", "lanczos"),
             tag=body.get("tag", ""),
@@ -28366,7 +29018,7 @@ async def _project_asset_derive(request):
         return web.json_response(result)
     except (OSError, RuntimeError, TypeError, ValueError,
             json.JSONDecodeError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_folder(request):
@@ -28377,30 +29029,36 @@ async def _project_asset_folder(request):
         store = _project_asset_store()
         action = str(body.get("action") or "").strip().lower()
         project = body.get("project", "")
+        ownership_proof = _request_project_ownership(request)
+        operation = "%s a project folder" % (action or "modify")
         rejection = _project_write_rejection(
-            request, project, "%s a project folder" % (action or "modify"))
+            request, project, operation)
         if rejection is not None:
             return rejection
         if action == "create":
             result = await asyncio.to_thread(
+                _owned_project_mutation, project, ownership_proof, operation,
                 store.create_folder, project, body.get("name"),
                 color=body.get("color", ""))
         elif action == "update":
             result = await asyncio.to_thread(
+                _owned_project_mutation, project, ownership_proof, operation,
                 store.update_folder, project, body.get("folder_id"),
                 body.get("changes"))
         elif action == "delete":
             result = await asyncio.to_thread(
+                _owned_project_mutation, project, ownership_proof, operation,
                 store.delete_folder, project, body.get("folder_id"))
         elif action == "reorder":
             result = await asyncio.to_thread(
+                _owned_project_mutation, project, ownership_proof, operation,
                 store.reorder_folders, project, body.get("folder_ids"))
         else:
             raise ValueError(
                 "Asset folder action must be create, update, delete, or reorder.")
         return web.json_response(result)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_reorder(request):
@@ -28408,16 +29066,19 @@ async def _project_asset_reorder(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset reorder request must be a JSON object.")
+        project = body.get("project", "")
+        ownership_proof = _request_project_ownership(request)
         rejection = _project_write_rejection(
-            request, body.get("project", ""), "reorder project assets")
+            request, project, "reorder project assets")
         if rejection is not None:
             return rejection
         result = await asyncio.to_thread(
-            _project_asset_store().reorder,
-            body.get("project", ""), body.get("asset_ids"))
+            _owned_project_mutation, project, ownership_proof,
+            "reorder project assets", _project_asset_store().reorder,
+            project, body.get("asset_ids"))
         return web.json_response(result)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 async def _project_asset_delete(request):
@@ -28425,32 +29086,38 @@ async def _project_asset_delete(request):
         body = await request.json()
         if not isinstance(body, dict):
             raise ValueError("Asset deletion request must be a JSON object.")
+        project = body.get("project", "")
+        ownership_proof = _request_project_ownership(request)
         rejection = _project_write_rejection(
-            request, body.get("project", ""), "delete a project asset")
+            request, project, "delete a project asset")
         if rejection is not None:
             return rejection
         result = await asyncio.to_thread(
-            _project_asset_store().delete,
-            body.get("project", ""), body.get("asset_id"))
+            _owned_project_mutation, project, ownership_proof,
+            "delete a project asset", _project_asset_store().delete,
+            project, body.get("asset_id"))
         return web.json_response(result)
     except (OSError, TypeError, ValueError, json.JSONDecodeError) as exc:
-        return web.json_response({"error": str(exc)}, status=400)
+        return _project_asset_error_response(exc)
 
 
 def _project_write_rejection(request: Any, run_name: Any,
                              operation: str) -> Any:
     # Let each route retain its established missing-run validation. Ownership
     # can only be resolved after the route has an actual project identity.
-    if not _safe_name(run_name, ""):
+    if not str(run_name or "").strip():
         return None
     try:
+        normalized = _strict_run_name(run_name)
         _require_project_write(
-            run_name, _request_project_ownership(request), operation)
-    except ProjectOwnershipError as exc:
+            normalized, _request_project_ownership(request), operation)
+    except ValueError as exc:
+        if not isinstance(exc, ProjectOwnershipError):
+            return web.json_response({"error": str(exc)}, status=400)
         return web.json_response({
             "error": str(exc),
             "code": "h3_project_read_only",
-            "run_name": _safe_name(run_name, ""),
+            "run_name": normalized,
         }, status=423)
     return None
 
@@ -28467,16 +29134,17 @@ def _publish_project_ownership(payload: dict[str, Any]) -> None:
 
 def _fence_inflight_project_work(run_name: Any) -> None:
     """Wake live gates and discard candidate control state after takeover."""
-    normalized = _safe_name(run_name, "")
-    if not normalized:
+    try:
+        normalized = _strict_run_name(run_name)
+    except ValueError:
         return
     for token, entry in list(_ACTIVE_CANDIDATE_BATCHES.items()):
-        if _safe_name(entry.get("run_name"), "") == normalized:
+        if str(entry.get("run_name") or "").strip() == normalized:
             _ACTIVE_CANDIDATE_BATCHES.pop(token, None)
     for token, pending in list(_PENDING_REVIEWS.items()):
         public = pending.get("public")
         if (not isinstance(public, dict) or
-                _safe_name(public.get("run_name"), "") != normalized):
+                str(public.get("run_name") or "").strip() != normalized):
             continue
         _PENDING_REVIEWS.pop(token, None)
         future = pending.get("future")
@@ -28502,9 +29170,7 @@ async def _project_ownership_command(request):
         if not isinstance(body, dict):
             raise ValueError(
                 "Project ownership request must be a JSON object.")
-        run_name = _safe_name(body.get("run_name"), "")
-        if not run_name:
-            raise ValueError("A non-empty H3 chain run_name is required.")
+        run_name = _strict_run_name(body.get("run_name"))
         action = str(body.get("action") or "status").strip().lower()
         owner_id = body.get("owner_id", "")
         if action == "status":

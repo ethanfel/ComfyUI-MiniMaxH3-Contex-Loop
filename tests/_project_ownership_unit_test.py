@@ -5,6 +5,7 @@ import json
 import pathlib
 import shutil
 import tempfile
+import threading
 
 from project_ownership import (
     ProjectOwnershipError,
@@ -12,6 +13,7 @@ from project_ownership import (
     heartbeat_project_ownership,
     ownership_path,
     ownership_status,
+    project_write_guard,
     release_project_ownership,
     require_project_ownership,
 )
@@ -33,6 +35,12 @@ def rejected(callable_, text=""):
 def main():
     with tempfile.TemporaryDirectory() as temporary:
         root = pathlib.Path(temporary)
+        try:
+            ownership_status(str(root), "film unsafe", OWNER_A)
+        except ValueError as exc:
+            assert "Use 'film_unsafe'" in str(exc)
+        else:
+            raise AssertionError("ownership accepted an aliasing Run name")
         initial = ownership_status(str(root), "film", OWNER_A)
         assert initial["enabled"] is False
         assert initial["available"] is True
@@ -46,6 +54,35 @@ def main():
             str(root), "film", proof_a, "save a scene") == {
                 **proof_a, "run_name": "film",
             }
+        takeover_started = threading.Event()
+        takeover_finished = threading.Event()
+        takeover_result = {}
+
+        def force_takeover():
+            takeover_started.set()
+            takeover_result.update(claim_project_ownership(
+                str(root), "film", OWNER_B, "Workflow B", force=True))
+            takeover_finished.set()
+
+        with project_write_guard(
+                str(root), "film", proof_a, "commit a checkpoint"):
+            worker = threading.Thread(target=force_takeover)
+            worker.start()
+            assert takeover_started.wait(1.0)
+            assert not takeover_finished.wait(0.1), (
+                "Force ownership split an active durable commit")
+        worker.join(timeout=2.0)
+        assert not worker.is_alive()
+        assert takeover_result["owned_by_requester"] is True
+        assert takeover_result["epoch"] == 2
+        rejected(lambda: require_project_ownership(
+            str(root), "film", proof_a, "publish after takeover"),
+            "stale workflow")
+
+        # Restore owner A for the remaining release/status assertions.
+        reclaimed = claim_project_ownership(
+            str(root), "film", OWNER_A, "Workflow A", force=True)
+        proof_a = {"owner_id": OWNER_A, "epoch": reclaimed["epoch"]}
         record_path = pathlib.Path(ownership_path(str(root), "film"))
         assert record_path.parent.name == ".project_ownership"
         run_directory = root / "h3_chains" / "film"
@@ -66,7 +103,7 @@ def main():
         taken = claim_project_ownership(
             str(root), "film", OWNER_B, "Workflow B", force=True)
         assert taken["owned_by_requester"] is True
-        assert taken["epoch"] == 2
+        assert taken["epoch"] == 4
         rejected(lambda: require_project_ownership(
             str(root), "film", proof_a, "publish a checkpoint"),
             "stale workflow")
@@ -75,7 +112,7 @@ def main():
         released = release_project_ownership(
             str(root), "film", OWNER_B, taken["epoch"])
         assert released["available"] is True
-        assert released["epoch"] == 3
+        assert released["epoch"] == 5
         rejected(lambda: require_project_ownership(
             str(root), "film", proof_b, "delete a revision"))
 

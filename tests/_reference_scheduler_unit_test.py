@@ -1336,7 +1336,7 @@ try:
         chain._output_root = lambda: output_root
         chain._launch_directory = lambda path: (
             opened_paths.append(path) or True, None)
-        folder_result = chain._open_run_output_directory("Project Name")
+        folder_result = chain._open_run_output_directory("Project_Name")
         expected_folder = pathlib.Path(
             output_root, "h3_chains", "Project_Name")
         assert folder_result["opened"] is True
@@ -1344,9 +1344,15 @@ try:
         assert expected_folder.is_dir()
         assert opened_paths == [str(expected_folder)]
         chain._launch_directory = lambda _path: (False, "headless host")
-        fallback_result = chain._open_run_output_directory("Project Name")
+        fallback_result = chain._open_run_output_directory("Project_Name")
         assert fallback_result["opened"] is False
         assert fallback_result["error"] == "headless host"
+        try:
+            chain._open_run_output_directory("Project Name")
+        except ValueError as exc:
+            assert "Project_Name" in str(exc)
+        else:
+            raise AssertionError("aliased run_name was accepted")
         try:
             chain._open_run_output_directory("../../")
         except ValueError as exc:

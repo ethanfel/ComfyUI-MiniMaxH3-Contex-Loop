@@ -64,7 +64,7 @@ def digest(path):
 def write_revision(run, scene, token, seed, active=False, predecessor=None,
                    run_name="revision_test", compatibility=None,
                    context_length=None, audio_context_length=None,
-                   generated_continuity=None):
+                   generated_continuity=None, recovery_archive=False):
     segments = run / "segments"
     checkpoints = run / "checkpoints"
     reviews = run / "reviews"
@@ -135,6 +135,23 @@ def write_revision(run, scene, token, seed, active=False, predecessor=None,
         },
         "segment": segment,
     }
+    archive_files = set()
+    if recovery_archive:
+        archive_dir = run / "recovery_archives" / token
+        archive_dir.mkdir(parents=True, exist_ok=True)
+        archives = {}
+        for key, filename in (
+                ("plan", "plan.json"),
+                ("workflow", "workflow.json"),
+                ("api_prompt", "api_prompt.json")):
+            archive_path = archive_dir / filename
+            archive_path.write_text(
+                json.dumps({"revision": token, "kind": key}),
+                encoding="utf-8")
+            archives[key] = str(archive_path.relative_to(
+                folder_paths.output_directory))
+            archive_files.add(archive_path)
+        metadata["archives"] = archives
     metadata_path.write_text(json.dumps(metadata), encoding="utf-8")
     review = reviews / (
         "clip_%04d.%s.audio.review.mp4" %
@@ -143,7 +160,10 @@ def write_revision(run, scene, token, seed, active=False, predecessor=None,
     if active:
         (checkpoints / ("clip_%04d.json" % scene)).write_text(
             json.dumps(metadata), encoding="utf-8")
-    return metadata, {segment_path, prompt_path, checkpoint_path, metadata_path, review}
+    return metadata, {
+        segment_path, prompt_path, checkpoint_path, metadata_path, review,
+        *archive_files,
+    }
 
 
 async def check():
@@ -200,7 +220,23 @@ async def check():
         new_two = "4" * 32
         old_one_meta, old_one_files = write_revision(run, 1, old_one, 101)
         new_one_meta, new_one_files = write_revision(
-            run, 1, new_one, 201, active=True)
+            run, 1, new_one, 201, active=True, recovery_archive=True)
+        exact_archives = chain._checkpoint_run_archives(
+            {"run_name": "revision_test"}, new_one_meta)
+        assert set(exact_archives) == {"plan", "workflow", "api_prompt"}
+        invalid_archive_meta = json.loads(json.dumps(new_one_meta))
+        wrong_archive = run / "recovery_archives" / ("b" * 32) / "plan.json"
+        wrong_archive.parent.mkdir(parents=True, exist_ok=True)
+        wrong_archive.write_text("{}", encoding="utf-8")
+        invalid_archive_meta["archives"]["plan"] = str(
+            wrong_archive.relative_to(folder_paths.output_directory))
+        try:
+            chain._checkpoint_run_archives(
+                {"run_name": "revision_test"}, invalid_archive_meta)
+        except ValueError as exc:
+            assert "different revision" in str(exc)
+        else:
+            raise AssertionError("cross-revision recovery path was accepted")
         old_two_meta, old_two_files = write_revision(
             run, 2, old_two, 102, predecessor=old_one_meta)
         new_two_meta, new_two_files = write_revision(
@@ -274,6 +310,35 @@ async def check():
         assert not (run / "checkpoints" / "clip_0003.json").exists()
         assert (run / "checkpoints" / ("clip_0003.%s.json" % future)).is_file()
         assert (run / "checkpoints" / ("clip_0001.%s.json" % new_one)).is_file()
+
+        # A power loss after retiring a pointer but before publishing the
+        # replacement is rolled back from its durable transaction journal.
+        checkpoint_dir = run / "checkpoints"
+        canonical_future = checkpoint_dir / "clip_0003.json"
+        canonical_future.write_text(json.dumps(_future_meta), encoding="utf-8")
+        restore_transaction = "a" * 32
+        temporary_future = checkpoint_dir / (
+            "clip_0003.json.restore.%s.tmp" % restore_transaction)
+        canonical_future.replace(temporary_future)
+        journal = checkpoint_dir / ".transactions" / (
+            "restore.%s.json" % restore_transaction)
+        chain._atomic_json(str(journal), {
+            "format": "h3_checkpoint_pointer_restore_v1",
+            "run_name": "revision_test",
+            "transaction": restore_transaction,
+            "state": "prepared",
+            "originals": [],
+            "retired": [{
+                "canonical": "clip_0003.json",
+                "temporary": temporary_future.name,
+            }],
+        })
+        assert chain._recover_checkpoint_pointer_transactions(
+            "revision_test") == 1
+        assert canonical_future.is_file()
+        assert not temporary_future.exists()
+        assert not journal.exists()
+        canonical_future.unlink()
 
         future_preview = await chain._preview_checkpoint_revision_deletion(
             JsonRequest({

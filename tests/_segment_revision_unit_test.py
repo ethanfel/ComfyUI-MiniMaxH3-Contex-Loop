@@ -57,6 +57,7 @@ def main():
     with tempfile.TemporaryDirectory() as tempdir:
         folder_paths.output_directory = tempdir
         chain._compact_latent = lambda _latent: {"samples": [b"video", b"audio"]}
+        write_run_archives = chain._write_run_archives
         chain._write_run_archives = lambda *_args, **_kwargs: {}
         chain._archive_media_metadata = lambda _archives: {}
 
@@ -111,6 +112,22 @@ def main():
             }],
         }
         state = {"plan": plan, "index": 1}
+        archive_one = write_run_archives(
+            plan, revision="1" * 32, promote=False)
+        assert pathlib.Path(chain._absolute_output_path(
+            archive_one["plan"])).is_file()
+        canonical_plan = pathlib.Path(tempdir) / "h3_chains" / (
+            "revision_test") / "plan.json"
+        assert not canonical_plan.exists()
+        chain._promote_run_archive_snapshot(plan, archive_one)
+        promoted_plan = canonical_plan.read_text(encoding="utf-8")
+        changed_plan = dict(plan)
+        changed_plan["prompt_prefix"] = "uncommitted edit"
+        archive_two = write_run_archives(
+            changed_plan, revision="2" * 32, promote=False)
+        assert pathlib.Path(chain._absolute_output_path(
+            archive_two["plan"])).is_file()
+        assert canonical_plan.read_text(encoding="utf-8") == promoted_plan
         generated_audio = {
             "waveform": torch.zeros(
                 (1, 2, round(5 / chain.FPS * 8000)), dtype=torch.float32),

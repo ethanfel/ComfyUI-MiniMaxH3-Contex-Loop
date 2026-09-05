@@ -171,6 +171,7 @@ assert.match(source, /window\.setTimeout\(\s*flushPlanEffects, PROMPT_SYNC_DELAY
 assert.match(source, /liveValue !== state\.lastValue && !rebaseActivePromptOntoLivePlan\(\)/);
 assert.match(source, /textarea\.addEventListener\("blur", \(\) => \{\s*flushPlanEffects\(\)/);
 assert.match(source, /schedulePromptAnalysis\(\)/);
+assert.match(source, /node\._h3FlushProjectWrites/);
 const teardown = source.slice(
     source.indexOf("node.onRemoved = function ()"),
     source.indexOf("node._h3PromptCompanionSetActiveScene"),

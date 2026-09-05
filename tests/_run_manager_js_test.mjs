@@ -61,6 +61,8 @@ assert.match(source, /Saved \$\{payload\.asset_count\} bindings to/);
 assert.match(source, /Active Plan is now/);
 assert.match(source, /selectedIdentity\.textContent = runIdentity\.selectedLabel/);
 assert.doesNotMatch(source, /option\.disabled = !run\.restorable/);
+assert.match(source, /Recovery blocked:/);
+assert.match(source, /committed immutable checkpoint snapshot/);
 assert.match(source, /removeLegacyStatusOutput/);
 assert.match(source, /output\.name === "asset_status"/);
 assert.match(source, /widget\.hidden = true/);

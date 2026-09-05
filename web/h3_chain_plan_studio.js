@@ -60,7 +60,7 @@ import {
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.7.2";
+} from "./h3_reference_preview_core.mjs?v=0.7.0";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -110,8 +110,8 @@ import {
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
 } from "./h3_chain_plan_studio_core.mjs?v=0.7.0";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.1";
-import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.2";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.0";
 
 const {
     connectedPromptEditors,
@@ -646,9 +646,10 @@ function mount(node) {
         timelineLayoutFrame:null,
         subtitleTimelineHost:null,
         panelHost:null,
-        planNotifyTimer:null, editorialTimer:null, lastEditorialSignature:"",
+        planNotifyTimer:null, editorialTimer:null, editorialPending:null,
+        editorialSavePromise:null, lastEditorialSignature:"",
         editorialReady:false, editorialRun:"",
-        editorial:{placements:[], trims:[], locked_scene_ids:[], subtitles:{},
+        editorial:{revision:"", placements:[], trims:[], locked_scene_ids:[], subtitles:{},
             alternate_draft:null, replacements:[]},
         subtitleAssets:[], subtitleAssetsRun:"", subtitleAssetsToken:0,
         playhead:null, player:null, playerAudio:null, sourceAudioPlayer:null,
@@ -877,6 +878,8 @@ function mount(node) {
             });
         }
         return {
+            revision:revisionPattern.test(String(value?.revision ?? "").toLowerCase())
+                ? String(value.revision).toLowerCase() : "",
             placements,
             trims,
             locked_scene_ids:lockedSceneIds,
@@ -1111,6 +1114,8 @@ function mount(node) {
         const sceneById = new Map(sceneOrder.map((row) => [row.scene_id, row.scene]));
         return {
             run_name:runName(),
+            revision:String(state.editorial.revision ?? ""),
+            base_revision:String(state.editorial.revision ?? ""),
             chapters:orderedChapters(state.plan).map((chapter) => ({
                 id:chapter.id,
                 title:chapter.title,
@@ -1146,7 +1151,7 @@ function mount(node) {
         state.editorial = next;
         state.editorialRun = currentRun;
         state.editorialReady = true;
-        state.lastEditorialSignature = JSON.stringify({
+        state.lastEditorialSignature = editorialSignature({
             run_name:currentRun,
             chapters:(payload.chapters ?? []).map((chapter) => ({
                 id:chapter.id, title:chapter.title,
@@ -1182,11 +1187,66 @@ function mount(node) {
         return previous !== JSON.stringify(next);
     }
 
+    function editorialSignature(payload) {
+        const comparable = {...payload};
+        delete comparable.base_revision;
+        delete comparable.revision;
+        return JSON.stringify(comparable);
+    }
+
     function cacheStudioPresentation(records, editorial) {
         const snapshot = studioCheckpointCacheSnapshot(
             runName(), records, editorial,
         );
         if (snapshot) node.properties[CHECKPOINT_CACHE_PROPERTY] = snapshot;
+    }
+
+    async function persistEditorial(payload, signature) {
+        const previousSave = state.editorialSavePromise;
+        const request = (async () => {
+            if (previousSave) {
+                try { await previousSave; } catch (_error) {}
+            }
+            const outbound = {
+                ...payload,
+                base_revision:state.editorialRun === payload.run_name
+                    ? String(state.editorial.revision ?? "")
+                    : String(payload.base_revision ?? ""),
+            };
+            const response = await api.fetchApi(
+                "/minimax_h3_context_loop/editorial",
+                await projectMutationOptions(node, payload.run_name, {
+                    method:"POST", headers:{"Content-Type":"application/json"},
+                    body:JSON.stringify(outbound),
+                }),
+            );
+            const detail = await response.json().catch(() => ({}));
+            if (!response.ok) {
+                throw new Error(detail.error || `HTTP ${response.status}`);
+            }
+            const saved = detail.editorial;
+            if (state.editorialRun === payload.run_name
+                    && saved && typeof saved === "object") {
+                state.editorial.revision = String(saved.revision ?? "");
+            }
+        })();
+        state.editorialSavePromise = request;
+        try {
+            await request;
+        } catch (error) {
+            if (state.lastEditorialSignature === signature) {
+                state.lastEditorialSignature = "";
+            }
+            console.warn(
+                "H3 Plan Studio could not save chapter presentation data:",
+                error,
+            );
+            throw error;
+        } finally {
+            if (state.editorialSavePromise === request) {
+                state.editorialSavePromise = null;
+            }
+        }
     }
 
     function scheduleEditorialSave(delay = 250) {
@@ -1204,32 +1264,42 @@ function mount(node) {
         if (!state.editorialReady || state.editorialRun !== runName()) return;
         const payload = editorialPayload();
         cacheStudioPresentation([...state.checkpoints.values()], payload);
-        const signature = JSON.stringify(payload);
+        const signature = editorialSignature(payload);
         if (signature === state.lastEditorialSignature) return;
         state.lastEditorialSignature = signature;
         if (state.editorialTimer != null) clearTimeout(state.editorialTimer);
         if (!payload.run_name) return;
-        state.editorialTimer = setTimeout(async () => {
+        state.editorialPending = {payload, signature};
+        state.editorialTimer = setTimeout(() => {
             state.editorialTimer = null;
-            try {
-                const response = await api.fetchApi(
-                    "/minimax_h3_context_loop/editorial",
-                    await projectMutationOptions(node, payload.run_name, {
-                        method:"POST", headers:{"Content-Type":"application/json"},
-                        body:JSON.stringify(payload),
-                    }),
-                );
-                if (!response.ok) {
-                    const detail = await response.json().catch(() => ({}));
-                    throw new Error(detail.error || `HTTP ${response.status}`);
-                }
-            } catch (error) {
-                if (state.lastEditorialSignature === signature) {
-                    state.lastEditorialSignature = "";
-                }
-                console.warn("H3 Plan Studio could not save chapter presentation data:", error);
-            }
+            const pending = state.editorialPending;
+            if (pending?.signature === signature) state.editorialPending = null;
+            void persistEditorial(payload, signature).catch(() => {});
         }, Math.max(0, Number(delay) || 0));
+    }
+
+    async function flushProjectWrites(expectedRun = runName()) {
+        const run = String(expectedRun ?? "").trim();
+        let editorialError = null;
+        try {
+            if (run && state.editorialRun === run) {
+                if (state.editorialTimer != null) {
+                    clearTimeout(state.editorialTimer);
+                    state.editorialTimer = null;
+                }
+                const pending = state.editorialPending;
+                state.editorialPending = null;
+                if (pending?.payload?.run_name === run) {
+                    await persistEditorial(pending.payload, pending.signature);
+                } else if (state.editorialSavePromise) {
+                    await state.editorialSavePromise;
+                }
+            }
+        } catch (error) {
+            editorialError = error;
+        }
+        await flushHistoryDraft();
+        if (editorialError) throw editorialError;
     }
 
     function writePlan(message = null) {
@@ -5839,6 +5909,15 @@ function mount(node) {
                 && currentPromptEditors === state.lastPromptEditorsSignature) return;
         try {
             const runChanged = planOwner !== state.planOwner || currentRun !== state.lastRunName;
+            const previousRun = state.lastRunName;
+            if (runChanged && previousRun) {
+                void flushProjectWrites(previousRun).catch((error) => {
+                    console.warn(
+                        "H3 Plan Studio could not flush the previous Run " +
+                        "before switching:", error,
+                    );
+                });
+            }
             state.plan = parsePlanJson(value); state.planNode = planNode;
             state.planOwner = planOwner; state.planWidget = planWidget;
             state.lastValue = value; state.lastRunName = currentRun;
@@ -5862,7 +5941,7 @@ function mount(node) {
                 state.editorialReady = false; state.editorialRun = "";
                 state.editorial = cached?.editorial
                     ? normalizedEditorial(cached.editorial)
-                    : {placements:[], trims:[], locked_scene_ids:[], subtitles:{
+                    : {revision:"", placements:[], trims:[], locked_scene_ids:[], subtitles:{
                         mode:"off", asset_id:"", offset_seconds:0,
                     }, alternate_draft:null, replacements:[]};
                 if (cached?.editorial) state.editorialRun = currentRun;
@@ -5941,8 +6020,10 @@ function mount(node) {
         }
     };
     document.addEventListener("h3-lora-routes-changed", onLoRARoutesChanged);
+    node._h3FlushProjectWrites = flushProjectWrites;
     const removed = node.onRemoved;
     node.onRemoved = function () {
+        const finalFlush = flushProjectWrites(runName());
         state.disposed = true;
         state.checkpointToken += 1;
         state.presentationToken += 1;
@@ -5957,8 +6038,13 @@ function mount(node) {
         document.removeEventListener("keydown", onPlayerKeydown, true);
         delete node._h3PromptCompanionSetActiveScene;
         delete node._h3PromptCompanionSetScenePrompt;
+        delete node._h3FlushProjectWrites;
         disposePlayer();
-        void flushHistoryDraft(); return removed?.apply(this, arguments);
+        void finalFlush.catch((error) => console.warn(
+            "H3 Plan Studio could not flush project edits while closing:",
+            error,
+        ));
+        return removed?.apply(this, arguments);
     };
     node._h3PromptCompanionSetActiveScene = (planNode, index) => {
         if (planNode !== state.planNode || !state.plan?.shots?.length) return false;

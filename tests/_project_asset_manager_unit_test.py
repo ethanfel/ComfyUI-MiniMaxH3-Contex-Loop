@@ -2,6 +2,7 @@
 """Project Asset Manager registry, lazy picture, and Plan integration checks."""
 
 import importlib.util
+import copy
 import json
 import pathlib
 import sys
@@ -93,6 +94,12 @@ def main():
         store = chain.ProjectAssetStore(
             folder_paths.get_input_directory(),
             folder_paths.get_output_directory())
+        try:
+            store.load("episode unsafe", create=True)
+        except ValueError as exc:
+            assert "Use 'episode_unsafe'" in str(exc)
+        else:
+            raise AssertionError("an aliasing Run name was accepted")
         hero_result = store.import_file(
             "episode", hero, role="picture", tag="hero")
         store.import_file(
@@ -137,6 +144,17 @@ def main():
         renamed = store.update_folder(
             "episode", folder_id, {"name": "Cast"})
         assert renamed["folder"]["name"] == "Cast"
+
+        stale_catalog = copy.deepcopy(store.load("episode"))
+        store.create_folder("episode", "Locations")
+        try:
+            store._save_catalog(stale_catalog)
+        except chain.ProjectAssetConflictError as exc:
+            assert "no catalog data was overwritten" in str(exc)
+        else:
+            raise AssertionError("a stale whole-catalog write was accepted")
+        assert {item["name"] for item in store.load("episode")["folders"]} == {
+            "Cast", "Locations"}
 
         record, references, token, timeline, status = (
             chain.MiniMaxH3ProjectAssetManager().build(
@@ -275,6 +293,14 @@ def main():
         assert audio_entry["tag"] == "dialogue"
         assert audio_entry["timeline_mode"] == "source_timeline"
         assert audio_entry["align_audio_reference"] is True
+
+        catalog_path = root / "input" / "h3_projects" / "episode" / (
+            "catalog.json")
+        catalog_path.write_text("{broken", encoding="utf-8")
+        recovered_catalog = store.load("episode")
+        assert recovered_catalog["project"] == "episode"
+        assert json.loads(catalog_path.read_text(encoding="utf-8"))[
+            "storage_revision"] == recovered_catalog["storage_revision"]
 
         operation = json.dumps({
             "mode": "model", "project": "episode",

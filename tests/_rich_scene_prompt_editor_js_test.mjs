@@ -190,6 +190,7 @@ assert.match(source, /Optimize/);
 assert.match(source, /Apply changed result/);
 assert.match(source, /scheduleHistoryDraft/);
 assert.match(source, /flushHistoryDraft/);
+assert.match(source, /node\._h3FlushProjectWrites/);
 assert.match(source, /promptRevisionTree/);
 assert.match(source, /mutateHistoryRevision\(\s*"label"/);
 assert.match(source, /mutateHistoryRevision\(\s*"archive"/);

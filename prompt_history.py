@@ -31,6 +31,14 @@ def _safe_component(value: Any, label: str) -> str:
     return text
 
 
+def _strict_run_name(value: Any) -> str:
+    requested = str(value or "").strip()
+    normalized = _safe_component(requested, "H3 chain run_name")
+    if requested != normalized:
+        raise ValueError("Prompt history requires the exact saved run name.")
+    return normalized
+
+
 def _normalized_prompt(value: Any) -> str:
     # Match Plan execution normalization so harmless leading/trailing editor
     # whitespace does not create a second "executed" variant.
@@ -65,7 +73,20 @@ def _atomic_json(path: str, value: Any) -> None:
         with open(temporary, "w", encoding="utf-8") as handle:
             json.dump(value, handle, ensure_ascii=False, indent=2)
             handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
         os.replace(temporary, path)
+        try:
+            directory = os.open(os.path.dirname(path), os.O_RDONLY)
+        except OSError:
+            directory = None
+        if directory is not None:
+            try:
+                os.fsync(directory)
+            except OSError:
+                pass
+            finally:
+                os.close(directory)
     finally:
         try:
             os.unlink(temporary)
@@ -78,7 +99,7 @@ class PromptHistoryStore:
         self.output_root = os.path.abspath(output_root)
 
     def _scene_dir(self, run_name: Any, scene_id: Any) -> tuple[str, str, str]:
-        run = _safe_component(run_name, "H3 chain run_name")
+        run = _strict_run_name(run_name)
         scene = _safe_component(scene_id, "scene ID")
         path = os.path.abspath(os.path.join(
             self.output_root, "h3_chains", run, "prompt_history", scene))
