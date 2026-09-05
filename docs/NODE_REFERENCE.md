@@ -60,6 +60,7 @@ for compatibility.
 | **MiniMax H3 Pending Review** | Widget: defer completed batch. | `pending_review` | Connects to Review Gate to persist a complete candidate batch and stop without holding an execution open. |
 | **MiniMax H3 Context Loop Review Gate** | state, segment. Widgets: enabled, timeout, candidate count, memory cleanup, partial assembly. Optional: `pending_review`. | reviewed `segment`, `status` | Pauses for live approve/retry/reroll/candidate selection, or stores and later resolves a deferred batch when Pending Review is connected. |
 | **MiniMax H3 Context Loop End** | flow, state, images, sampled latent, reviewed segment. | manifest, manifest JSON, final context frames, final context latent | Recurses into the next scene or finishes the selected range. |
+| **MiniMax H3 Chapter Delivery** | manifest, enabled, chapter number. | delivery manifest, manifest JSON, resolved chapter, snapshot path, status | Seals and selects one Plan Studio chapter for isolated export. `0` selects the just-completed chapter; a positive number selects any completed chapter. Disable it to preserve whole-Run output. |
 | **MiniMax H3 Context Loop Assemble** | manifest. Widgets: audio source, filename, bitrate. Optional: output copy, blend/tone controls, recovery media. | `video_path` | Verifies selected segments, joins them, and muxes the chosen audio into the final MP4. |
 
 The H3 model loader, scheduler, sampler, and VAE decoders are ordinary ComfyUI
@@ -111,6 +112,8 @@ workflows](ADVANCED_WORKFLOWS.md).
 | **Run Manager** | Plan, archive controls, optional loader assets/Source Timeline/tagged refs → Plan, Source Timeline | Browse runs, restore a saved Plan and loader bindings, and archive recovery assets. |
 | **Checkpoint Manager** | Saved UI selection; optional Plan → selected manifest | Preview branches and nested final-cut alternates, activate a take, remove safe leaves, or emit a lineage for deferred upscaling. |
 | **Load Manifest** | Plan; optional source media/context → manifest, manifest JSON, status | Verify and load saved segments without executing the generation loop. Usually muted in generation examples. |
+| **Chapter Delivery** | Full/partial manifest + enabled + chapter number → chapter manifest, JSON, number, immutable path, status | Freeze a completed chapter and route later finishing into that chapter's own folder. `0` means the chapter ending at the manifest tip; `1`, `2`, etc. select a particular completed chapter. |
+| **Chapter Recovery Load** | Run name + chapter number + optional snapshot id → verified chapter manifest | Recover the newest snapshot of a particular chapter, or paste its 32-character id to recover an older sealed version. |
 | **Export PNG Sequence + Audio** | Manifest + optional video VAE and/or audio VAE; optional save workers and cached/strict verification → output directory, PNG count, status, WAV path | Connect either VAE independently for PNG-only or WAV-only output, or both for parallel-saved lossless frames plus one synchronized PCM soundtrack. |
 | **Full-Chain Latent Video Adapter** | Generated manifest + video VAE → cached continuous video | Build a low-RAM, disk-backed whole-run input for SeedVR2. |
 | **Assemble** | Manifest + audio/output choices → MP4 path | Join a complete or partial source/upscale manifest. |

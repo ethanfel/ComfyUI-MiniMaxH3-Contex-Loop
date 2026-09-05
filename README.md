@@ -116,6 +116,7 @@ See [How disabled nodes are shown](docs/NODE_REFERENCE.md#how-disabled-nodes-are
 | **Pending Review** | one defer toggle | `pending_review` | Optionally store a complete candidate batch for later review without leaving an execution waiting. |
 | **Review Gate** | state and saved segment | reviewed `segment` | Approve, retry, reroll, or stop. |
 | **Loop End** | flow, state, frames, latent, segment | `manifest` | Advance or finish the loop. |
+| **Chapter Delivery** | manifest and chapter number | scoped `manifest` | Seal the just-completed chapter (`0`) or any particular completed chapter (`1`, `2`, …) without extending earlier finals. |
 | **Assemble** | `manifest` | `video_path` | Build the final MP4. |
 
 The [Node guide](docs/NODE_REFERENCE.md) lists the important sockets, settings,

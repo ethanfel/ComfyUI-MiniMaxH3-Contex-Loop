@@ -4,6 +4,14 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added immutable per-chapter delivery and recovery. **Chapter Delivery** uses
+  Plan Studio's existing chapter boundaries, can auto-select the chapter that
+  just finished or explicitly select any numbered completed chapter, and
+  routes MP4, PNG/WAV, and full-chain SeedVR2 preparation into isolated chapter
+  folders. **Chapter Recovery Load** restores the newest or an exact older
+  content-addressed chapter snapshot without loading later chapters. Disabling
+  Chapter Delivery preserves the existing whole-Run final path.
+
 - Fixed Prompt Editor reference discovery in Studio workflows whose render
   engine lives inside a subgraph. Scene Prompt Editor, Rich Prompt Editor,
   Plan Editor, and Plan Studio can now read the connected upstream Project

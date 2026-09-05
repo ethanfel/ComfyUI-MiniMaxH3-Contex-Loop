@@ -182,6 +182,44 @@ original predecessor as provenance, but that structural edge does not choose
 the preceding chapter. Explicit visual or audio context recorded by a scene is
 still preserved as a generation dependency.
 
+### Seal, export, and recover a particular chapter
+
+Put **Chapter Delivery** after Loop End, Manifest Load, or Checkpoint Manager
+and feed its `delivery_manifest` to Assemble, Export PNG Sequence + Audio, or
+Full-Chain Latent Video Adapter. The chapter boundaries come directly from Plan
+Studio; there is no second chapter definition to keep synchronized.
+
+- `chapter_number = 0` selects the chapter containing the manifest's last
+  completed scene. That scene must be the end of the chapter, so an accidental
+  mid-chapter export is rejected.
+- `chapter_number = 1`, `2`, `3`, and so on selects that particular completed
+  chapter even when later chapters already exist.
+- `enabled = false` passes the complete incoming manifest through and preserves
+  the traditional whole-Run final.
+
+Sealing creates a content-addressed, immutable recovery manifest. It freezes
+the selected scenes, checkpoint revisions, trims, placements, final-cut
+alternates, subtitle origin, and source-audio offset at that moment. A later
+chapter therefore cannot silently grow or replace Chapter 1. Re-sealing changed
+content creates another snapshot; it does not destroy the previous one.
+
+Use **Chapter Recovery Load** with the Run name and chapter number to recover
+the newest sealed snapshot. Paste the full 32-character snapshot id when you
+need a particular older delivery. Its output is the same manifest type used by
+the finishing nodes, so recovery does not require loading or extending every
+other chapter.
+
+Chapter output remains inside the original Run but is isolated by number and
+chapter id:
+
+```text
+output/h3_chains/<run_name>/chapters/02_<chapter_id>/
+├── manifests/<snapshot_id>.json
+├── final/<filename>.mp4
+├── frames/<export_name>/
+└── upscaled/seedvr2/source/
+```
+
 If a branch ends with an empty next-scene slot and a compatible saved candidate
 exists elsewhere, the graph displays a dashed empty card. Click it to preview
 the available candidates and choose **Attach selected candidate**. This is
@@ -536,6 +574,11 @@ output/h3_chains/<run_name>/
 ├── checkpoints/clip_0001.<revision>.safetensors
 ├── generated_audio/
 ├── reference_cache/
+├── chapters/<number>_<chapter_id>/
+│   ├── manifests/<snapshot_id>.json
+│   ├── final/
+│   ├── frames/
+│   └── upscaled/seedvr2/source/
 ├── upscaled/<profile>/
 └── final/<filename>.mp4
 ```
@@ -556,6 +599,12 @@ prefix reconstructed by Manifest Load. Its filename supports date
 tokens such as `%date:yyyy-MM-dd%`, `%year%`, `%month%`, `%day%`, `%hour%`,
 `%minute%`, and `%second%`. Existing files are never overwritten; numbered
 suffixes are added automatically.
+
+When Assemble receives a Chapter Delivery or Chapter Recovery Load manifest,
+it writes under that chapter's `final/` folder and includes only the selected
+scene range. Source audio and timed subtitles are shifted to the chapter's
+original timeline origin. Other chapter finals and the whole-Run `final/`
+remain untouched.
 
 ### Recovery blend schedules
 
@@ -632,6 +681,10 @@ deliverables and `export.json` are written under:
 ```text
 output/h3_chains/<run_name>/frames/<export_name>/
 ```
+
+For a Chapter Delivery manifest the equivalent path is
+`chapters/<number>_<chapter_id>/frames/<export_name>/`; `export.json` records
+the chapter number and immutable snapshot id.
 
 PNG compression is lossless. Use the same VAE, ComfyUI version, precision, and
 decode settings for the closest reconstruction. The checkpointed latent is
