@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Checkpoint Manager rendering blank after a nightly update reused an
+  older browser-cached helper module. Restored monotonic cache keys across the
+  manager, Plan Studio, prompt editors, Run Manager, and Asset Carousel, with a
+  regression test that rejects future cache-key rollbacks.
+
 - Added immutable per-chapter delivery and recovery. **Chapter Delivery** uses
   Plan Studio's existing chapter boundaries, can auto-select the chapter that
   just finished or explicitly select any numbered completed chapter, and

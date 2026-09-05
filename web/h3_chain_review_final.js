@@ -5,7 +5,7 @@ import {
     planToJson,
     promptValueToText,
 } from "./h3_chain_plan_core.mjs?v=0.7.0";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.2";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
@@ -23,7 +23,7 @@ import {
     reviewPlanScenePrompt,
     reviewSeed,
 } from "./h3_chain_review_core.mjs?v=0.7.0";
-import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.0";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.3";
 
 const NODE_NAME = "MiniMaxH3ChainReview";
 const PLAN_NAME = "MiniMaxH3ChainPlan";

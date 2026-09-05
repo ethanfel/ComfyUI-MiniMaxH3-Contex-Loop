@@ -1,6 +1,6 @@
 import {app} from "/scripts/app.js";
 import {api} from "/scripts/api.js";
-import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.0";
+import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.3";
 import {
     parsePlanJson,
     planToJson,
@@ -36,7 +36,7 @@ import {
     replacePromptReferenceOccurrence,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.7.0";
+} from "./h3_reference_preview_core.mjs?v=0.7.3";
 import {
     PromptUndoHistory,
     RICH_PROMPT_GUIDES,
@@ -49,10 +49,10 @@ import {
 } from "./h3_rich_prompt_editor_core.mjs?v=0.7.0";
 import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.7.0";
 import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.7.0";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.2";
 import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
-} from "./h3_project_asset_sync_core.mjs?v=0.7.0";
+} from "./h3_project_asset_sync_core.mjs?v=0.7.2";
 
 const {
     publishCompanionScene,

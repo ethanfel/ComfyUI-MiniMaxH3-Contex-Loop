@@ -32,7 +32,7 @@ import {
     sharedPrompt,
     visualContextCompositions,
 } from "./h3_chain_plan_core.mjs?v=0.7.0";
-import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.7.0";
+import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.7.3";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
