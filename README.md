@@ -1,243 +1,140 @@
 <p align="center">
-  <img src="assets/minimax-h3-contex-loop.svg" alt="MiniMax H3 Context Loop v0.5 — scene plans that survive the render" width="100%">
+  <img src="assets/minimax-h3-contex-loop.svg" alt="MiniMax H3 Context Loop 0.6 — scene plans that survive the render" width="100%">
 </p>
 
 # ComfyUI MiniMax H3 Context Loop
 
-Build a multi-scene MiniMax H3 video with one reusable sampling body. Review
-each scene, retry mistakes, resume interrupted runs, and assemble accepted
-scenes from disk.
+Build a multi-scene MiniMax H3 video with one reusable sampling graph.
+Review each scene, compare takes, resume from checkpoints, and assemble the
+result later—without keeping the whole production in memory.
 
-**[Getting started](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Getting-Started)** ·
-**[Choose a workflow](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Workflow-Chooser)** ·
-**[Troubleshooting](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Troubleshooting)** ·
-[Full wiki](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki)
+[Getting started](docs/GETTING_STARTED.md) ·
+[Workflows](example_workflows/README.md) ·
+[Changelog](CHANGELOG.md) ·
+[Documentation](docs/README.md)
 
-> **Version 0.5 status:** `main` is the supported 0.5 release line.
-> Saved 0.4 workflows and checkpoints remain supported.
+## Changelog
 
-> The public GitHub repository slug retains its original `Contex-Loop`
-> spelling for compatibility. Package, node, menu, and documentation labels
-> use the correctly spelled **Context Loop** name.
+### 0.6 — Better authoring, recovery, and export
 
-## What you get
+- **Production Plan.** The familiar scene columns, with settings organized
+  into Project, Canvas, Generation, and Delivery. The original Plan node stays
+  available; migration is optional.
+- **Context Builder.** Compose picture context from multiple saved-scene
+  windows, choose their frame repartition, and adjust boundary controls in
+  Plan Studio. Audio follows the predecessor by default and can be unlocked
+  for independent context selection.
+- **Plan Studio and review.** Non-destructive trims, picture-only final-cut
+  alternates, and scene LoRA routes. Candidate selection now keeps seeds and
+  settings synchronized across the Plan and editors.
+- **Project Asset Carousel.** More reliable project switching and previews,
+  editable semantic-anchor size/mode with downstream inheritance, and video
+  references that keep their own duration.
+- **Recovery and editing fixes.** Safer checkpoint rollback, stale-response
+  protection when switching projects, and fixes for empty-scene navigation,
+  archive restoration, and source audio after scene resizing.
+- **Faster PNG + WAV export.** Parallel PNG saving, progress and timing logs,
+  plus synchronized audio export. Connect the video VAE, audio VAE, or both.
+- **Rebuilt 0.6 workflows.** Clean settings, readable layouts, and wiring
+  checked against the release nodes. Studio examples include the Carousel and
+  Checkpoint Manager; older workflows are kept in the archive.
+- **Experimental pixel upscaling.** A scene-by-scene DLSS5 + USDU example with
+  conditioning matched to the actual upscaled image size and original audio
+  preserved. Full external GPU refinement testing is still pending.
 
-| Goal | This pack provides |
-|---|---|
-| Make a longer story | A visual scene Plan drives one recursive H3 graph. |
-| Keep motion and sound connected | Guide and protected AV-prefix transitions. |
-| Direct each scene | Prompts, seeds, timing, pictures, motion video, and audio references. |
-| Work from existing footage | Source timelines, clip continuation, inpainting, and two-ended bridges. |
-| Iterate safely | Review, edit and retry, reroll, stop early, and atomic checkpoints. |
-| Recover the production | Resume, partial assembly, saved assets, and latent-to-PNG export. |
+[Full changelog](CHANGELOG.md) ·
+[0.5 → 0.6 visual overview](docs/assets/minimax-h3-context-loop-0.5-to-0.6-major-improvements.png)
 
-## Quick start
+<details>
+<summary>Earlier milestones</summary>
+
+- **0.5:** generation profiles, candidate review, checkpoint branches, project
+  assets, and deferred upscale workflows.
+- **0.4:** tagged references, Studio authoring, saved-run recovery, and masked
+  video/audio editing.
+- **0.1–0.3:** the recursive scene loop, review gate, per-scene checkpoints,
+  prompt editor, and archival PNG export.
+
+</details>
+
+## Install
 
 From `ComfyUI/custom_nodes`:
 
 ```bash
 git clone https://github.com/seitanism/ComfyUI-H3-Motion-Context-MultiRef.git
-git clone https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop.git
+git clone https://github.com/ethanfel/ComfyUI-MiniMaxH3-Context-Loop.git
 ```
 
-The upstream MultiRef pack supplies the maintained low-level Motion Context
-implementation. Chain Context discovers it through ComfyUI's node registry and
-delegates compatible Guide scenes without adding nodes or wires to the
-workflow. Loop-specific modes fall back automatically to the bundled
-compatibility engine.
+`main` is the 0.6 release line. Use `nightly` only for development features.
 
-Restart ComfyUI, then:
+Restart ComfyUI. Use a build with native MiniMax H3 **Add Guide** support and
+install your H3 model, text encoder, video VAE, and audio VAE; models are not
+bundled. `ffmpeg` on `PATH` is recommended for review and assembly. Optional
+upscale packs and example assets are listed in the [workflow catalog](example_workflows/README.md).
 
-1. Open a maintained workflow from [`example_workflows/`](example_workflows/).
-2. Resolve missing model selections; models are not bundled.
-3. Give Plan a unique `run_name` and edit its scene prompts.
-   Use `{wide shot|close-up}` for alternatives. Each scene's **Prompt
-   alternatives** control can derive a stable scene seed, keep an exact fixed
-   seed, or randomize that scene on every queue. These choices never change
-   sampler seeds, and the exact resolved choice is saved with the checkpoint.
-4. Keep **Guide** and **Generated audio** for a simple first run.
-5. Queue the graph. Preflight checks timing, media, references, compatibility,
-   and resume state before H3 loads.
-6. At Review Gate, approve, retry, reroll, or approve and stop. To compare
-   several takes per scene, set its optional `candidate_count` above 1 (or
-   convert it to an input and connect an INT node). The requested takes generate
-   automatically in one batch. Each completed take appears immediately in the
-   live carousel while the next take renders. **Use this take & stop batch**
-   activates that saved checkpoint, cancels only the speculative in-flight H3
-   prompt, and immediately requeues the next scene; a completion race falls
-   back to the normal safe candidate boundary. The final scene of an active
-   range still reaches Loop End so it can emit the completed manifest.
-   **Pause candidate run** waits at the next candidate boundary without
-   accepting. After the requested count, Review Gate pauses normally so you can
-   mark alternatives to keep. Enable `review_each_candidate` only when you want
-   a blocking decision after every saved take. The selected take supplies the
-   exact continuation; unkept alternatives are deleted.
-7. Assemble the completed or partial manifest.
+## First run
 
-Version 0.5 expects a current ComfyUI build containing native **Add Guide for
-MiniMax H3** from [ComfyUI PR #15439](https://github.com/Comfy-Org/ComfyUI/pull/15439).
-`ffmpeg` on `PATH` is preferred; ComfyUI's bundled PyAV can handle review and
-assembly when FFmpeg is unavailable.
+1. Open [T2V Normal](<example_workflows/T2V Normal - MiniMax H3 0.6.json>) and
+   select the four model files.
+2. Give **Production Plan** a unique `run_name`, edit the scene prompts, and
+   keep the default Generation Profile for a first test.
+3. Queue. Preflight checks the plan, then the loop renders and checkpoints one
+   scene at a time.
+4. At **Review Gate**, approve, retry, reroll, or approve and stop. After the
+   last approval, **Assemble** writes the final MP4.
 
-Some examples need bundled media copied into `ComfyUI/input/`. See the
-[asset guide](example_workflows/assets/README.md).
-
-### Project Asset Carousel
-
-**MiniMax H3 Project Asset Carousel** replaces a wall of loader and tag nodes
-with one path-backed project library. Put it before Plan through its
-`project_assets` output and connect its `references` output to Tagged Ref2VA.
-When the project has a Source track, Plan stores its path-backed Source Timeline
-automatically; Loop Start, Plan Studio, recovery, and assembly read it from the
-Plan without another wire. Uploads and imports are copied to
-`ComfyUI/input/h3_projects/<project>/` for use by ordinary loaders and mirrored
-to `output/h3_chains/<project>/project_assets/` for recovery. Only compact
-catalog metadata is saved in the workflow; only tags used by the current scene
-are decoded during sampling. For an existing workflow, connect its final
-`tagged_references` line to the carousel once: tags, media kinds, semantic or
-native roles, and reference options appear as **Unassigned** cards without
-copying media from the carrier. Bind each card explicitly from ComfyUI input,
-an upload, or a backup. Unassigned cards never consume H3
-reference slots and never enter the generation fingerprint.
-
-Drop one or several image, video, or audio files directly onto the Carousel to
-create project assets immediately. Files can also be chosen with **Upload**, or
-copied from the existing ComfyUI input folder with **Import** (the default
-source); H3 backup imports remain available from the same source selector.
-Move other server media into the configured ComfyUI input directory first;
-browser requests cannot import arbitrary filesystem paths.
-
-Direct prompt optimization allows OpenAI, Gemini, and OpenRouter by default.
-A server operator can add exact provider origins, including a local API,
-before startup with a comma-separated
-`H3_PROMPT_OPTIMIZER_ALLOWED_ORIGINS` value such as
-`http://127.0.0.1:1234,https://api.example.com`.
-
-Images can be edited nondestructively from the Carousel. **Edit / upscale**
-opens a full-source pixel editor with draggable placement, exact dimensions,
-megapixel targets and presets, working aspect locking, and
-Lanczos/bicubic/bilinear/nearest resampling. Final dimensions can be snapped to
-`8`, `16`, `32`, or `64` while retaining the locked ratio; snapping defaults to
-`8`. **Use full image** removes cropping without discarding the selected
-megapixel target, while **Reset all** restores the complete editor defaults.
-Every operation creates a new PNG variant and records its parent and transform;
-the source remains unchanged.
-Connect ComfyUI core's **Load Upscale Model** output to the optional
-`upscale_model` input to enable **Model upscale**. The editor reports both the
-exact full-image/crop size sent into the model and the final fitted asset size.
-That button queues only the Carousel and its loader dependency and never
-launches the downstream H3 chain. The input is lazy and is not loaded during
-ordinary generation. Asset cards may also be duplicated without copying media
-bytes and organized into presentation-only folders. Folders appear directly
-in the Carousel as Discord-style cards with a four-item miniature; click to
-expand or collapse their assets inline, or drag an asset onto a folder card to
-move it there. Expansion state, folder names, membership, and order do not
-affect prompts or fingerprints.
-
-Selecting an audio asset opens an editable **Lyrics** workspace beside its
-player. Lyrics are saved with the project catalog and recovery backup, but are
-notes only: they do not enter prompts, reference fingerprints, or generation.
+For Studio workflows, set the run name in **Project Asset Carousel** instead.
+See [Getting started](docs/GETTING_STARTED.md) for setup and recovery steps.
 
 ## Choose a workflow
 
-| I want to… | Start here |
+| Starting point | Workflow |
 |---|---|
-| Generate from text | [T2V Normal](<example_workflows/T2V Normal - MiniMax H3.json>) |
-| Animate an opening image | [I2V Normal](<example_workflows/I2V Normal - MiniMax H3.json>) |
-| Move between first/last images | [FL2V Normal](<example_workflows/FL2V Normal - MiniMax H3.json>) |
-| Use prompt-driven pictures | [Ref2V Tagged](<example_workflows/Ref2V Tagged - MiniMax H3.json>) |
-| Guide scenes with a source soundtrack | [Ref2V Studio Tagged Source Audio](<example_workflows/Ref2V Studio Tagged Source Audio - MiniMax H3.json>) |
-| Inpaint a fixed or tracked region | [Masked Video Inpaint](<example_workflows/Masked Video Inpaint - MiniMax H3.json>) |
-| Inpaint with a picture-defined replacement | [Ref2V Masked Video Inpaint](<example_workflows/Ref2V Masked Video Inpaint - MiniMax H3.json>) |
-| Continue one existing clip | [Masked AV Extension — Single Clip](<example_workflows/Masked AV Extension - Single Clip - MiniMax H3.json>) |
-| Continue several reviewed scenes | [Masked AV Extension — Chain](<example_workflows/Masked AV Extension - Chain + Reference Image - MiniMax H3.json>) |
-| Generate the gap between two clips | [Two-Clip Masked AV Bridge](<example_workflows/Masked AV Bridge - Two Clips - MiniMax H3.json>) |
+| Text | [T2V Normal](<example_workflows/T2V Normal - MiniMax H3 0.6.json>) |
+| First image / first and last images | [I2V Normal](<example_workflows/I2V Normal - MiniMax H3 0.6.json>) / [FL2V Normal](<example_workflows/FL2V Normal - MiniMax H3 0.6.json>) |
+| Tagged references and timeline editing | [Ref2V Studio](<example_workflows/Ref2V Studio - MiniMax H3 0.6.json>) |
+| References with a source soundtrack | [Ref2V Studio Source Audio](<example_workflows/Ref2V Studio Source Audio - MiniMax H3 0.6.json>) |
+| Inpaint, extend, bridge, or upscale video | [All examples and requirements](example_workflows/README.md) |
 
-Choose **Normal** for the standard Plan and Scene Prompt Editor. **Studio**
-workflows add an optional experimental timeline interface without changing the
-generation graph. The [wiki workflow chooser](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Workflow-Chooser)
-explains every maintained example and required asset.
+**Normal** keeps the scene-column editor. **Studio** adds an optional
+experimental timeline interface without changing the sampling graph.
 
-## How it works
+<details>
+<summary>How the graph is organized</summary>
 
-```text
-Generation Profile → [Advanced] → [Legacy 0.4] → Plan
-Source Timeline ───────────────────────────┘
-                                             ↓
-                           Preflight → Loop Start → Current Shot
-                                                        ↓
-                                      H3 conditioning → sample → decode
-                                                        ↓
-                                      trim → checkpoint → review → Loop End ─↺
+### How the graph is organized
 
-Loop End manifest → Assemble
-```
+![Context Loop flow, including the muted recovery branch](assets/workflow-overview.svg)
 
-Only one scene passes through the sampling body at a time. The accepted
-predecessor supplies continuity to the next scene; completed media and recovery
-metadata remain on disk.
+Only the current scene enters the sampler. Loop End advances to the next scene
+or passes a manifest to Assemble. The muted **Load Manifest → Assemble** branch
+can assemble saved scenes without rendering again.
 
-## Find help by task
+</details>
 
-| Task | Guide |
-|---|---|
-| Install and run the first scene | [Getting started](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Getting-Started) |
-| Choose Cut, Guide, Hard AV, Soft AV, or audio behavior | [Continuity and audio](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Continuity-and-Audio) |
-| Use `@tags`, motion references, or Source Timeline | [References and source media](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/References-and-Source-Media) |
-| Inpaint, outpaint, extend, or bridge footage | [Masked editing](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Masked-Editing) |
-| Retry, resume, recover, or assemble later | [Review, resume, and recovery](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Review-Resume-and-Recovery) |
-| Upscale a completed checkpoint branch | [Runs, review, and recovery](docs/RUNS_AND_RECOVERY.md#whole-chain-seedvr2-finishing) |
-| Diagnose a problem | [Troubleshooting](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Troubleshooting) |
-| Check where a feature came from | [Feature origins](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Feature-Origins) |
-| Look up Plan fields and implementation details | [Advanced reference](https://github.com/ethanfel/ComfyUI-MiniMaxH3-Contex-Loop/wiki/Advanced-Reference) |
+## Updating from 0.5
 
-Repository-native references remain available under [`docs/`](docs/) and in
-the [complete Plan format guide](H3_CHAIN_FORMAT_GUIDE.md).
+Back up your workflows and project folders before updating. Existing Plan nodes
+remain supported; the new examples have **0.6** in their filenames, and the
+older examples are preserved under [Archive/0.5](example_workflows/Archive/0.5/).
+Restart ComfyUI after updating and hard-refresh the browser.
 
-Plan Studio's timeline is an editorial track, not only a contiguous scene
-list. Drag a scene by its timeline handle or enter an exact start time in the
-Scene panel. Scene starts snap to the 24 fps frame clock; scenes cannot overlap,
-and every uncovered interval is previewed and assembled as black video.
-Generation order, checkpoints, context dependencies, and branch ancestry stay
-unchanged. Generated audio is silent during an editorial gap, while a selected
-Source Timeline soundtrack continues on the absolute project clock. Audio-asset
-lyrics can be stamped as LRC (or pasted as SRT), previewed on the subtitle row,
-and exported as an optional `.srt` beside the assembled movie.
+Keep the same `run_name` to resume the same production; use a new one for a
+different project. Saved runs live in `output/h3_chains/<run_name>/`, with final
+movies under `final/`. Carousel media lives in `input/h3_projects/<run_name>/`
+and is mirrored into the run for recovery. These paths follow your configured
+ComfyUI input/output directories. Resume checks still reject incompatible
+generation changes; see [Runs and recovery](docs/RUNS_AND_RECOVERY.md).
 
-Checkpoint Manager identifies saved takes by scene and inferred branch, previews
-saved media and exact video/audio dependencies, and safely deletes inactive
-leaves one revision at a time. When an independent saved take can safely fill
-another branch's next empty scene, the empty graph card can attribute it there
-without regeneration or duplicate media. Editorial chapters are independent
-branch scopes: **All scenes** shows one graph per chapter, and activating a take
-in one chapter preserves the active takes in every other chapter. Its Plan and Source Timeline
-pass-throughs can remain connected in generation workflows, while its
-selected-manifest output launches a standalone deferred upscale loop with no
-source Plan. Each profile is isolated under `upscaled/<profile>`, and saving
-the large HQ latent is optional.
-The bundled chain-aware de-rope variant combines LBH 3D with MAINodes in the
-same second pass, protects recursive scene boundaries, restores the prior HQ
-Drift-Control tail, and returns recovered video/audio to the source clock
-before checkpointing.
-For whole-video SeedVR2 finishing, Full-Chain Latent Video Adapter instead
-re-decodes every selected H3 checkpoint into one cached, lossless, file-backed
-movie. It resolves scene overlaps before upscaling and uses a temporary
-disk-backed VAE output buffer, so the complete production never becomes one
-in-memory IMAGE tensor.
-Tagged and Scheduled Ref2VA also cache each active scene's native reference
-latents and compact Qwen presentation automatically; the upscale loop restores
-them from the checkpoint fingerprint without original reference-media wires.
-See
-[Runs, review, and recovery](docs/RUNS_AND_RECOVERY.md).
+The repository is now spelled **Context-Loop**. Existing installs named
+`ComfyUI-MiniMaxH3-Contex-Loop` can stay in place—do not install a second copy
+just to change the folder name.
 
 ## Origins and license
 
-This project began with **NikoDemon80's**
-[H3 Motion Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context)
-and grew into a separate checkpointed production-loop pack. Original,
-adapted, inspired, integrated, and compatibility work is mapped in
-[Feature traceability](docs/FEATURE_TRACEABILITY.md); licenses and exact
-upstream revisions are recorded in [Third-party notices](THIRD_PARTY_NOTICES.md).
+Started from **NikoDemon80's** [H3 Motion Context](https://github.com/NikoDemon80/ComfyUI-H3-Motion-Context).
+See [Feature origins](docs/FEATURE_TRACEABILITY.md) and
+[Third-party notices](THIRD_PARTY_NOTICES.md) for contributors and upstream work.
 
-GPL-3.0. See [LICENSE](LICENSE). Contributions are covered by
-[CONTRIBUTING.md](CONTRIBUTING.md).
+GPL-3.0 · [License](LICENSE) · [Contributing](CONTRIBUTING.md)

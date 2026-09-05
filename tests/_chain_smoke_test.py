@@ -240,6 +240,10 @@ def main():
         "MiniMaxH3ScheduledVideoReference",
         "MiniMaxH3ScheduledAudioReference",
         "MiniMaxH3ScheduledReferenceToVideo",
+        "MiniMaxH3TaggedSceneOptions",
+        "MiniMaxH3CurrentTaggedScenePack",
+        "MiniMaxH3CurrentTaggedReferenceScene",
+        "MiniMaxH3SceneDataExtract",
         "MiniMaxH3ChainExternalVideo",
         "MiniMaxH3ChainLoopStart",
         "MiniMaxH3ChainCurrent", "MiniMaxH3ChainContext",
@@ -289,6 +293,8 @@ def main():
     assert (ROOT / "web" / "h3_chain_scene_prompt_editor.js").is_file()
     assert (ROOT / "web" / "h3_reference_autoconnect.js").is_file()
     assert (ROOT / "web" / "h3_reference_autoconnect_core.mjs").is_file()
+    assert (ROOT / "web" / "h3_scene_data_extract.js").is_file()
+    assert (ROOT / "web" / "h3_scene_data_core.mjs").is_file()
     workflow_path = (ROOT / "example_workflows" / "Archive" /
                      "Looping Seamless Chain Global Refs Example - MiniMax H3.json")
     workflow = json.loads(workflow_path.read_text(encoding="utf-8"))
@@ -1167,7 +1173,8 @@ def main():
             "generated_audio", 22, 1, 2, 1, 30,
         )
     except ValueError as exc:
-        assert "next clip requires 22 context frames" in str(exc)
+        assert "requires 22 second-block context frames" in str(exc)
+        assert "scene 2's selected visual source" in str(exc)
     else:
         raise AssertionError("plan accepted an undersized predecessor context")
 
@@ -1359,7 +1366,7 @@ def main():
                     plan, 1, short_non_silent)
             except ValueError as exc:
                 assert "source_audio_too_short" in str(exc)
-                assert "provide a longer track" in str(exc)
+                assert "Provide a source track at least" in str(exc)
             else:
                 raise AssertionError("Loop Start accepted a short non-silent song")
             conditioning = [["cond", {}]]
@@ -2130,12 +2137,11 @@ def main():
                 "/workflow.json")
             print("review stop: joined partial AV video and checkpoint manifest")
 
-            class CheckpointRequest:
-                query = {"run_name": "smoke"}
-
-            checkpoint_response = asyncio.run(
-                chain._list_saved_checkpoints(CheckpointRequest()))
-            checkpoint_body = json.loads(checkpoint_response.text)
+            # The route wrapper is covered by the Plan Studio backend test.
+            # This smoke test has already opened and closed several event loops,
+            # including a cross-thread review loop, so exercise the synchronous
+            # listing core here instead of creating another short-lived loop.
+            checkpoint_body = chain._saved_checkpoint_listing("smoke")
             assert [item["scene"] for item in checkpoint_body["checkpoints"]] == [1, 2]
             assert all(item["ready"] for item in checkpoint_body["checkpoints"])
             assert all(item["video"] for item in checkpoint_body["checkpoints"])
@@ -2230,6 +2236,8 @@ def main():
             short_silent_manifest = dict(manifest)
             short_silent_manifest["compatibility"] = dict(
                 short_started[1]["plan"]["compatibility"])
+            short_silent_manifest["source_timeline"] = dict(
+                short_started[1]["plan"]["source_timeline"])
             short_silent_result = assembler.assemble(
                 short_silent_manifest, "source", "short_silent_final", 96,
                 short_source)

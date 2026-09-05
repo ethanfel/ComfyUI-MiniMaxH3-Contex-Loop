@@ -20,6 +20,21 @@ with a smooth audio release. The profile output is the same canonical
 `chain_policy` record used everywhere else and can feed Advanced Policy
 Override before Plan.
 
+For exact songs or dialogue, the optional **Lip-Sync Options** node adds audio
+context around each scene before encoding and can use an aligned isolated vocal
+stem to distinguish sung/spoken regions from instrumental gaps. Wire it as:
+
+```text
+source vocal stem ─→ Lip-Sync Options voice
+Lip-Sync Options lip_sync_options ─→ Generation Profile lip_sync_options
+Lip-Sync Options voice ────────────→ Chain Context lip_sync_voice
+```
+
+Select **Lip-sync to source audio** on Generation Profile. The original source
+song still enters through Loop Start or Source Timeline and remains the final
+soundtrack; the optional vocal stem is only a timing mask. With no options node,
+the established hard-cut/full-freeze behavior remains unchanged.
+
 The deprecated **Manual Chain Policy (Legacy)** remains loadable for existing
 workflows and unusual combinations that do not fit a named profile. Its legacy
 controls are described below.
@@ -158,10 +173,15 @@ continuity off, the audio mask remains fully open even when final assembly uses
 sampler's audio latent directly. For scene 1 after Existing Video Context,
 carrying imported audio requires source audio and the H3 audio VAE.
 
-With **Lock source audio** on, the complete scene-local audio mask is zero
-instead. This composes with every picture boundary: Cut and Guide affect only
-video context, while AV modes preserve or taper their video prefix without
-copying predecessor audio over the locked source window.
+With **Lock source audio** on and no Lip-Sync Options, the complete scene-local
+audio mask is zero. Lip-Sync Options can instead encode discarded pre-roll and
+lookahead context around the kept scene ticks. Its Voice-region denoise value
+applies to the whole song when no vocal stem is supplied. With a stem, vocal
+ticks use Voice-region denoise and gaps use Between-phrase denoise; the final
+assembly still uses the unmodified source soundtrack. This composes with every
+picture boundary: Cut and Guide affect only video context, while AV modes
+preserve or taper their video prefix without copying predecessor audio over the
+locked source window.
 
 Experimental `drift_control_av` is a recursive picture-only treatment layered
 on the same 39-frame AV prefix. It does not bake random noise into a checkpoint
@@ -257,6 +277,15 @@ Generated clip audio is moved with its scene and silence is inserted in every
 gap. Source Timeline audio instead remains locked to the absolute project clock,
 so a song continues through black. These positions live in the run's
 `editorial.json`, outside the Plan hash, and do not invalidate checkpoints.
+
+Prompt-word alternates use the same non-destructive editorial layer. An enabled
+`alternate_draft` identifies one active base revision, prompt, and seed. Its
+accepted immutable revision is recorded under `replacements` as
+`media_mode: picture_only`; the canonical `clip_NNNN.json` pointer is never
+changed. Final picture consumers resolve that replacement, while generated
+audio and every later scene dependency continue to resolve the base lineage.
+The boundary after an alternate must be a hard cut because a saved incoming
+blend contains frames from the original base take.
 
 An audio asset may also store lyrics. Timestamp lines as LRC (`[MM:SS.xx]`) or
 paste SRT, then select that asset in Plan Studio's Subtitles tab. Subtitle

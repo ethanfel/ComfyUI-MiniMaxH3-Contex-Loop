@@ -20,6 +20,7 @@ from typing import Any
 
 ROOT = Path(__file__).resolve().parents[1]
 EXAMPLES = ROOT / "example_workflows"
+ARCHIVE_05 = EXAMPLES / "Archive" / "0.5"
 SOURCE_AUDIO_DEMO = "Ref2V Studio Tagged Source Audio - MiniMax H3.json"
 MAINTAINED_DEMOS = (
     "Ref2V Sequential Motion - EXPERIMENTAL - MiniMax H3.json",
@@ -619,13 +620,16 @@ def migrate(workflow: dict[str, Any], name: str) -> dict[str, Any]:
 
 
 def active_paths() -> list[Path]:
-    return [EXAMPLES / name for name in MAINTAINED_DEMOS]
+    # The active catalog is 0.6 and must never be fed back through this
+    # historical positional-widget migration.  Defaults now resolve only to
+    # the byte-preserved 0.5 archive; callers can still pass explicit copies.
+    return [ARCHIVE_05 / name for name in MAINTAINED_DEMOS]
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("paths", nargs="*", type=Path,
-                        help="Workflow JSON paths (defaults to maintained examples)")
+                        help="Workflow JSON paths (defaults to archived 0.5 examples)")
     parser.add_argument("--check", action="store_true",
                         help="Report workflows that still need migration")
     args = parser.parse_args()

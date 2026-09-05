@@ -6,16 +6,16 @@ import {
     promptTextToLines,
     promptValueToText,
     sharedPrompt,
-} from "./h3_chain_plan_core.mjs?v=0.5.68";
+} from "./h3_chain_plan_core.mjs?v=0.6.0";
 import {
     buildPromptAssistantContext,
     makePromptAssistRequest,
-} from "./h3_prompt_assistant_core.mjs?v=0.5.68";
-import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.5.68";
+} from "./h3_prompt_assistant_core.mjs?v=0.6.0";
+import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.6.0";
 import {
     directOptimizerConfigurationError,
     makeDirectPromptOptimizeRequest,
-} from "./h3_prompt_optimizer_core.mjs?v=0.5.68";
+} from "./h3_prompt_optimizer_core.mjs?v=0.6.0";
 import {
     openPromptOptimizerSettings,
     promptOptimizerBackend,
@@ -27,7 +27,7 @@ import {
     promptRevisionLabel,
     promptRevisionNavigation,
     promptRevisionTree,
-} from "./h3_prompt_history_core.mjs?v=0.5.68";
+} from "./h3_prompt_history_core.mjs?v=0.6.0";
 import {
     availableReferenceRecords,
     convertTaggedPictureReference,
@@ -35,7 +35,7 @@ import {
     replacePromptReferenceOccurrence,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.5.71";
+} from "./h3_reference_preview_core.mjs?v=0.6.2";
 import {
     PromptUndoHistory,
     RICH_PROMPT_GUIDES,
@@ -45,15 +45,29 @@ import {
     richGenerationMode,
     richGuideInstruction,
     tokenizeRichPrompt,
-} from "./h3_rich_prompt_editor_core.mjs?v=0.5.68";
-import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.5.68";
-import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.5.68";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.5.71";
+} from "./h3_rich_prompt_editor_core.mjs?v=0.6.0";
+import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.6.0";
+import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.6.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.2";
 import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
-} from "./h3_project_asset_sync_core.mjs?v=0.5.71";
+} from "./h3_project_asset_sync_core.mjs?v=0.6.2";
 
-const {publishCompanionScene, rebaseScenePrompt} = promptCompanionSync;
+const {
+    publishCompanionScene,
+    rebaseScenePrompt,
+} = promptCompanionSync;
+const activeSceneIndexAfterRefresh =
+    typeof promptCompanionSync.activeSceneIndexAfterRefresh === "function"
+        ? promptCompanionSync.activeSceneIndexAfterRefresh
+        : (_previousPlan, nextPlan, sceneIndex) => Math.min(
+            Math.max(0, Math.trunc(Number(sceneIndex) || 0)),
+            Math.max(0, (nextPlan?.shots?.length ?? 1) - 1),
+        );
+const planHasNonPromptChanges =
+    typeof promptCompanionSync.planHasNonPromptChanges === "function"
+        ? promptCompanionSync.planHasNonPromptChanges
+        : () => true;
 function publishCompanionPrompt(...args) {
     return promptCompanionSync.publishCompanionPrompt?.(...args) ?? 0;
 }
@@ -64,6 +78,7 @@ function publishCompanionPrompt(...args) {
 
 const NODE_NAME = "MiniMaxH3ChainRichScenePromptEditor";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const PLAN_NAMES = new Set([PLAN_NAME, "MiniMaxH3ChainPlanModern"]);
 const ACTIVE_PROPERTY = "h3_rich_prompt_active_scene";
 const FONT_PROPERTY = "h3_rich_prompt_font_size";
 const GUIDE_PROPERTY = "h3_rich_prompt_guide";
@@ -71,6 +86,8 @@ const PRESENTATION_PROPERTY = "h3_rich_prompt_rich_text";
 const DEFAULT_FONT = 17;
 const MIN_FONT = 12;
 const MAX_FONT = 32;
+const PROMPT_SYNC_DELAY_MS = 140;
+const PROMPT_ANALYSIS_DELAY_MS = 90;
 
 const ICONS = Object.freeze({
     picture: '<svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="16" rx="2"/><circle cx="8.5" cy="9" r="1.5"/><path d="m5 17 4.5-4.5 3.2 3.2 2.3-2.3 4 3.6"/></svg>',
@@ -279,7 +296,7 @@ function upstreamPlanNode(start) {
         const candidate = queue.shift();
         if (!candidate || seen.has(candidate)) continue;
         seen.add(candidate);
-        if (candidate !== start && nodeType(candidate) === PLAN_NAME) return candidate;
+        if (candidate !== start && PLAN_NAMES.has(nodeType(candidate))) return candidate;
         for (const input of candidate.inputs ?? []) {
             const link = input.link == null ? null : candidate.graph?.links?.[input.link];
             const parent = link ? candidate.graph?.getNodeById?.(link.origin_id) : null;
@@ -618,8 +635,22 @@ function mount(node) {
             abortController:null, activeBackend:null, error:"", message:"", pendingResult:null},
         undoByScene:new Map(), promptUndo:null,
         popover:null, popoverTimer:null, popoverPinned:false, pollTimer:null,
+        planSyncTimer:null, planSyncPending:null, analysisTimer:null,
+        applyPromptHistoryShortcut:null, ownsPromptHistoryTarget:null,
+        disposed:false,
     };
     node._h3RichPromptState = state;
+
+    // Own prompt undo during capture so ComfyUI's workflow-level Ctrl/Cmd+Z
+    // never sees the gesture first and restores an older active-scene
+    // property. The callback is replaced whenever the active scene renders.
+    root.addEventListener("keydown", (event) => {
+        const direction = promptUndoDirection(event);
+        if (!direction || !state.ownsPromptHistoryTarget?.(event.target)) return;
+        event.preventDefault();
+        event.stopImmediatePropagation();
+        state.applyPromptHistoryShortcut?.(direction);
+    }, true);
 
     function dirty() {
         node.graph?.setDirtyCanvas?.(true, true);
@@ -650,26 +681,100 @@ function mount(node) {
         return String(state.planNode?.widgets?.find((item) => item.name === "run_name")?.value ?? "").trim();
     }
 
-    function writePlan(message = "Saved to connected Plan") {
+    function flushPlanEffects() {
+        if (state.planSyncTimer != null) {
+            window.clearTimeout(state.planSyncTimer);
+            state.planSyncTimer = null;
+        }
+        const pending = state.planSyncPending;
+        state.planSyncPending = null;
+        if (!pending || !state.planWidget || !state.planNode) return;
+        const liveValue = String(state.planWidget.value ?? "");
+        if (liveValue !== pending.value) {
+            if (!rebaseActivePromptOntoLivePlan()) {
+                if (state.status) {
+                    state.status.textContent =
+                        "Plan structure changed; waiting to resynchronize";
+                }
+                return;
+            }
+            pending.value = planToJson(state.plan);
+            pending.sceneIndex = state.active;
+            pending.prompt = promptValueToText(
+                state.plan.shots[state.active]?.prompt,
+            );
+            state.lastValue = pending.value;
+            state.planWidget.value = pending.value;
+        }
+        if (typeof state.planWidget.callback === "function") {
+            state.planWidget.callback(pending.value);
+        } else {
+            state.planNode._h3ChainEditorRefresh?.();
+        }
+        state.planNode.graph?.setDirtyCanvas?.(true, true);
+        publishCompanionPrompt(
+            node, state.planNode, pending.sceneIndex, pending.prompt,
+        );
+        if (state.status) state.status.textContent = pending.message;
+        dirty();
+    }
+
+    function schedulePlanEffects(pending) {
+        if (state.disposed) return;
+        state.planSyncPending = pending;
+        if (state.planSyncTimer != null) {
+            window.clearTimeout(state.planSyncTimer);
+        }
+        state.planSyncTimer = window.setTimeout(
+            flushPlanEffects, PROMPT_SYNC_DELAY_MS,
+        );
+        if (state.status) state.status.textContent = "Editing…";
+    }
+
+    function schedulePromptAnalysis() {
+        if (state.disposed) return;
+        if (state.analysisTimer != null) {
+            window.clearTimeout(state.analysisTimer);
+        }
+        state.analysisTimer = window.setTimeout(() => {
+            state.analysisTimer = null;
+            state.schema?.refresh();
+        }, PROMPT_ANALYSIS_DELAY_MS);
+    }
+
+    function flushPromptAnalysis() {
+        if (state.analysisTimer == null) return;
+        window.clearTimeout(state.analysisTimer);
+        state.analysisTimer = null;
+        state.schema?.refresh();
+    }
+
+    function writePlan(
+        message = "Saved to connected Plan", {deferEffects = false} = {},
+    ) {
         if (!state.plan || !state.planWidget || !state.planNode) return;
-        // Rich Editor owns only the selected prompt. Preserve every live Plan
-        // setting and every other scene by rebasing that one field immediately
-        // before the write.
-        if (!rebaseActivePromptOntoLivePlan()) {
+        // Rich Editor owns only the selected prompt. Rebase when another UI
+        // changed the live Plan; consecutive keystrokes already share the
+        // latest Plan value and should not repeatedly parse the full JSON.
+        const liveValue = String(state.planWidget.value ?? "");
+        if (liveValue !== state.lastValue && !rebaseActivePromptOntoLivePlan()) {
             if (state.status) state.status.textContent = "Plan structure changed; waiting to resynchronize";
             return;
         }
         const value = planToJson(state.plan);
         state.lastValue = value;
         state.planWidget.value = value;
-        state.planWidget.callback?.(value);
-        state.planNode._h3ChainEditorRefresh?.();
-        state.planNode.graph?.setDirtyCanvas?.(true, true);
-        publishCompanionPrompt(
-            node, state.planNode, state.active,
-            promptValueToText(state.plan.shots[state.active]?.prompt));
-        if (state.status) state.status.textContent = message;
-        dirty();
+        const pending = {
+            value,
+            sceneIndex:state.active,
+            prompt:promptValueToText(state.plan.shots[state.active]?.prompt),
+            message,
+        };
+        if (deferEffects) schedulePlanEffects(pending);
+        else {
+            state.planSyncPending = pending;
+            flushPlanEffects();
+        }
     }
 
     function historySceneKey(runName, shotId) {
@@ -876,6 +981,7 @@ function mount(node) {
     }
 
     function scheduleHistoryDraft(shotId, prompt) {
+        if (state.disposed) return;
         const runName = planRunName();
         if (!runName) return;
         const history = state.history;
@@ -1069,7 +1175,9 @@ function mount(node) {
         timestampInput.type = "number";
         timestampInput.min = "0";
         timestampInput.step = "0.01";
-        timestampInput.value = String(part.timestamp ?? 0);
+        timestampInput.placeholder = "blank = untimed";
+        timestampInput.value = part.timestamp == null
+            ? "" : String(part.timestamp);
         timestampField.append(timestampInput);
 
         const updateModes = (preferred = modeSelect.value) => {
@@ -1083,7 +1191,7 @@ function mount(node) {
                 modeSelect.append(option);
             }
             if (semantic) {
-                const option = element("option", "", "# semantic timestamp");
+                const option = element("option", "", "# semantic (time optional)");
                 option.value = "semantic";
                 modeSelect.append(option);
             }
@@ -1109,7 +1217,9 @@ function mount(node) {
         apply.addEventListener("click", () => {
             const record = candidates[Number(referenceSelect.value)];
             const mode = modeSelect.value;
-            const timestamp = Number(timestampInput.value);
+            const timestampText = timestampInput.value.trim();
+            const timestamp = timestampText === ""
+                ? null : Number(timestampText);
             const current = editorPlainText(state.editor);
             if (current.slice(start, end) !== part.text) {
                 hidePopover(true);
@@ -1272,7 +1382,7 @@ function mount(node) {
         const text = editorPlainText(state.editor);
         state.promptUndo?.record(text, {inputType:event?.inputType});
         shot.prompt = promptTextToLines(text);
-        writePlan();
+        writePlan("Saved to connected Plan", {deferEffects:true});
         scheduleHistoryDraft(shotId, text);
         // Keep the browser's live DOM intact while the user types. Existing
         // chips remain atomic; newly typed raw labels are decorated on blur.
@@ -1287,6 +1397,9 @@ function mount(node) {
 
     function insertDecoratedText(text, selectSemanticTimestamp = false) {
         const inserted = String(text ?? "");
+        selectSemanticTimestamp = Boolean(
+            selectSemanticTimestamp && inserted.includes("[")
+            && inserted.includes("s]"));
         const current = editorPlainText(state.editor);
         const live = document.activeElement === state.editor
             ? editorSelectionOffsets(state.editor) : null;
@@ -1413,7 +1526,7 @@ function mount(node) {
         }
         tray.append(element("div", "h3rp-ref-help",
             state.referenceMode === "tagged"
-                ? "Picture previews can switch and convert between native @tag and semantic #tag[time]. Video and audio stay native-only. Hover for a media preview; audio never autoplays."
+                ? "Picture previews can switch and convert between native @tag and Qwen-only #tag; add [time] for explicit placement. Video and audio stay native-only. Hover for a media preview; audio never autoplays."
                 : `Scene ${state.active + 1}: click an active reference to insert it. Hover for image, video, or audio preview. Audio never autoplays.`));
         for (const record of state.records) {
             const insertable = record.active || state.referenceMode === "tagged";
@@ -1455,7 +1568,7 @@ function mount(node) {
                 const native = button("@", "Use native @tag; convert semantic anchors already in this scene", () => {
                     convertReferenceSyntax(record, "native");
                 });
-                const semantic = button("#", "Use semantic #tag[time]; convert native tags already in this scene", () => {
+                const semantic = button("#", "Use untimed Qwen-only #tag; add [time] for placement", () => {
                     convertReferenceSyntax(record, "semantic");
                 });
                 native.classList.toggle(
@@ -1801,10 +1914,33 @@ function mount(node) {
 
     function navigate(offset, absolute = null, {synchronize = true, focus = true} = {}) {
         if (!state.plan?.shots?.length || optimizerBusy()) return;
+        flushPlanEffects();
+        flushPromptAnalysis();
+        const pending = state.sceneNavigation;
+        const from = pending && pending.planNode === state.planNode
+                && pending.runName === planRunName() ? pending.index : state.active;
+        const requested = absolute == null ? from + offset : Number(absolute);
+        if (!Number.isFinite(requested)) return;
+        const index = Math.max(0, Math.min(state.plan.shots.length - 1, Math.trunc(requested)));
+        const selection = {
+            planNode:state.planNode, runName:planRunName(),
+            sceneId:String(state.plan.shots[index]?.id ?? ""), index,
+        };
+        state.sceneNavigation = selection;
         void (async () => {
             await flushHistoryDraft();
-            const requested = absolute == null ? state.active + offset : Number(absolute);
-            state.active = Math.max(0, Math.min(state.plan.shots.length - 1, requested));
+            // History IO can complete out of order. Only the latest selection
+            // may move this editor or broadcast a scene to its companions.
+            if (state.disposed || state.sceneNavigation !== selection
+                    || state.planNode !== selection.planNode
+                    || planRunName() !== selection.runName) return;
+            state.sceneNavigation = null;
+            const target = selection.sceneId
+                    && String(state.plan.shots[selection.index]?.id ?? "") !== selection.sceneId
+                ? state.plan.shots.findIndex(shot => String(shot?.id ?? "") === selection.sceneId)
+                : selection.index;
+            if (!state.plan.shots[target]) return;
+            state.active = target;
             persistView();
             render();
             if (synchronize) publishCompanionScene(node, state.planNode, state.active);
@@ -1946,7 +2082,7 @@ function mount(node) {
         editor.addEventListener("input", (event) => {
             saveEditorInput(event);
             state.completion?.refresh();
-            state.schema?.refresh();
+            schedulePromptAnalysis();
         });
         for (const eventName of ["focus", "pointerup", "keyup"]) {
             editor.addEventListener(eventName, rememberPromptSelection);
@@ -1977,6 +2113,8 @@ function mount(node) {
             editor.scrollLeft = scrollLeft;
             return true;
         };
+        state.ownsPromptHistoryTarget = (target) => editor === target || editor.contains(target);
+        state.applyPromptHistoryShortcut = applyPromptUndo;
         editor.addEventListener("keydown", (event) => {
             if (state.completion?.handleKeydown(event)) return;
             const undoDirection = promptUndoDirection(event);
@@ -1988,6 +2126,8 @@ function mount(node) {
             else if (event.key === "Escape") refs.classList.remove("h3rp-open");
         });
         editor.addEventListener("blur", () => {
+            flushPlanEffects();
+            flushPromptAnalysis();
             const text = editorPlainText(editor);
             renderEditorText(text);
         });
@@ -2073,6 +2213,7 @@ function mount(node) {
     }
 
     function loadPlan(force = false) {
+        if (state.disposed) return;
         const planNode = upstreamPlanNode(node);
         const planWidget = planNode?.widgets?.find((item) => item.name === "plan_json");
         if (!planNode || !planWidget) {
@@ -2087,7 +2228,14 @@ function mount(node) {
         const runName = String(planNode.widgets?.find((item) => item.name === "run_name")?.value ?? "").trim();
         if (!force && planNode === state.planNode && value === state.lastValue && runName === state.lastRunName) return;
         try {
-            state.plan = parsePlanJson(value);
+            const previousPlan = state.plan;
+            const previousActive = state.active;
+            const nextPlan = parsePlanJson(value);
+            state.active = activeSceneIndexAfterRefresh(
+                previousPlan, nextPlan, previousActive,
+            );
+            node.properties[ACTIVE_PROPERTY] = state.active;
+            state.plan = nextPlan;
             state.planNode = planNode;
             state.planWidget = planWidget;
             state.lastValue = value;
@@ -2166,22 +2314,46 @@ function mount(node) {
 
     const removed = node.onRemoved;
     node.onRemoved = function () {
-        if (state.pollTimer != null) window.clearInterval(state.pollTimer);
-        if (state.popoverTimer != null) window.clearTimeout(state.popoverTimer);
-        hidePopover(true);
-        state.popover?.remove();
-        state.completion?.destroy();
+        // Closing a workflow removes many nodes while ComfyUI is also saving
+        // its tab session. Never propagate Plan callbacks, analyze prompts, or
+        // start history requests from teardown: the edited Plan JSON was
+        // already assigned synchronously by writePlan().
+        state.disposed = true;
+        const cleanups = [
+            () => {
+                if (state.planSyncTimer != null) window.clearTimeout(state.planSyncTimer);
+                state.planSyncTimer = null;
+                state.planSyncPending = null;
+                if (state.analysisTimer != null) window.clearTimeout(state.analysisTimer);
+                state.analysisTimer = null;
+                if (state.history.saveTimer != null) window.clearTimeout(state.history.saveTimer);
+                state.history.saveTimer = null;
+                state.history.pendingDraft = null;
+                state.history.loadToken += 1;
+                state.history.host = null;
+            },
+            () => { if (state.pollTimer != null) window.clearInterval(state.pollTimer); },
+            () => { if (state.popoverTimer != null) window.clearTimeout(state.popoverTimer); },
+            () => hidePopover(true),
+            () => state.popover?.remove(),
+            () => state.completion?.destroy(),
+            () => api.removeEventListener("executed", onPromptExecuted),
+            () => globalThis.removeEventListener?.(
+                PROJECT_ASSET_CATALOG_CHANGED_EVENT, onProjectAssetCatalogChanged,
+            ),
+            () => state.optimizer.client?.close(),
+            () => state.optimizer.abortController?.abort(),
+            () => globalThis.removeEventListener?.(
+                "h3-prompt-optimizer-settings-changed", onOptimizerSettingsChanged,
+            ),
+        ];
+        for (const cleanup of cleanups) {
+            try { cleanup(); }
+            catch (error) { console.warn("H3 Rich Prompt Editor cleanup failed", error); }
+        }
         state.completion = null;
-        api.removeEventListener("executed", onPromptExecuted);
-        globalThis.removeEventListener?.(
-            PROJECT_ASSET_CATALOG_CHANGED_EVENT, onProjectAssetCatalogChanged,
-        );
         delete node._h3PromptCompanionSetActiveScene;
         delete node._h3PromptCompanionSetScenePrompt;
-        void flushHistoryDraft();
-        state.optimizer.client?.close();
-        state.optimizer.abortController?.abort();
-        globalThis.removeEventListener?.("h3-prompt-optimizer-settings-changed", onOptimizerSettingsChanged);
         return removed?.apply(this, arguments);
     };
     node._h3PromptCompanionSetActiveScene = (planNode, index) => {
@@ -2191,6 +2363,18 @@ function mount(node) {
     };
     node._h3PromptCompanionSetScenePrompt = (planNode, index, text) => {
         if (planNode !== state.planNode || !state.plan?.shots?.[index]) return false;
+        const liveValue = String(state.planWidget?.value ?? "");
+        let livePlanParsed = false;
+        try {
+            const livePlan = parsePlanJson(liveValue);
+            livePlanParsed = true;
+            if (planHasNonPromptChanges(state.plan, livePlan)) {
+                loadPlan(true);
+                return true;
+            }
+        } catch (_error) {
+            // Leave lastValue untouched so normal polling reports invalid JSON.
+        }
         state.plan.shots[index].prompt = promptTextToLines(text);
         const shotId = String(
             state.plan.shots[index].id
@@ -2210,7 +2394,7 @@ function mount(node) {
                 state.schema?.refresh();
             }
         }
-        state.lastValue = String(state.planWidget?.value ?? state.lastValue);
+        if (livePlanParsed) state.lastValue = liveValue;
         return true;
     };
     node._h3RichPromptRefresh = () => loadPlan(true);

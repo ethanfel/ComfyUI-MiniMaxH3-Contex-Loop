@@ -5,13 +5,15 @@ import {
     TRANSITION_PRESETS,
     transitionPreset,
     transitionPresetName,
-} from "./h3_policy_core.mjs?v=0.5.68";
+} from "./h3_policy_core.mjs?v=0.6.0";
 
 export const CHAIN_POLICY_NODE = "MiniMaxH3ChainPolicy";
 export const PROFILE_POLICY_NODE = "MiniMaxH3GenerationProfile";
 export const ADVANCED_POLICY_NODE = "MiniMaxH3AdvancedPolicy";
 export const LEGACY_POLICY_NODE = "MiniMaxH3Legacy04PolicyAdapter";
 export const PLAN_NODE = "MiniMaxH3ChainPlan";
+export const MODERN_PLAN_NODE = "MiniMaxH3ChainPlanModern";
+export const PLAN_NODES = new Set([PLAN_NODE, MODERN_PLAN_NODE]);
 
 const CONDITIONAL_SOURCE_AUDIO_NODES = new Set([
     "MiniMaxH3ChainLoopStart",
@@ -27,6 +29,7 @@ const ASSEMBLE_NODE = "MiniMaxH3ChainAssemble";
 const ADVANCED_OUTPUTS = Object.freeze({
     MiniMaxH3ChainPolicy: ["status"],
     MiniMaxH3ChainPlan: ["summary", "clip_count", "video_blend_frames"],
+    MiniMaxH3ChainPlanModern: ["summary", "clip_count", "video_blend_frames"],
     MiniMaxH3ChainPlanStudio: [
         "status", "report_json", "plan_summary", "clip_count",
         "video_blend_frames",
@@ -37,7 +40,6 @@ const ADVANCED_OUTPUTS = Object.freeze({
         "clip_count", "shot_id", "steps", "audio_start", "audio_duration",
         "status",
     ],
-    MiniMaxH3ChainContext: ["model"],
     MiniMaxH3ChainLoopEnd: [
         "manifest_json", "last_context_frames", "last_context_latent",
     ],
@@ -45,18 +47,6 @@ const ADVANCED_OUTPUTS = Object.freeze({
 });
 
 const ALWAYS_ADVANCED_WIDGETS = Object.freeze({
-    // These controls opt into experimental generation behavior. Keep their
-    // serialized widgets and backend positions intact, but require the same
-    // explicit "Show advanced H3 controls" action used by compatibility and
-    // diagnostic surfaces elsewhere in the 0.5 graph.
-    MiniMaxH3AdvancedPolicy: ["incoming_transition"],
-    MiniMaxH3ChainCurrent: ["align_audio_reference"],
-    MiniMaxH3ReferenceVideoFadeModelPatch: [
-        "preset", "custom_fade_start", "custom_end_strength",
-    ],
-    MiniMaxH3ChainAssemble: [
-        "boundary_tone_match", "color_stabilization",
-    ],
     MiniMaxH3ChainPlanStudio: [
         "verify_resume_history",
         // Backing values for the Studio's dedicated Plan settings tab. Keep
@@ -71,16 +61,12 @@ const ALWAYS_ADVANCED_WIDGETS = Object.freeze({
     MiniMaxH3ChainUpscaleAdapter: ["recipe_json"],
 });
 
-const ALWAYS_ADVANCED_INPUTS = Object.freeze({
-    MiniMaxH3ChainContext: ["model", "drift_sigmas"],
-    MiniMaxH3DriftControlModelPatch: [
-        "model", "state", "latent", "full_sigmas",
-    ],
-    MiniMaxH3ReferenceVideoFadeModelPatch: ["full_sigmas"],
-});
-
 export function nodeType(node) {
     return node?.comfyClass ?? node?.type ?? null;
+}
+
+export function isPlanNode(node) {
+    return PLAN_NODES.has(typeof node === "string" ? node : nodeType(node));
 }
 
 export function widgetByName(node, name) {
@@ -115,7 +101,7 @@ export function policyPlanConsumers(policyNode) {
     if (!inputNames.length) return [];
     const graph = policyNode?.graph;
     return (graph?._nodes ?? []).filter((candidate) =>
-        nodeType(candidate) === PLAN_NODE
+        isPlanNode(candidate)
         && inputNames.some((name) => {
             const origin = linkedOrigin(candidate, inputByName(candidate, name));
             return upstreamNodes(origin).includes(policyNode);
@@ -218,7 +204,7 @@ export function resolveAudioPolicy(start) {
     for (const node of upstreamNodes(start)) {
         const direct = audioPolicyFromWidgets(node);
         if (direct) return direct;
-        if (nodeType(node) !== PLAN_NODE) continue;
+        if (!isPlanNode(node)) continue;
         if (!linkedOrigin(node, inputByName(node, "chain_policy"))) {
             planFallback ??= legacyAudioPolicy(node);
         }
@@ -258,7 +244,7 @@ export function resolveAudioContextLength(start) {
     for (const node of upstreamNodes(start)) {
         const direct = directAudioContextLength(node);
         if (direct != null) return direct;
-        if (nodeType(node) !== PLAN_NODE) continue;
+        if (!isPlanNode(node)) continue;
         if (!linkedOrigin(node, inputByName(node, "chain_policy"))) {
             const legacy = Number(
                 widgetByName(node, "audio_context_length")?.value);
@@ -332,7 +318,7 @@ export function resolveTransitionPolicy(start) {
     for (const node of upstreamNodes(start)) {
         const direct = transitionPolicyFromWidgets(node);
         if (direct) return direct;
-        if (nodeType(node) !== PLAN_NODE) continue;
+        if (!isPlanNode(node)) continue;
         if (!linkedOrigin(node, inputByName(node, "chain_policy"))) {
             planFallback ??= legacyTransitionPolicy(node);
         }
@@ -415,9 +401,6 @@ export function presentationForNode(node, showAdvanced = false) {
     if (!showAdvanced) {
         for (const name of advancedOutputNames(node)) hiddenOutputs.add(name);
         for (const name of advancedWidgetNames(node, policy)) hiddenWidgets.add(name);
-        for (const name of ALWAYS_ADVANCED_INPUTS[nodeType(node)] ?? []) {
-            hiddenInputs.add(name);
-        }
         const sourceAudio = inputByName(node, "source_audio");
         if (sourceAudio && !sourceAudioInputNeeded(node, policy)) {
             hiddenInputs.add("source_audio");

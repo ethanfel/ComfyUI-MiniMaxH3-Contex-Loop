@@ -1,0 +1,699 @@
+{
+  "nodes": [
+    {
+      "key": "n1",
+      "type": "MiniMaxH3ChainCheckpointManager",
+      "settings": {
+        "selection_json": ""
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n2",
+      "type": "MiniMaxH3ChainUpscaleAdapter",
+      "settings": {
+        "profile": "h3_lbh_3d_derope",
+        "backend": "h3_latent",
+        "recipe_json": "{\"upscaler\":\"LBH 3D\",\"target_megapixels\":1.5,\"derope\":\"MAINodes adaptive pixel smear\",\"oracle\":\"balanced q0.75 dmax4\",\"pass2_steps\":8,\"inject\":0.5,\"audio_init\":0.5,\"audio_output\":\"original performance\"}",
+        "start_clip": 1,
+        "end_clip": 0,
+        "save_latent": false,
+        "segment_crf": 18
+      },
+      "inputs": {
+        "source_manifest": [
+          "n1",
+          "selected_manifest"
+        ]
+      }
+    },
+    {
+      "key": "n3",
+      "type": "MiniMaxH3ChainUpscaleCurrent",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n2",
+          "state"
+        ]
+      }
+    },
+    {
+      "key": "n4",
+      "type": "UNETLoader",
+      "settings": {
+        "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n5",
+      "type": "ModelAttentionBackend",
+      "settings": {
+        "attention": "pytorch attention"
+      },
+      "inputs": {
+        "model": [
+          "n4",
+          "MODEL"
+        ]
+      },
+      "mode": 4
+    },
+    {
+      "key": "n6",
+      "type": "MiniMaxH3SigmaShift",
+      "settings": {
+        "shift_video": 12,
+        "shift_audio": 3
+      },
+      "inputs": {
+        "model": [
+          "n5",
+          "MODEL"
+        ]
+      }
+    },
+    {
+      "key": "n7",
+      "type": "CLIPLoader",
+      "settings": {
+        "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "type": "minimax",
+        "device": "default"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n8",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n9",
+      "type": "MiniMaxH3ChainUpscaleReferenceConditioning",
+      "settings": {
+        "missing_cache": "text_only",
+        "motion_ref_mode": "exclude_video_keep_audio",
+        "prompt_override": "",
+        "override_ref_image_size": "inherit",
+        "override_reference_policy": "strict"
+      },
+      "inputs": {
+        "state": [
+          "n3",
+          "state"
+        ],
+        "clip": [
+          "n7",
+          "CLIP"
+        ],
+        "target_video_latent": [
+          "n32",
+          "video_latent"
+        ],
+        "video_vae": [
+          "n8",
+          "VAE"
+        ],
+        "prompt_override": [
+          "n22",
+          "prompt_override"
+        ],
+        "tagged_references": [
+          "n22",
+          "references"
+        ],
+        "audio_vae": [
+          "n23",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n10",
+      "type": "RandomNoise",
+      "settings": {
+        "noise_seed": 0,
+        "control_after_generate": "fixed"
+      },
+      "inputs": {
+        "noise_seed": [
+          "n3",
+          "seed"
+        ]
+      }
+    },
+    {
+      "key": "n11",
+      "type": "MinimaxH3LatentUpscaler3D",
+      "settings": {
+        "model_name": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "mode": "megapixels",
+        "mode.megapixels": 1.5,
+        "align": 32,
+        "enable_temporal_chunking": true,
+        "force_unload": true,
+        "device": "cuda",
+        "precision": "fp16"
+      },
+      "inputs": {
+        "latent": [
+          "n29",
+          "LATENT"
+        ]
+      }
+    },
+    {
+      "key": "n12",
+      "type": "BasicGuider",
+      "settings": {},
+      "inputs": {
+        "model": [
+          "n6",
+          "MODEL"
+        ],
+        "conditioning": [
+          "n21",
+          "positive"
+        ]
+      }
+    },
+    {
+      "key": "n13",
+      "type": "KSamplerSelect",
+      "settings": {
+        "sampler_name": "res_multistep"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n14",
+      "type": "SamplerCustomAdvanced",
+      "settings": {},
+      "inputs": {
+        "noise": [
+          "n10",
+          "NOISE"
+        ],
+        "guider": [
+          "n12",
+          "GUIDER"
+        ],
+        "sampler": [
+          "n13",
+          "SAMPLER"
+        ],
+        "sigmas": [
+          "n35",
+          "SIGMAS"
+        ],
+        "latent_image": [
+          "n34",
+          "LATENT"
+        ]
+      }
+    },
+    {
+      "key": "n15",
+      "type": "VAEDecode",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n14",
+          "output"
+        ],
+        "vae": [
+          "n8",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n16",
+      "type": "MiniMaxH3ChainUpscaleSegmentSave",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n3",
+          "state"
+        ],
+        "images": [
+          "n37",
+          "IMAGE"
+        ],
+        "upscaled_latent": [
+          "n41",
+          "latent"
+        ],
+        "recovered_audio": [
+          "n38",
+          "AUDIO"
+        ]
+      }
+    },
+    {
+      "key": "n17",
+      "type": "MiniMaxH3ChainUpscaleLoopEnd",
+      "settings": {},
+      "inputs": {
+        "flow": [
+          "n2",
+          "flow"
+        ],
+        "state": [
+          "n3",
+          "state"
+        ],
+        "images": [
+          "n37",
+          "IMAGE"
+        ],
+        "segment": [
+          "n16",
+          "segment"
+        ],
+        "upscaled_latent": [
+          "n41",
+          "latent"
+        ]
+      }
+    },
+    {
+      "key": "n18",
+      "type": "MiniMaxH3ChainAssemble",
+      "settings": {
+        "audio_source": "plan",
+        "filename": "h3_upscaled_%date:yyyy-MM-dd%",
+        "audio_bitrate": 256,
+        "copy_to_output": false,
+        "output_subfolder": "",
+        "blend_schedule": "plan",
+        "boundary_tone_match": "off",
+        "color_stabilization": "off"
+      },
+      "inputs": {
+        "manifest": [
+          "n17",
+          "manifest"
+        ]
+      }
+    },
+    {
+      "key": "n19",
+      "type": "Note",
+      "settings": {
+        "text": "CHAIN-AWARE H3 UPSCALE + DE-ROPE\n\n1. Select the generated branch tip in Checkpoint Manager. Partial generated branches are valid.\n2. Keep a unique profile name. Each recovered HQ scene is saved before the loop advances.\n3. H3 Jerk Oracle finds overloaded motion on the saved clean source latent. Chain De-Rope Guard prevents it from retiming the disposable continuation prefix and the last 17 frames of every non-final selected scene. Its expand_to_end output must stay connected to H3 Time Smear.\n4. Time Smear expands decoded source frames; VAE Encode returns them to clean H3 latent space; LBH 3D performs the spatial upscale. Chain De-Rope Continuity then splices the previous HQ Drift-Control tail at target resolution.\n5. Chain De-Rope Freeze Mask must stay connected to H3 V2V Init with time_varying ON. The stretched source audio is seeded at strength 0.5 so dialogue timing does not drag the mouth back to natural speed.\n6. Exact Recover and Audio Recover return to the original RAW clock. The bundled safe audio default keeps the original performance; change Audio Recover only for an intentional pass-2 foley test. Recovered AV is re-encoded for Drift-Control continuity and optional latent saving.\n\nNo Plan, Source Timeline, source media, or manual references are required. Automatic reference-cache restore remains active and excludes motion-video refs by default because the source latent already contains the motion. Functional nodes intentionally use their original registered names."
+      },
+      "inputs": {},
+      "label": "HOW TO RUN"
+    },
+    {
+      "key": "n20",
+      "type": "Note",
+      "settings": {
+        "text": "REQUIRES\nhttps://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler\nhttps://github.com/matlowai/ComfyUI-MAINodes\n\nThis uses MAINodes' stable decoded pixel-smear path, not experimental latent temporal insertion. The longer smeared IMAGE batch lives on CPU, then VAE Encode and LBH operate scene by scene; effective time can still reach roughly 2-3x on high-motion clips. If RAM or generation time is excessive, process a smaller start/end scene range or use a less aggressive oracle preset before lowering target resolution.\n\nDefaults: balanced oracle q=0.75 / d_max=4 / ramp ON / bridge=8; 1.5 MP LBH 3D; 20-step simple schedule injected from 0.50; res_multistep sampler; audio init follows the original performance at 0.5; Audio Recover delivers the original performance. Community testing consistently places d_max=4 at the useful H3 threshold and recommends doing spatial upscale and de-rope in this same regeneration pass.\n\nH3 Conditioning Sync now permits the longer target clock while resizing only spatial reference/keyframe latents. Motion refs remain excluded by default. The pass-2 Comfy Kitchen override is bypassed because large H3 sequences can exceed Sage prequantized int32 strides. save_latent remains OFF; the compact HQ continuation tail is retained automatically when the next scene needs it."
+      },
+      "inputs": {},
+      "label": "DEPENDENCIES / QUALITY AND MEMORY"
+    },
+    {
+      "key": "n21",
+      "type": "H3ConditioningSyncFromLatents",
+      "settings": {
+        "method": "bilinear",
+        "motion_ref_mode": "conditioning_policy"
+      },
+      "inputs": {
+        "original_latent": [
+          "n3",
+          "source_video_latent"
+        ],
+        "upscaled_latent": [
+          "n32",
+          "video_latent"
+        ],
+        "positive": [
+          "n9",
+          "positive"
+        ]
+      }
+    },
+    {
+      "key": "n22",
+      "type": "MiniMaxH3UpscaleReferencePromptOverride",
+      "settings": {
+        "prompt_override": "",
+        "disabled_tags": ""
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n23",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n24",
+      "type": "VAEDecode",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n3",
+          "source_video_latent"
+        ],
+        "vae": [
+          "n8",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n25",
+      "type": "VAEDecodeAudio",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n3",
+          "source_audio_latent"
+        ],
+        "vae": [
+          "n23",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n26",
+      "type": "H3JerkOracle",
+      "settings": {
+        "length": 124,
+        "q": 0.75,
+        "d_max": 4,
+        "ramp": true,
+        "preset": "balanced (default)",
+        "bridge": 8,
+        "profile_mode": "value |d3| (default)",
+        "abstain_below": 0,
+        "fps": 24,
+        "s_per_step": 0,
+        "est_steps": 8,
+        "overhead_s": 6.7,
+        "model_profile": "minimax-h3",
+        "protect_tail": 0
+      },
+      "inputs": {
+        "samples": [
+          "n3",
+          "source_video_latent"
+        ],
+        "length": [
+          "n3",
+          "raw_frames"
+        ]
+      }
+    },
+    {
+      "key": "n27",
+      "type": "MiniMaxH3ChainDeropeGuard",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n3",
+          "state"
+        ],
+        "hold_map": [
+          "n26",
+          "hold_map"
+        ]
+      }
+    },
+    {
+      "key": "n28",
+      "type": "H3TimeSmear",
+      "settings": {
+        "dilation": 4,
+        "hold_map": "",
+        "expand_to_end": true,
+        "fps": 24,
+        "s_per_step": 0,
+        "est_steps": 18,
+        "overhead_s": 6.7
+      },
+      "inputs": {
+        "images": [
+          "n24",
+          "IMAGE"
+        ],
+        "hold_map": [
+          "n27",
+          "hold_map"
+        ],
+        "expand_to_end": [
+          "n27",
+          "expand_to_end"
+        ]
+      }
+    },
+    {
+      "key": "n29",
+      "type": "VAEEncode",
+      "settings": {},
+      "inputs": {
+        "pixels": [
+          "n28",
+          "images"
+        ],
+        "vae": [
+          "n8",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n30",
+      "type": "H3AudioSmear",
+      "settings": {
+        "hold_map": "",
+        "fps": 24
+      },
+      "inputs": {
+        "audio": [
+          "n25",
+          "AUDIO"
+        ],
+        "hold_map": [
+          "n28",
+          "hold_map_used"
+        ]
+      }
+    },
+    {
+      "key": "n31",
+      "type": "VAEEncodeAudio",
+      "settings": {},
+      "inputs": {
+        "audio": [
+          "n30",
+          "AUDIO"
+        ],
+        "vae": [
+          "n23",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n32",
+      "type": "MiniMaxH3ChainDeropeContinuity",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n3",
+          "state"
+        ],
+        "video_latent": [
+          "n11",
+          "latent"
+        ]
+      }
+    },
+    {
+      "key": "n33",
+      "type": "MiniMaxH3ChainDeropeFreezeMask",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n3",
+          "state"
+        ],
+        "hold_map_used": [
+          "n28",
+          "hold_map_used"
+        ]
+      }
+    },
+    {
+      "key": "n34",
+      "type": "H3V2VInit",
+      "settings": {
+        "length": 0,
+        "freeze_threshold": 0,
+        "freeze_grow": 2,
+        "mask_feather": 0,
+        "invert_mask": false,
+        "time_varying": true,
+        "audio_mode": "follow the original performance (0.5)",
+        "audio_strength": 0.5,
+        "audio_prefix_ticks": 0,
+        "audio_prefix_release_ticks": 0
+      },
+      "inputs": {
+        "samples": [
+          "n32",
+          "video_latent"
+        ],
+        "length": [
+          "n28",
+          "length"
+        ],
+        "mask": [
+          "n33",
+          "mask"
+        ],
+        "audio_latent": [
+          "n31",
+          "LATENT"
+        ]
+      }
+    },
+    {
+      "key": "n35",
+      "type": "H3InjectSchedule",
+      "settings": {
+        "scheduler": "simple",
+        "total_steps": 20,
+        "inject": 0.5,
+        "preset": "custom"
+      },
+      "inputs": {
+        "model": [
+          "n6",
+          "MODEL"
+        ]
+      }
+    },
+    {
+      "key": "n36",
+      "type": "VAEDecodeAudio",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n14",
+          "output"
+        ],
+        "vae": [
+          "n23",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n37",
+      "type": "H3ExactRecover",
+      "settings": {
+        "hold_map": ""
+      },
+      "inputs": {
+        "images": [
+          "n15",
+          "IMAGE"
+        ],
+        "hold_map": [
+          "n28",
+          "hold_map_used"
+        ]
+      }
+    },
+    {
+      "key": "n38",
+      "type": "H3AudioRecover",
+      "settings": {
+        "hold_map": "",
+        "fps": 24,
+        "reference_mix": 1,
+        "audio_source": "keep the original performance (safe default)"
+      },
+      "inputs": {
+        "audio": [
+          "n36",
+          "AUDIO"
+        ],
+        "hold_map": [
+          "n28",
+          "hold_map_used"
+        ],
+        "reference": [
+          "n25",
+          "AUDIO"
+        ]
+      }
+    },
+    {
+      "key": "n39",
+      "type": "VAEEncode",
+      "settings": {},
+      "inputs": {
+        "pixels": [
+          "n37",
+          "IMAGE"
+        ],
+        "vae": [
+          "n8",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n40",
+      "type": "VAEEncodeAudio",
+      "settings": {},
+      "inputs": {
+        "audio": [
+          "n38",
+          "AUDIO"
+        ],
+        "vae": [
+          "n23",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n41",
+      "type": "MiniMaxH3ChainRecoveredAV",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n3",
+          "state"
+        ],
+        "video_latent": [
+          "n39",
+          "LATENT"
+        ],
+        "audio_latent": [
+          "n40",
+          "LATENT"
+        ]
+      }
+    }
+  ]
+}

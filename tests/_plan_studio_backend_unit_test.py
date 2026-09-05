@@ -2,12 +2,14 @@
 """Standalone saved-segment discovery checks for Plan Studio."""
 
 import asyncio
+import concurrent.futures
 import importlib.util
 import json
 import pathlib
 import struct
 import sys
 import tempfile
+import threading
 import time
 import types
 
@@ -173,6 +175,54 @@ async def check():
         assert active_only["checkpoints"][0]["ready"] is True
         assert "revisions" not in active_only
 
+        # Empty editorial order entries may be reconciled, but not when any
+        # active/retained checkpoint (even broken or under another slot) exists.
+        unused_run = pathlib.Path(temporary) / "h3_chains" / "unused_scene"
+        unused_checkpoints = unused_run / "checkpoints"
+        unused_checkpoints.mkdir(parents=True)
+        unused_editorial = {
+            "run_name": "unused_scene",
+            "scene_order": [{"scene": 2, "scene_id": "old_empty"}],
+        }
+        chain._atomic_json(str(unused_run / "editorial.json"), unused_editorial)
+
+        def unused_ids():
+            return chain._saved_checkpoint_listing(
+                "unused_scene", include_graph=False)["editorial_unused_scene_ids"]
+
+        assert unused_ids() == ["old_empty"]
+        retained_metadata = {
+            "segment": {
+                "index": 3, "id": "old_empty",
+                "segment": str(segment.relative_to(temporary)),
+                "checkpoint": str(checkpoint.relative_to(temporary)),
+            },
+        }
+        retained_path = unused_checkpoints / ("clip_0003.%s.json" % ("a" * 32))
+        retained_path.write_text(json.dumps(retained_metadata), encoding="utf-8")
+        assert unused_ids() == [], "retained revisions protect scene IDs, not just slot numbers"
+        retained_path.unlink()
+        orphan = unused_checkpoints / ("clip_0002.%s.safetensors" % ("b" * 32))
+        orphan.write_bytes(b"orphaned saved checkpoint")
+        assert unused_ids() == [], "orphaned artifacts are not unused placeholders"
+        orphan.unlink()
+        orphan_video = unused_run / "segments" / "clip_0002.retained.mp4"
+        orphan_video.parent.mkdir()
+        orphan_video.write_bytes(b"saved video without checkpoint metadata")
+        assert unused_ids() == [], "a saved segment without a checkpoint is still protected"
+        orphan_video.unlink()
+        retained_path.write_text("invalid JSON", encoding="utf-8")
+        assert unused_ids() == [], "incomplete inventory must fail closed"
+        retained_path.unlink()
+        active_path = unused_checkpoints / "clip_0002.json"
+        active_path.write_text("[]", encoding="utf-8")
+        assert unused_ids() == [], "malformed metadata must not claim scenes are unused"
+        active_path.write_text(json.dumps(retained_metadata), encoding="utf-8")
+        assert unused_ids() == [], "mismatched active pointers must fail closed"
+        active_path.unlink()
+        assert unused_ids() == ["old_empty"]
+        assert json.loads((unused_run / "editorial.json").read_text()) == unused_editorial
+
         preview = reviews / (
             "clip_0001.%s.audiohash.review.mp4" % video_hash[:12])
         preview.write_bytes(b"synchronized preview")
@@ -228,6 +278,174 @@ async def check():
             "scene", "gap", "scene"]
         assert timeline_records[1]["frame_count"] == 160
         assert editorial_frames == 840
+
+        newer_editorial = chain._save_run_editorial_document({
+            "run_name": "studio",
+            "base_revision": editorial["revision"],
+            "scene_order": [
+                {"scene": 1, "scene_id": "intro"},
+                {"scene": 2, "scene_id": "outro"},
+            ],
+            "chapters": [],
+            "placements": [{
+                "scene": 2, "scene_id": "outro", "start_frame": 501,
+            }],
+        })
+        assert newer_editorial["revision"] != editorial["revision"]
+        try:
+            chain._save_run_editorial_document({
+                "run_name": "studio",
+                "base_revision": editorial["revision"],
+                "scene_order": [
+                    {"scene": 1, "scene_id": "intro"},
+                    {"scene": 2, "scene_id": "outro"},
+                ],
+                "chapters": [],
+                "placements": [{
+                    "scene": 2, "scene_id": "outro", "start_frame": 502,
+                }],
+            })
+        except chain.EditorialConflictError as exc:
+            assert "was not overwritten" in str(exc)
+        else:
+            raise AssertionError("a stale Plan Studio final-cut write succeeded")
+        assert chain._load_run_editorial("studio")["placements"][0][
+            "start_frame"] == 501
+
+        # A legacy file without revision/timestamp has a stable read token,
+        # and discovery never upgrades or rewrites it on disk.
+        legacy = {"run_name": "legacy_editorial", "scene_order": [
+            {"scene": 1, "scene_id": "intro"}]}
+        legacy_path = pathlib.Path(chain._run_editorial_path("legacy_editorial"))
+        chain._atomic_json(str(legacy_path), legacy)
+        before_legacy = legacy_path.read_bytes()
+        original_datetime = chain.datetime
+        try:
+            tokens = []
+            for second in (0, 1):
+                fixed_time = original_datetime(2026, 1, 1, 0, 0, second)
+                chain.datetime = types.SimpleNamespace(now=lambda _zone: fixed_time)
+                tokens.append(chain._load_run_editorial("legacy_editorial")["revision"])
+        finally:
+            chain.datetime = original_datetime
+        assert tokens[0] == tokens[1], "Legacy revision must not depend on read time"
+        assert legacy_path.read_bytes() == before_legacy
+        legacy_saved = chain._save_run_editorial_document({
+            **legacy, "base_revision": tokens[0], "placements": [
+                {"scene": 1, "scene_id": "intro", "start_frame": 24}]})
+        assert legacy_saved["revision"] != tokens[0]
+
+        # Concurrent tabs reading the same revision cannot both publish.
+        # Exercise the real check/write lock, not an async test stub.
+        race = chain._save_run_editorial_document({
+            "run_name": "revision_race", "base_revision": "",
+            "scene_order": [{"scene": 1, "scene_id": "intro"}]})
+        barrier = threading.Barrier(2)
+
+        def save_competing_edit(frame):
+            barrier.wait(timeout=10)
+            try:
+                chain._save_run_editorial_document({
+                    **race, "base_revision": race["revision"],
+                    "placements": [{"scene": 1, "scene_id": "intro",
+                                    "start_frame": frame}]})
+                return frame
+            except chain.EditorialConflictError:
+                return None
+
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(save_competing_edit, (24, 48)))
+        winners = [frame for frame in results if frame is not None]
+        assert len(winners) == 1
+        assert chain._load_run_editorial("revision_race")["placements"][0][
+            "start_frame"] == winners[0]
+
+        class StaleEditorialRequest:
+            headers = {}
+
+            async def json(self):
+                return {**race, "base_revision": race["revision"]}
+
+        rejected = await chain._update_run_editorial(StaleEditorialRequest())
+        assert rejected.status == 409
+        assert json.loads(rejected.text)["code"] == "h3_editorial_conflict"
+        assert chain._load_run_editorial("revision_race")["placements"][0][
+            "start_frame"] == winners[0]
+
+        latent_editorial = chain._save_run_editorial_document({
+            "run_name": "studio",
+            "scene_order": [{"scene": 1, "scene_id": "intro"}],
+            "chapters": [],
+            "placements": [],
+            "trims": [{
+                "scene": 1, "scene_id": "intro", "out_frame": 72,
+            }],
+        })
+        assert latent_editorial["trims"][0]["out_frame"] == 72
+        _, trimmed_records, trimmed_frames = (
+            chain._editorial_timeline_records("studio", [{
+                "index": 1, "id": "intro", "raw_frames": 362,
+                "delivered_frames": 340,
+            }]))
+        assert trimmed_records[0]["frame_count"] == 72
+        assert trimmed_records[0]["source_frame_count"] == 340
+        assert trimmed_frames == 72
+        transient = chain._editorial_trimmed_segment({
+            "index": 1, "id": "intro", "raw_frames": 362,
+            "delivered_frames": 340,
+        }, latent_editorial)
+        assert transient["_editorial_raw_out_frames"] == 94
+        assert transient["_editorial_video_steps"] == 28
+        chain._streams_from_latent = lambda latent: latent["samples"]
+        trimmed_latent = chain._editorial_trim_latent({"samples": [
+            chain.torch.zeros(1, 4, 107, 2, 2),
+            chain.torch.zeros(1, 4, 2, 603),
+        ]}, transient)
+        assert trimmed_latent["samples"][0].shape[2] == 28
+        assert trimmed_latent["samples"][1].shape[-1] == 157
+        saved_tail = chain.torch.arange(100).reshape(100, 1, 1, 1)
+        assert chain._editorial_context_tail(
+            saved_tail, transient, 100).shape[0] == 0
+        source_view = dict(transient)
+        current = {
+            "index": 2, "resolved_context_length": 22,
+            "resolved_audio_context_length": 0,
+            "delivered_frames": 340,
+        }
+        assert chain._editorial_dependency_mismatches(
+            current, 2, {1: source_view, 2: current},
+        ) == ["previous scene endpoint changed from 340f to 72f"]
+        downstream = {
+            "index": 3, "resolved_context_length": 22,
+            "resolved_audio_context_length": 0,
+            "predecessor_editorial_out_frames": 340,
+            "delivered_frames": 340,
+        }
+        stale = chain._editorial_stale_dependencies({
+            1: source_view, 2: current, 3: downstream,
+        })
+        assert list(stale) == [2, 3]
+        assert stale[3] == ["depends on stale scene 2"]
+        current["predecessor_editorial_out_frames"] = 72
+        assert not chain._editorial_dependency_mismatches(
+            current, 2, {1: source_view, 2: current},
+        )
+        assembly_records = chain._apply_editorial_timeline_records([{
+            "kind": "segment", "scene_index": 1, "path": str(segment),
+            "input_frames": 340, "delivered_frames": 340,
+            "blend_frames": 0, "skip_frames": 0,
+        }], trimmed_records, [{
+            "index": 1, "id": "intro", "segment": str(
+                segment.relative_to(temporary)),
+            "delivered_frames": 340,
+        }], {"width": 64, "height": 64})
+        assert assembly_records[0]["input_frames"] == 72
+        assert assembly_records[0]["delivered_frames"] == 72
+        trimmed_audio = chain._audio_with_editorial_timeline({
+            "waveform": chain.torch.ones(1, 2, 3400),
+            "sample_rate": 240,
+        }, trimmed_records, 340, 72, "trimmed editorial unit audio")
+        assert trimmed_audio["waveform"].shape[-1] == 720
 
         lrc = chain._parse_timed_lyrics(
             "[00:01.5]First line\n[00:03.25]Second line")

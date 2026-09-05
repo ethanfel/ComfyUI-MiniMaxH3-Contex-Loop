@@ -7,18 +7,19 @@ import {
     assetInputNumber,
     collectAssetBindings,
     nodeType,
-} from "./h3_run_assets_core.mjs?v=0.5.68";
+} from "./h3_run_assets_core.mjs?v=0.6.0";
 import {
     runArchiveOptionLabel,
     runManagerIdentity,
-} from "./h3_run_manager_core.mjs?v=0.5.68";
+} from "./h3_run_manager_core.mjs?v=0.6.0";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.5.68";
+} from "./h3_plan_restore_core.mjs?v=0.6.0";
 
 const NODE_NAME = "MiniMaxH3ChainRunManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
+const PLAN_NAMES = new Set([PLAN_NAME, "MiniMaxH3ChainPlanModern"]);
 const ASSET_WIDGETS = [
     "archive_images", "archive_audio", "archive_video", "asset_bindings_json",
 ];
@@ -30,7 +31,7 @@ function upstreamPlanNode(start) {
         const node = queue.shift();
         if (!node || seen.has(node)) continue;
         seen.add(node);
-        if (node !== start && nodeType(node) === PLAN_NAME) return node;
+        if (node !== start && PLAN_NAMES.has(nodeType(node))) return node;
         for (const input of node.inputs ?? []) {
             if (input.link == null) continue;
             const link = node.graph?.links?.[input.link];
@@ -197,7 +198,10 @@ function applyPlanInputs(planNode, inputs, policyInputs = {}) {
         Number(left === "plan_json") - Number(right === "plan_json"));
     const applied = [];
     const unavailable = [];
-    const graph = planNode.graph ?? app.graph;
+    const graph = planNode.graph;
+    if (!graph || graph.getNodeById?.(planNode.id) !== planNode) {
+        throw new Error("The target Plan is no longer in its workflow.");
+    }
     graph?.beforeChange?.();
     try {
         for (const name of names) {
@@ -219,7 +223,7 @@ function applyPlanInputs(planNode, inputs, policyInputs = {}) {
     const policies = restoreConnectedPolicyInputs(
         planNode, policyInputs, inputs);
     refreshRestoredPlanEditors(planNode);
-    app.graph?.setDirtyCanvas?.(true, true);
+    graph.setDirtyCanvas?.(true, true);
     return {applied, unavailable, policies};
 }
 
@@ -239,6 +243,7 @@ function mount(node) {
     const state = {
         runs: [], selected: "", busy: false, bindings: [], watchedSources: new Set(),
         watchedPlanWidget: null,
+        disposed: false, restoreEpoch: 0,
     };
     const title = element("div", "h3rm-title", "H3 Run Manager");
     const identity = element("div", "h3rm-identity");
@@ -286,8 +291,9 @@ function mount(node) {
     }
 
     const activeRunChanged = () => {
+        state.restoreEpoch += 1;
         const defer = window.queueMicrotask ?? ((callback) => window.setTimeout(callback, 0));
-        defer(() => renderSelection());
+        defer(() => { if (!state.disposed) renderSelection(); });
     };
 
     function updatePlanWatch() {
@@ -332,7 +338,7 @@ function mount(node) {
 
     const sourceChanged = () => {
         const defer = window.queueMicrotask ?? ((callback) => window.setTimeout(callback, 0));
-        defer(() => syncAssetBindings());
+        defer(() => { if (!state.disposed) syncAssetBindings(); });
     };
 
     function updateSourceWatches() {
@@ -416,6 +422,7 @@ function mount(node) {
     }
 
     function syncAssetBindings() {
+        if (state.disposed) return;
         state.bindings = collectAssetBindings(node);
         updateSourceWatches();
         writeBindingsWidget();
@@ -427,6 +434,7 @@ function mount(node) {
     }
 
     function setBusy(value) {
+        if (state.disposed) return;
         state.busy = Boolean(value);
         select.disabled = state.busy;
         refresh.disabled = state.busy;
@@ -436,6 +444,7 @@ function mount(node) {
     }
 
     function renderSelection() {
+        if (state.disposed) return;
         renderActiveRun();
         const run = selectedRun();
         const runIdentity = runManagerIdentity(activeRunName(), run);
@@ -478,6 +487,7 @@ function mount(node) {
         status.textContent = "Scanning host output…";
         try {
             const payload = await jsonRequest("/minimax_h3_context_loop/runs");
+            if (state.disposed) return;
             const previous = state.selected;
             state.runs = Array.isArray(payload.runs) ? payload.runs : [];
             const active = activeRunName();
@@ -507,10 +517,38 @@ function mount(node) {
         }
     }
 
+    function captureRestoreOperation(planNode, run) {
+        return {
+            graph:node.graph, activeGraph:app.graph, planNode, run:run.run_name,
+            epoch:state.restoreEpoch,
+            planValues:JSON.stringify((planNode.widgets ?? []).map(
+                (widget) => [widget.name, widget.value],
+            )),
+        };
+    }
+
+    function requireCurrentRestore(operation) {
+        const graph = operation.graph;
+        if (state.disposed || state.restoreEpoch !== operation.epoch
+                || !graph || node.graph !== graph || app.graph !== operation.activeGraph
+                || graph.getNodeById?.(node.id) !== node
+                || graph.getNodeById?.(operation.planNode.id) !== operation.planNode
+                || upstreamPlanNode(node) !== operation.planNode
+                || selectedRun()?.run_name !== operation.run
+                || JSON.stringify((operation.planNode.widgets ?? []).map(
+                    (widget) => [widget.name, widget.value],
+                )) !== operation.planValues) {
+            throw new Error(
+                "Archive load cancelled: the workflow, connected Plan, or Run " +
+                "changed while loading. Select the intended archive and load it again.",
+            );
+        }
+    }
+
     async function loadRun() {
         const run = selectedRun();
         const planNode = upstreamPlanNode(node);
-        if (!run || !planNode || state.busy) {
+        if (!run || !planNode || state.busy || state.disposed) {
             if (!planNode) {
                 status.className = "h3rm-status h3rm-error";
                 status.textContent = "Connect the active Plan first.";
@@ -524,16 +562,20 @@ function mount(node) {
         const message = `Load saved run “${run.run_name}” into the connected Plan?\n\n` +
             `This replaces all active scene prompts, archived Plan settings, and connected 0.5 policies${current ? ` from “${current}”` : ""}.${assetNotice}`;
         if (!window.confirm(message)) return;
+        const operation = captureRestoreOperation(planNode, run);
         setBusy(true);
         status.className = "h3rm-status";
         status.textContent = "Loading archive…";
         try {
             const query = new URLSearchParams({run_name: run.run_name});
             const payload = await jsonRequest(`/minimax_h3_context_loop/run?${query}`);
+            // Never apply a delayed archive to a different tab, replacement
+            // node with the same ID, or Plan edited since the load began.
+            requireCurrentRestore(operation);
             const result = applyPlanInputs(
                 planNode, payload.plan_inputs, payload.policy_inputs);
             const assetResults = [];
-            const graph = node.graph ?? app.graph;
+            const graph = operation.graph;
             graph?.beforeChange?.();
             try {
                 for (const binding of payload.assets?.bindings ?? []) {
@@ -652,6 +694,7 @@ function mount(node) {
     }
 
     select.addEventListener("change", () => {
+        state.restoreEpoch += 1;
         state.selected = select.value;
         status.className = "h3rm-status";
         status.textContent = "";
@@ -688,8 +731,10 @@ function mount(node) {
     ]);
     const connectionsChanged = node.onConnectionsChange;
     node.onConnectionsChange = function () {
+        state.restoreEpoch += 1;
         const result = connectionsChanged?.apply(this, arguments);
         window.setTimeout(() => {
+            if (state.disposed) return;
             stabilizeAssetInputs(node);
             syncAssetBindings();
             renderSelection();
@@ -703,6 +748,8 @@ function mount(node) {
     };
     const removed = node.onRemoved;
     node.onRemoved = function () {
+        state.disposed = true;
+        state.restoreEpoch += 1;
         for (const source of state.watchedSources) {
             source._h3AssetWatchers?.delete(sourceChanged);
         }
@@ -712,6 +759,7 @@ function mount(node) {
         return removed?.apply(this, arguments);
     };
     node._h3RunManagerRefresh = () => {
+        if (state.disposed) return;
         removeLegacyStatusOutput(node);
         for (const name of ASSET_WIDGETS) collapseWidget(widgetByName(node, name));
         stabilizeAssetInputs(node);

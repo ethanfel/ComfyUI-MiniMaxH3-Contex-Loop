@@ -81,22 +81,25 @@ Bundle owns the shared presentation size and mode, so individual anchor nodes
 store their original picture and scale it only when a scene actually calls its
 `#tag`.
 
-The prompt-driven Tagged route accepts `#picture[2.50s]`. This presents the
-matching Semantic Picture Anchor to Qwen at an approximate scene-local
-timestamp without adding a native VAE reference. It is useful for reinforcing
-a replacement character's identity later in a shot:
+The prompt-driven Tagged route accepts both `#picture` and
+`#picture[2.50s]`. Bare `#picture` presents the matching Semantic Picture
+Anchor to Qwen as one untimed image. Adding `[2.50s]` gives that same Qwen-only
+visual an approximate scene-local placement. Neither form adds a native VAE
+reference. Timed anchors are useful for reinforcing a replacement character's
+identity later in a shot:
 
 ```text
 <Subject 1> is the replacement performer defined by @replacement.
 #replacement[0.00s] #replacement[2.50s] #replacement[4.75s]
 ```
 
-`@replacement` and `#replacement[...]` have distinct jobs and may be used
+`@replacement`, bare `#replacement`, and `#replacement[...]` have distinct
+jobs and may be used
 together, including from different source nodes. The `@` form is a native
 Ref2VA picture and counts toward H3's nine active Picture slots. The `#` form is
 Qwen-only semantic reinforcement and never counts toward native picture,
-video, or audio limits. Its time must fall inside the current scene. It is an
-approximate semantic checkpoint, not an exact frame, pose, spatial mask,
+video, or audio limits. A supplied time must fall inside the current scene.
+Timing is optional and approximate—not an exact frame, pose, spatial mask,
 motion control, or continuation seam.
 
 Tagged Picture nodes remain accepted as `#tags` for existing workflows, but
@@ -109,10 +112,11 @@ the source video's changing pose.
 ### Picture storyboard mode
 
 Set Semantic Anchor Bundle's mode to `picture_storyboard` to compile
-the same `#picture[time]` syntax differently. Each distinct tagged image is
+timed `#picture[time]` syntax differently. Each distinct tagged image is
 added once as a separate Qwen-only `<Picture N>`, and the compiler adds an
 approximate scene-relative timing sentence for every requested time. No image
 is VAE encoded, spatially fused, or inserted into a fixed generated frame.
+Bare `#picture` is already an untimed `<Picture N>` in either mode.
 
 This mode gives Qwen a high-detail visual shot plan while H3 remains free to
 invent motion and transitions. `timestamped_video` remains the default and is
@@ -154,12 +158,13 @@ stock Ref2VA. `refmod_sources` uses the external pack's existing `H3_REF_LIST`
 contract, so no direct Python import or patched external node is required.
 Native behavior remains the default.
 
-Semantic `#tag[timestamp]` anchors use a hybrid path. Ordinary active `@visuals`
+Semantic `#tag` and `#tag[timestamp]` visuals use a hybrid path. Ordinary active `@visuals`
 remain exclusively in RefMod, while only the active anchor images are presented
-to Qwen and numbered in their own `<Video N>` or `<Picture N>` namespace. This
-preserves the supplied timestamped-video cues and approximate storyboard timing
+to Qwen and numbered in their own `<Picture N>` or `<Video N>` namespace. Bare
+tags are Pictures; timed tags are Video checkpoints in `timestamped_video` mode
+or Picture cues in storyboard mode. This preserves the supplied timing
 without paying Qwen's media-token cost for every ordinary reference again.
-An asset intentionally used as both `@tag` and `#tag[timestamp]` participates in
+An asset intentionally used as both `@tag` and either `#` form participates in
 both paths.
 
 The external experiment remains unable to carry reference audio. A scene with

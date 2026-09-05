@@ -205,7 +205,7 @@ assert.equal(restoredComposition.shots[2].visual_context_lead_source, "two");
 assert.equal(restoredComposition.shots[2].visual_context_lead_frames, 5);
 assert.equal(restoredComposition.shots[2].visual_context_lead_start_frame, 3);
 
-assert.throws(() => applyCheckpointRevisionSet({
+const restoredSameSource = applyCheckpointRevisionSet({
     prompt_prefix: ["keep"],
     shots: [
         {id:"one", prompt:["one"], length:39, steps:8, seed:"1"},
@@ -217,7 +217,35 @@ assert.throws(() => applyCheckpointRevisionSet({
     raw_frames:39, steps:9, prompt_prefix:"keep", context_length:39,
     visual_context_source:"one", visual_context_lead_source:"one",
     visual_context_lead_frames:5, video_blend_frames:0,
-}]), /same scene for both composed visual context blocks/i);
+}]);
+assert.equal(restoredSameSource.shots[2].visual_context_source, "one");
+assert.equal(restoredSameSource.shots[2].visual_context_lead_source, "one");
+
+const restoredBuilder = applyCheckpointRevisionSet({
+    prompt_prefix:["keep"],
+    shots:[
+        {id:"one", prompt:["one"], length:90, steps:8, seed:"1"},
+        {id:"two", prompt:["two"], length:90, steps:8, seed:"2"},
+        {id:"three", prompt:["three"], length:90, steps:8, seed:"3",
+            visual_context_source:"one"},
+    ],
+}, [{
+    scene:3, scene_id:"three", scene_prompt:"three", seed:"303",
+    raw_frames:90, steps:9, prompt_prefix:"keep", context_length:39,
+    visual_context_blocks:[
+        {source:"one", frames:5},
+        {source:"two", frames:12, start_frame:0},
+        {source:"one", frames:22},
+    ], video_blend_frames:0,
+}]);
+assert.deepEqual(restoredBuilder.shots[2].visual_context_blocks, [
+    {source:"one", frames:5},
+    {source:"two", frames:12, start_frame:0},
+    {source:"one", frames:22},
+]);
+assert.equal(
+    Object.hasOwn(restoredBuilder.shots[2], "visual_context_source"), false,
+);
 
 const seedOnlyPlan = applyCheckpointRevisionSeeds({
     prompt_prefix: ["keep prefix"],
@@ -286,6 +314,18 @@ assert.match(reviewSource, /Accept now & continue/);
 assert.match(reviewSource, /review_each_candidate/);
 assert.match(reviewSource, /review-candidate-batch/);
 assert.match(reviewSource, /candidate_batch_active/);
+assert.match(reviewSource, /function planRunNameTrusted\(planNode\)/);
+assert.match(reviewSource, /item\.name === "project_assets"/);
+assert.match(
+    reviewSource,
+    /if \(planRunNameTrusted\(planNode\)\) \{[\s\S]*actualRun[\s\S]*actualRun !== expectedRun/,
+    "an exact Review Gate must ignore the stale Plan run-name widget when Project Assets owns it",
+);
+assert.match(
+    reviewSource,
+    /const matchingRun = gates\.filter\([\s\S]*if \(!planRunNameTrusted\(planNode\)\) return false/,
+    "run-name fallback routing must not positively match a Project Assets-owned Plan",
+);
 assert.match(reviewSource, /Pause candidate run/);
 assert.match(reviewSource, /\/api\/jobs\/\$\{encodeURIComponent\(execution\.promptId\)\}\/cancel/);
 assert.match(reviewSource, /activate_only: true/);

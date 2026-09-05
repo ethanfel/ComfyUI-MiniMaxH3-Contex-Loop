@@ -88,6 +88,51 @@ export function rebaseScenePrompt(localPlan, livePlan, sceneIndex) {
     return targetIndex;
 }
 
+/** Keep a companion editor on the same logical scene when another Plan UI
+ * rewrites or reorders the Plan. Scene IDs are stable across prompt edits;
+ * the numeric position is only a safe fallback for legacy plans. */
+export function activeSceneIndexAfterRefresh(previousPlan, nextPlan, sceneIndex) {
+    if (!Array.isArray(nextPlan?.shots) || !nextPlan.shots.length) return 0;
+    const previousIndex = Math.max(0, Math.trunc(Number(sceneIndex) || 0));
+    const previousShot = Array.isArray(previousPlan?.shots)
+        ? previousPlan.shots[previousIndex] : null;
+    const previousId = String(previousShot?.id ?? "").trim();
+    if (previousId) {
+        const matched = nextPlan.shots.findIndex(
+            (shot) => String(shot?.id ?? "").trim() === previousId,
+        );
+        if (matched >= 0) return matched;
+    }
+    return Math.min(previousIndex, nextPlan.shots.length - 1);
+}
+
+/** Compare every persisted Plan field except scene prompt text.
+ *
+ * Prompt broadcasts deliberately update their text field in place to preserve
+ * browser selection and undo. They must not, however, mark a newer Plan JSON
+ * as consumed when that JSON also changes a seed, length, scene order, context
+ * setting, or any other Plan data. */
+export function planHasNonPromptChanges(previousPlan, nextPlan) {
+    const withoutScenePrompts = (plan) => {
+        if (!plan || typeof plan !== "object" || Array.isArray(plan)) {
+            return plan;
+        }
+        return {
+            ...plan,
+            shots:Array.isArray(plan.shots) ? plan.shots.map((shot) => {
+                if (!shot || typeof shot !== "object" || Array.isArray(shot)) {
+                    return shot;
+                }
+                const copy = {...shot};
+                delete copy.prompt;
+                return copy;
+            }) : plan.shots,
+        };
+    };
+    return JSON.stringify(withoutScenePrompts(previousPlan))
+        !== JSON.stringify(withoutScenePrompts(nextPlan));
+}
+
 /** Transient UI coordination only: no selection state is added to the Plan or
  * workflow. Receivers verify that they currently resolve the same Plan node. */
 export function publishCompanionScene(source, planNode, sceneIndex) {

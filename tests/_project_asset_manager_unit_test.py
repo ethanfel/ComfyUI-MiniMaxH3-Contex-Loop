@@ -62,6 +62,8 @@ def main():
         "timestamped_video")
     assert "tagged_references" in (
         chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"])
+    assert "tagged_scene_options" not in (
+        chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"])
     assert chain.MiniMaxH3ProjectAssetManager.INPUT_TYPES()["optional"][
         "upscale_model"][1]["lazy"] is True
     assert "operation_json" in (

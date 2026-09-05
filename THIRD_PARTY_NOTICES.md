@@ -61,7 +61,7 @@ Guide-length and `target_start` placement behavior. `h3_audio_grid.py` adapts
 the same revision's exact 40 Hz PCM-grid helper so source-audio continuation
 cannot be shifted by a generic VAE wrapper's normal center crop. Local
 keyframe arbitration, latent Guide, audio-only and longer-audio continuity,
-future anchors, signed fractional audio placement, and legacy-core support
+signed fractional audio placement, and legacy-core support
 remain extensions of this loop pack.
 
 The experimental masked AV chain mode directly adapts that GPL-3.0 project's

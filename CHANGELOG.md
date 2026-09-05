@@ -1,8 +1,64 @@
 # Changelog
 
-Newest first. This file keeps release history out of the onboarding README.
+Newest first. The [README](README.md#changelog) keeps a short highlight reel;
+this file records the detailed changes.
 
-## Unreleased
+## v0.6.0 — Production context authoring and synchronized export
+
+### Release preparation
+
+- Rebuilt the 0.6 example catalog from named recipes and this release's node
+  definitions, rather than reserializing archived workflows. The 19 examples
+  have typed widget validation, required-input and bidirectional-link checks,
+  title-aware layout checks, and companion setup guides. Studio Plan outputs
+  are connected to Loop Start; the Carousel and Checkpoint Manager are included.
+  Older examples remain in `example_workflows/Archive/0.5/`.
+
+- Corrected release-workflow execution settings and switched maintained source
+  video examples to native VIDEO inputs. Bounded smoke renders exercised the
+  15 non-upscale examples; the test setup and its Ref2VA model-substitution
+  limits are recorded in [Workflow validation](tools/v06/README.md#layout-and-release-checks).
+  These checks are not a full-resolution quality or GPU-memory guarantee.
+
+- Added an experimental pixel-upscale backend and DLSS5 + USDU example, adapted
+  from **Illynir's** contribution. Pixel Current Scene decodes saved video
+  checkpoints one scene at a time; Pixel Conditioning uses the actual upscaled
+  image dimensions, rebuilds matching references at that size, and passes the
+  same images to the refiner without applying a second upscale. Image-only
+  segment saving preserves original audio and supports resume and assembly.
+  Pixel mode does not require or splice HQ latent continuity. CPU integration
+  tests cover geometry, audio, trimming, recursion, and resume; external
+  DLSS5/USDU GPU refinement remains untested. See the
+  [experimental workflow guide](<example_workflows/guides/Deferred Upscale - Pixel DLSS5 + USDU - EXPERIMENTAL - MiniMax H3 0.6.md>).
+
+- Added visible Carousel semantic-anchor size and mode controls, with an
+  **inherit** choice that delegates to downstream Tagged Scene Options without
+  requiring another Options wire into the Carousel. Older explicit values
+  remain readable. The controls can be hidden without changing their values.
+
+- Hardened asynchronous project switching, run restoration, and editorial
+  saving. Responses from an old run or detached workflow no longer update the
+  newly selected graph; saves serialize with revision checks so late responses
+  cannot overwrite newer edits. Switching or closing a project flushes pending
+  editorial changes. Unused stale Studio scene entries can be reconciled,
+  while entries carrying saved work remain protected.
+
+- Fixed source-audio preview and waveform mapping after scene-length changes,
+  including clearing the previous run's source preview on project switches.
+  Empty-scene navigation and seeking now preserve the selected scene and
+  playhead instead of jumping to a rendered or prompted scene.
+
+- Clear a selected final-cut alternate when its base scene is regenerated,
+  retaining the saved alternate revision without applying it to the wrong
+  generation lineage. Connected Review Gate previews now replace the redundant
+  silent Segment + Checkpoint preview.
+
+- Restored the concise README changelog, corrected the release banner from
+  NIGHTLY to 0.6, and updated the installation URL to the renamed Context-Loop
+  repository. Existing custom-node folder names and serialized node IDs do not
+  need to change.
+
+### Features and fixes
 
 - Fixed Windows mapped network drives used as ComfyUI input/output directories
   (#45). Root and artifact paths now resolve consistently before calculating
@@ -18,27 +74,101 @@ Newest first. This file keeps release history out of the onboarding README.
   Carousel directly instead of requiring a traversable downstream Ref2VA
   wrapper.
 
-- Fixed Project Asset Carousel refresh hydration on the published main line:
-  saved assets render immediately from the workflow catalog while the disk
-  catalog refreshes in the background, instead of flashing or remaining
-  empty after a workflow/browser reload.
+- Fixed Project Asset Carousel Run-name editing so pauses after a space,
+  underscore, or hyphen no longer let an asynchronous catalog refresh erase
+  the separator. The field now preserves the exact draft while typing and
+  commits its folder-safe project name on Enter or blur.
+
+- Fixed Checkpoint Manager hiding the safe rollback operation for an earlier
+  checkpoint that was already on the active branch. It now offers **Roll
+  active branch back**, retires later active pointers in one operation, and
+  keeps all immutable revisions. The deletion inspector now distinguishes
+  this non-destructive rollback from leaf-by-leaf permanent deletion.
+
+- Hardened Scene Prompt Editor and Rich Scene Prompt Editor workflow teardown.
+  Closing a workflow now cancels pending Plan propagation, prompt analysis,
+  history saves, timers, and listeners without repainting or mutating a graph
+  while ComfyUI is removing it. Cleanup failures are isolated so one editor
+  cannot prevent the remaining workflow nodes from closing.
+
+- Replaced the Project Asset Carousel's filtered browser suggestion popup with
+  a real project picker attached to the editable Run name field. The arrow now
+  always lists every existing project with its asset and unassigned counts,
+  while the text field still accepts a new Run name.
+
+- Fixed Review Gate delivery when Project Assets owns the Plan run name. The
+  hidden, stale Plan widget no longer rejects the exact pending review or
+  participates in run-name fallback matching. Report and original fix by
+  **Psylent_Gamer (4090)** via Banodoco, adapted to the current Plan/Modern Plan
+  routing implementation.
+
 - Fixed path-backed video and motion references in `restart_each_scene` mode
   being cropped or padded to the generated scene length. They now retain
   their own complete 24 fps reference duration; only `sequential` references
   use scene-sized timeline windows.
 
+- Extended **Export PNG Sequence** into an independent picture/audio exporter.
+  Its video and audio VAE sockets are now both optional: connect either one for
+  PNG-only or WAV-only output, or both for a continuous PNG sequence plus a
+  synchronized `audio.wav`. The WAV is decoded from the saved H3 audio latents,
+  preserves AV overlap ownership, and follows the same selected scene order and
+  latent-safe trims as the exported frames. Existing video-VAE connections and
+  output indexes remain valid; `audio_path` is appended as a new output.
+
+- Accelerated **Export PNG Sequence** with chunked batch conversion and up to
+  eight bounded parallel atomic PNG writers, inspired by JSON-Dynamic's Fast
+  Absolute Saver. New nodes default to lossless compression level 1; existing
+  saved compression values remain unchanged. The exporter now shows ComfyUI
+  progress, logs per-scene verify/load/GPU-decode/convert/save timings, updates
+  `export.partial.json` after every chunk, honors cancellation between chunks,
+  and caches successful checkpoint hashes by immutable hash, size, and mtime.
+  Strict verification remains available as an optional input.
+
 - Corrected the user-visible **Contex Loop** typo to **Context Loop** across
   node titles, Add Node categories, settings, documentation, branding, and
-  bundled workflow titles. Serialized node IDs, settings keys, and the public
-  repository slug remain unchanged for compatibility.
+  bundled workflow titles. Serialized node IDs and settings keys remain
+  unchanged for compatibility.
+
+- Fixed Review candidate acceptance and rerolls leaving Plan Studio and
+  prompt-editor companions on stale scene metadata. Selecting a 10x candidate
+  now refreshes the complete Plan—including seed, length, steps, context, and
+  scene order—while prompt-only edits retain their selection- and undo-safe
+  fast path. The shared companion module now has an explicit cache revision,
+  with safe fallbacks for partially refreshed browser sessions.
+
+- Added the multi-block **Picture Context Builder** to Plan Studio. Scene Context
+  now owns picture/audio totals, boundary implementation, and spatial proxy;
+  selecting 1–N picture blocks exposes every H3-native repartition through
+  ordered boundary selectors plus an independent earlier-scene source and
+  latent window for every block. Repeated sources are supported, audio stays
+  locked to its continuous predecessor path by default, and checkpoint,
+  resume, trim, review, and dependency metadata track every selected block.
+  Released one/two-block Plan fields remain a read-only compatibility path.
+
+- Added **MiniMax H3 Plan (Modern)** as a clean, opt-in replacement for the
+  original Plan node. It preserves the familiar vertical scene-column editor
+  and exact Plan output sockets, but organizes its controls into Project,
+  Canvas, Generation defaults, and Delivery while requiring Generation Profile
+  and exposing no legacy context/audio/continuation fallbacks. The original
+  Plan remains unchanged; its **Upgrade to Modern Plan…** action preserves
+  scenes, supported settings, placement, and graph connections. Plan Studio,
+  prompt editors, Review, reroll, Run/Checkpoint Managers, project assets, and
+  recovery archives recognize both Plan types.
+
+- Fixed zero-picture-context resume validation. When a visually new scene
+  carries only the preceding generated audio, strict history checks now ignore
+  that predecessor's unrelated incoming visual-boundary recipe while retaining
+  prompt/model/source identity and artifact-integrity checks. Resume errors now
+  report the consumed streams and selected scene's effective video/audio
+  context lengths.
 
 - Hardened the Manager-facing HTTP surface. Direct prompt optimization now
   uses a server-owned exact-origin allow-list and validates every redirect;
   custom or local providers require `H3_PROMPT_OPTIMIZER_ALLOWED_ORIGINS`.
-  Carousel imports can read only enumerated ComfyUI input or chain media;
-  Plan Studio browser media is confined to configured ComfyUI roots with
-  real-path/symlink checks; and host folder opening is limited to loopback
-  clients.
+  Carousel imports can read only enumerated ComfyUI input, project, or chain
+  media; Plan Studio browser media is confined to configured ComfyUI roots
+  with real-path/symlink checks; and host folder opening is limited to
+  loopback clients.
 
 - Composed visual context now supports two independently positioned native
   latent windows from the same saved scene. A split such as 5+34 can reuse one
@@ -90,27 +220,99 @@ Newest first. This file keeps release history out of the onboarding README.
 
 - Fixed Issue #38's remaining Scene 2 failure on installations where
   ComfyUI retains a compatible H3 payload wrapper after its temporary module
-  alias is reused or removed. Patch Priority now recovers that wrapper's
-  captured stock method from the function's own execution globals, allowing
-  the guarded Guide-audio plus Ref2VA-audio merge to take ownership without
-  requiring the user to remove a valid node pack. Unknown payload wrappers
-  remain refused.
+  alias is removed. Patch Priority now recovers that wrapper's captured stock
+  method from the function's own execution globals, allowing the guarded
+  Guide-audio plus Ref2VA-audio merge to take ownership without requiring the
+  user to remove a valid node pack. Unknown payload wrappers remain refused.
+
+- Fixed a selected final-cut ALT incorrectly retargeting later queues back to
+  its original scene. The server-side editorial record now owns whether an
+  alternate generation draft is armed; the hidden Plan Studio widget may only
+  update an already-armed matching draft and cannot resurrect one cleared by
+  Review. Selecting Original/ALT explicitly disarms that scene's draft, and
+  Plan Studio synchronizes the one-shot queue widget on every workflow load,
+  including Plans without chapters.
+
+- Fixed delayed and inconsistent workflow hydration. Project Asset Carousel
+  now paints its serialized catalog immediately while refreshing in the
+  background, and Plan Studio keeps a lightweight serialized presentation
+  cache so saved thumbnails, placements, and latent-safe trims appear on its
+  first render instead of snapping into place after the checkpoint scan.
+  Player transport now advances at the trimmed endpoint instead of continuing
+  through discarded media. Scene renaming is atomic, rejects duplicate IDs,
+  and migrates chapters, visual-context links, placements, trims, locks, and
+  alternate final-cut metadata so an ungenerated rename cannot hide a scene.
+
+- Plan Studio can now create a prompt-word alternate for an already accepted
+  scene. Queueing an enabled draft renders only that scene and saves an
+  immutable `editorial_alternate` revision without changing the active
+  generation checkpoint. Accepting it selects its picture for preview,
+  assembly, PNG export, and whole-chain latent finishing, while later scenes
+  continue to depend on the original take and final audio remains original.
+  The timeline marks selected clips `ALT`; Checkpoint Manager nests alternates
+  under their immutable base and distinguishes generation lineage from the
+  final-cut choice. Selected base/alternate revisions are deletion-protected.
+
+- Plan Studio can now shorten a rendered scene non-destructively at a
+  latent-safe endpoint. Its right edge and Scene panel expose only cuts shared
+  by H3's native video-latent cycle and the delivered 24 fps / 40 Hz audio
+  clock; the original complete checkpoint and scene movie remain untouched.
+  Continuation state, generated audio, standard assembly, PNG export, and the
+  Full-Chain Latent Video adapter use the shortened prefix. If an earlier cut
+  changes after dependent scenes were generated, those checkpoints are marked
+  stale and resume requires regeneration from the first affected scene instead
+  of silently mixing incompatible endpoints.
 
 - Fixed scene-2 continuation with simultaneous Ref2VA/source audio. On a
   partially native ComfyUI runtime that drops Guide audio when reference audio
   is also present, Chain now activates its marker-gated payload merge and uses
-  the retained internal Motion Context engine. The compatibility merge keeps
-  keyframe audio followed by reference audio in H3 layout order.
+  the retained internal Motion Context engine. The compatibility merge now
+  preserves keyframe audio followed by reference audio, matching H3 layout
+  order, instead of accidentally retaining only the reference-audio rows.
 
-- Completed the Checkpoint Manager chapter UI backport on `main`. **All
-  scenes** now renders one independent branch graph per chapter, chapter
-  headers collapse and remember their state per run, and chapter rows no
-  longer show inherited prior-scene placeholders.
+- Scene LoRA routing now grows with the workflow instead of exposing four
+  fixed branches. A new scheduler shows one empty LoRA A socket; connecting it
+  reveals B, then C, through Z. Plan Editor and Plan Studio offer only routes
+  connected to their scheduler plus a scene's already-saved route. Existing
+  A-D plans and scheduler links remain compatible, and every route stays lazy.
+
+- Run name now suggests existing live Asset Carousel projects. Choosing a
+  suggestion switches the Carousel and its connected Plan, while the same
+  field still accepts a new Run name and remains the only serialized source of
+  truth. Empty projects are included in the history; output-only H3 backups
+  remain available through Import instead of appearing as switch targets.
+
+- Project Asset Carousel can duplicate its complete asset project under a new
+  Run name. The copy keeps asset order, folders, roles, tags, lyrics, options,
+  reference slots, and independent project-owned media files plus their asset
+  recovery mirror; generated clips, checkpoints, assembled renders, previews,
+  and upload scratch files are deliberately excluded. Existing Run names are
+  never overwritten, and the source Carousel remains selected.
+
+- Made both scene prompt editors responsive while typing long prompts. Each
+  keystroke still updates the connected Plan value immediately, but expensive
+  Plan-card rebuilding, canvas redraw, companion broadcasting, and strict
+  schema analysis are now coalesced after a short idle interval and flushed on
+  blur, navigation, or removal. Consecutive keystrokes also avoid reparsing an
+  unchanged full Plan JSON.
 
 - Fixed Tagged Audio `source_timeline` identity validation for the shipped
   full-track workflow. Loop Start's route fingerprint and Tagged Audio's
   waveform-content fingerprint are now recognized as two identities of the
   same Source Timeline audio, while genuinely different tracks remain blocked.
+
+- Plan Studio Player now uses its preloaded media as a real second playback
+  buffer. At adjacent saved-scene boundaries the decoded video and separate
+  generated-audio elements are promoted immediately, the previous elements
+  become the following preload buffers, and the existing last-frame veil fades
+  only while the promoted player starts. This removes the redundant same-URL
+  reload pause without changing clips, editorial timing, or final assembly.
+
+- Project Asset Carousel can now import from another Run's live Carousel, not
+  only from recovery backups. The copy preserves the source role, tag,
+  reference options, and audio lyrics, receives an independent project-owned
+  media copy and catalog identity, and never modifies the source Run. Selecting
+  an Unassigned card binds the imported media to that slot instead.
 
 - Fixed Plan Studio transport synchronization. Ruler ticks, scrubbing, scene
   widths, and the red play line now use the same pixels-per-second scale, so
@@ -143,15 +345,26 @@ Newest first. This file keeps release history out of the onboarding README.
   Tagged Ref2VA's current `native_ref2va` widget and `refmod_sources` output so
   its controls no longer appear shifted after node updates.
 
-- Checkpoint Manager can delete an entire selected
-  `output/h3_chains/<run>` folder after showing its file, folder, and byte
-  impact. The action requires both a warning confirmation and the exact Run
+- Checkpoint Manager can now delete an entire selected
+  `output/h3_chains/<run>` folder. It previews the file, folder, and byte
+  impact, requires both an explicit warning confirmation and the exact Run
   name, then revalidates the folder snapshot immediately before deletion.
   Original assets under `input/h3_projects/<run>` are deliberately kept.
 
-- Restored Checkpoint Manager's missing `selectedChapterRange()` helper. The
-  frontend no longer throws during its initial busy-state calculation, so
-  saved runs and checkpoint choices populate normally again.
+- Semantic pictures now accept bare `#tag` as an untimed Qwen-only visual;
+  append `[time]` only when explicit approximate scene placement is wanted.
+  Prompt completion, reference conversion, rich chips, preflight, native
+  Ref2VA hybrid conditioning, and external RefMod hybrid conditioning share
+  the same syntax. `@tag` remains the native Ref2VA/RefMod namespace, and
+  neither `#` form creates a VAE reference.
+
+- Added optional **Lip-Sync Options** for Generation Profile's exact-source
+  audio mode. Scene audio can be encoded with discarded real-song pre-roll and
+  lookahead instead of artificial hard boundaries. An aligned isolated vocal
+  stem can drive a conservative 40 Hz voice gate so vocal regions remain exact
+  while instrumental gaps receive a configurable amount of denoising. The
+  options and stem fingerprint are stored in generation dependencies; leaving
+  the node disconnected preserves the previous hard-cut/full-freeze result.
 
 - Checkpoint Manager now adopts active checkpoints written before immutable
   revision sidecars were introduced. It recovers the original transaction id
@@ -160,8 +373,8 @@ Newest first. This file keeps release history out of the onboarding README.
   lineage without copying or rewriting media, latents, or active pointers.
 
 - Added **Generation Profile**, a two-control replacement for the cryptic Chain
-  Policy switches. Clear scene-continuity and audio choices include continuous
-  or fresh generated audio, source-guided generation, source soundtrack,
+  Policy switches. Clear scene-continuity and audio choices include Generate
+  audio, fresh per-scene audio, source-guided generation, source soundtrack,
   silence, and exact source-audio lip-sync. The former node remains compatible
   as deprecated **Manual Chain Policy (Legacy)**.
 
@@ -170,6 +383,19 @@ Newest first. This file keeps release history out of the onboarding README.
   restores the exact pixel position, cancels stale layout callbacks, and only
   reveals a scene after an explicit timeline selection; automatic restoration
   can no longer recursively grow or throw the scrollbar to either end.
+
+- Both prompt editors now discover tagged and Project Asset references through
+  the compact **Current Tagged Ref2VA Scene** node, just as they already did
+  through the original standalone Tagged Ref2VA wrapper.
+
+- Added a modern **Current Tagged Ref2VA Scene** composite that replaces the
+  visible Current Shot plus Tagged Ref2VA pair while reusing both established
+  execution paths internally. Its public outputs are only state, conditioning,
+  latent, and typed scene data. A separate versioned options node carries
+  reference/semantic/backend settings, and **Scene Data Extract** selects former
+  secondary outputs—including `refmod_sources`—with a concrete UI socket type.
+  The new route deliberately rejects the legacy 0.4 state contract and exposes
+  no legacy source-audio or blend socket; both original nodes remain unchanged.
 
 - Tagged Ref2VA now has an opt-in `external_refmod` conditioning backend for
   testing ComfyUI-MiniMaxH3Mod without duplicating native references. It keeps
@@ -274,6 +500,7 @@ Newest first. This file keeps release history out of the onboarding README.
   an earlier scene can no longer replace it with the predecessor preview; a new
   run of the same scene, the next scene, or an explicit checkpoint choice
   releases the pin normally.
+
 - Review Gate candidate polling no longer reloads an unchanged preview or
   jumps back to the newest take when a live candidate batch reaches its final
   review token. The selected take, playback position, and playing/paused state
@@ -290,8 +517,8 @@ Newest first. This file keeps release history out of the onboarding README.
   H3 de-rope adapter nodes, recover the exact AV clock, and save that recovered
   latent back into the normal chain. The same nodes still accept deferred
   Upscale Loop state. Inline continuity resolves the Plan's actual linear,
-  or non-linear visual-context source, and a recovered scene tail is protected
-  only when a later scene really consumes it.
+  non-linear, or composed visual-context source, and a recovered scene tail is
+  protected only when a later scene really consumes it.
 
 - Added ordered **Composed visual context** in Plan and Plan Studio. A
   continuation can assemble one native H3 context total from two saved scene
@@ -312,24 +539,14 @@ Newest first. This file keeps release history out of the onboarding README.
   same optional regular-output copy, filename, audio, and assembly controls.
   The former Upscale Merger remains as a deprecated compatibility wrapper.
 
-## v0.5.20 — Candidate review and flexible branches
-
-- Reworked multi-candidate review into a live carousel. Completed candidates
-  remain reviewable while later takes render, multiple alternatives can be
-  retained, and approving a saved take stops its speculative successor before
-  continuing from the selected immutable checkpoint.
-
-- Added per-scene non-linear visual context selection. A hard-cut scene may
-  reuse picture context from an earlier scene while generated-audio continuity
-  still follows the direct predecessor; resume verification now follows only
-  the visual and audio dependencies the scene actually consumes.
-
-- Expanded Checkpoint Manager recovery. Saved inactive branches can become
-  active again with their Plan settings restored, and compatible independent
-  candidates can be attributed to empty branch slots without regenerating or
-  duplicating their media.
-
-## v0.5.19 — Per-scene prompt authoring
+- Ported the strict authoring layer from the standalone H3 Prompt IDE into
+  both scene prompt editors. They now share Auto/T2VA/I2VA/FL2VA/L2VA/Ref2VA
+  schema selection, ordered-section diagnostics and repair, exact keyframe
+  alignment helpers, live word/character counts, and mode-aware completion.
+  Completion and rich presentation now also understand 12 shot markers,
+  multilingual dialogue markers, stable speaker IDs, `<scenetrans>`, and
+  `<cutoff>`; the Rich Scene Prompt Editor gained the same Plain/Rich source
+  toggle as the focused editor.
 
 - Reference insertion from the Scene Prompt Editor's top menu now preserves
   the last rich-text or plain-text selection, so a chosen reference replaces
@@ -354,6 +571,14 @@ Newest first. This file keeps release history out of the onboarding README.
   `@tag` and semantic `#tag[time]` syntax, and edit the semantic timestamp in
   a dedicated seconds field without rewriting the prompt by hand.
 
+- Split Qwen-only `#semantic[timestamp]` pictures from native H3 `@reference`
+  media. New Semantic Picture Anchor nodes feed one Semantic Anchor Bundle
+  with centralized scale/mode controls; the bundle connects once to Tagged
+  Ref2VA, Plan Studio, and Run Manager. Semantic pictures no longer consume
+  native picture/video/audio capacity, while their source loaders remain
+  recoverable through the saved-run asset manifest and their combined
+  incremental fingerprint remains resume-safe.
+
 - Added **MiniMax H3 Scene LoRA Scheduler**, a lazy per-scene MODEL router
   that deliberately does not load or patch LoRAs. Plan and Plan Studio expose
   Base plus LoRA A-D on every scene; each branch comes from ordinary ComfyUI
@@ -362,56 +587,19 @@ Newest first. This file keeps release history out of the onboarding README.
   deliberately excluded from checkpoint/resume verification, and Base remains
   absent from serialization for compatibility with existing plans.
 
-## v0.5.18 — Semantic anchors on the reference line
-
-- Split Qwen-only `#semantic[timestamp]` pictures from native H3 `@reference`
-  media. Semantic Picture Anchor nodes now feed the existing reference line
-  through one bundle, so semantic images do not consume native H3 reference
-  capacity and remain recoverable with the saved run.
-- Treat newly added or reordered semantic anchors as scene-neutral for saved
-  predecessors when they were not active in those scenes, preserving gradual
-  project construction without weakening resume validation for used refs.
-- Clarified the Run Manager reference socket so workflows without semantic
-  anchors are not told they must connect a semantic-specific input.
-
-## v0.5.12 — Persistent Plan-selected audio
-
-- A source track connected once at Loop Start is now materialized as a
-  path-backed run asset and carried through state, checkpoint revisions, and
-  reconstructed manifests.
-- Final assembly and the full-chain SeedVR2 adapter can keep
-  `audio_source=plan`: generated uses checkpointed H3 audio, source recovers
-  the saved upstream track, and none remains silent without downstream
-  rewiring.
-- Matching redundant legacy source-audio wires remain compatible, while older
-  manifests without the recovery descriptor retain their explicit fallback.
-
-## v0.5.11 — Plan Studio transport hardening
-
 - The bundled LBH 3D deferred-upscale workflow now leaves the pass-2 prompt
   override blank, preserving the exact compiled scene prompt by default. The
   former neutral replacement text remains available in the How To Run note
   for explicit copy/paste comparisons.
-- Moved Plan Studio checkpoint discovery off ComfyUI's event loop, added a
-  lightweight polling response, deduplicated preview builds, and stopped scene
-  selection from repeatedly reconstructing media players. Slow requests and
-  canceled preview clients now leave useful server diagnostics instead of
-  amplifying Windows transport stalls.
-
-## v0.5.10 — Compact upscale adapter
 
 - Hid the Upscale Adapter's provenance-only `recipe_json` in the default
   presentation. It remains serialized for resume validation and can be edited
   through **Show advanced H3 controls**.
 
-## v0.5.9 — Checkpoint branch selection repair
-
 - Fixed Checkpoint Manager branch clicks so the selected lineage is committed
   through the hidden Comfy widget callback and immediately available to
   `selected_manifest`. Branch headers now select their final revision, and
   the UI distinguishes the current selection from the saved active lineage.
-
-## v0.5.8 — Deferred upscale reference control
 
 - Added an inline **Upscale Reference + Prompt Override** on the existing
   `H3_TAGGED_REFERENCES` line. Connected Tagged refs replace the automatic
@@ -423,31 +611,11 @@ Newest first. This file keeps release history out of the onboarding README.
   geometry, while `match` refs remain canvas-aware and cache-v2 masters that
   were already rebuilt at pass-2 size are protected from double scaling.
 
-## v0.5.7 — MiniMax H3 tokenizer compatibility
-
 - Added a guarded compatibility backport for ComfyUI PR #15808. Older core
   builds now register MiniMax H3's seven released dialogue, cutoff, lyrics,
   and caption tokens on the MiniMax-only Qwen tokenizer; updated ComfyUI
   builds are detected and remain fully core-owned.
 
-## v0.5.6 — Simplified 0.5 release and deferred checkpoint upscaling
-
-- Ported the strict authoring layer from the standalone H3 Prompt IDE into
-  both scene prompt editors. They now share Auto/T2VA/I2VA/FL2VA/L2VA/Ref2VA
-  schema selection, ordered-section diagnostics and repair, exact keyframe
-  alignment helpers, live word/character counts, and mode-aware completion.
-  Completion and rich presentation now also understand 12 shot markers,
-  multilingual dialogue markers, stable speaker IDs, `<scenetrans>`, and
-  `<cutoff>`; the Rich Scene Prompt Editor gained the same Plain/Rich source
-  toggle as the focused editor.
-- Simplified the default 0.5 control surface without removing functionality.
-  Experimental transition recipes and source-audio grid alignment now stay
-  behind the existing **Show advanced H3 controls** action. The same disclosure
-  now covers Drift-Control wiring, Reference Video Fade tuning, boundary tone
-  matching, and scene-one color stabilization; already-linked sockets remain
-  visible for saved-workflow compatibility. Plan and Plan Studio retain their
-  click-to-open raw boundary controls, and Studio's experimental cut-window
-  diagnostic follows that disclosure.
 - Added an opt-in **Reference Video Fade** MODEL patch for native H3 Ref2VA
   video blocks. It keeps the complete 24 fps reference at full early
   influence, then applies a full-schedule half-cosine attention-value fade

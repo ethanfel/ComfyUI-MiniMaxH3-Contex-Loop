@@ -79,9 +79,17 @@ scene_range: blank
 
 To resume scene N, keep the original `run_name` and dependency settings, then
 set `start_clip: N`. The loop loads checkpoint N−1 and validates all completed
-predecessors. Editing scene N or later is safe; changing an earlier prompt,
+predecessors that the selected scene actually consumes. Editing scene N or
+later is safe; changing an earlier prompt,
 seed, timing, source waveform, Plan compatibility setting, or
 `generation_fingerprint` invalidates the dependent resume.
+
+A visually new scene can still consume the immediately previous generated
+audio when its video context is `0` but its audio context is positive. That
+audio-only edge validates the predecessor's prompt/model/source identity and
+saved artifacts, but ignores its unrelated incoming visual-boundary recipe.
+Set both scene video context and audio context to `0` (or select Visual Cut)
+for a completely independent scene.
 
 Loop Start's `verify_resume_history` switch is enabled by default. Disable it
 only when you intentionally want scene N to consume the existing saved scene
@@ -141,10 +149,11 @@ revisions are never included.
 
 ## Checkpoint Manager
 
-Connect the active Plan output to **MiniMax H3 Checkpoint Manager**. It passes
-the Plan through unchanged and never pauses execution, so it can stay between
-Plan and the next consumer. The connected Plan preselects its run; the run
-selector can inspect any other folder under `output/h3_chains`.
+Connect the active Plan to **MiniMax H3 Checkpoint Manager** when you want its
+run preselected or want **Load selected branch** to restore saved Plan values.
+The node outputs only `selected_manifest`; it is not a Plan pass-through and is
+normally kept beside the generation route. Its run selector can inspect any
+other folder under `output/h3_chains`.
 
 The manager groups immutable scene revisions into inferred branches. A revision
 can appear in more than one branch when it is their shared ancestor. Selecting
@@ -198,6 +207,29 @@ Deletion is deliberately one scene revision at a time:
 This first release does not bulk-delete branches. The leaf-first workflow makes
 the exact context consequences visible and avoids silently orphaning later
 checkpoints.
+
+### Alternate final-cut takes
+
+Use an alternate when one accepted scene needs a prompt-level visual correction
+but later scenes already depend on its original checkpoint.
+
+1. Open that scene in Plan Studio and expand **Alternate final-cut take**.
+2. Edit the alternate prompt and seed, then enable the draft.
+3. Queue normally. Loop Start renders only that scene.
+4. Approve the alternate in Review Gate.
+
+Acceptance selects the alternate picture for preview, assembly, PNG export,
+and whole-chain latent finishing. It does not replace the active generation
+checkpoint: later scenes keep their original visual/audio ancestry, and final
+audio for the corrected scene remains the original audio.
+
+Plan Studio marks the selection `ALT`. Checkpoint Manager nests the immutable
+alternate under its base take rather than drawing a new continuation branch.
+Choose **Original** in Plan Studio to restore the base picture at any time.
+
+An alternate must preserve the scene identity and duration. If a later scene
+exists, set the blend entering that scene to `0`: its saved overlap still shows
+the original base take, so assembly rejects a crossfade from an alternate.
 
 ### Whole-chain SeedVR2 finishing
 
@@ -543,11 +575,6 @@ bounded luma/saturation correction for each later scene. A correction is capped
 at six code values of luma and six percent of saturation, at half the measured
 strength.
 
-This remains experimental. On the simplified 0.5 surface, right-click Assemble
-and choose **Show advanced H3 controls** to reveal `color_stabilization` (and
-the experimental `boundary_tone_match` control) without changing their saved
-values or backend behavior.
-
 The exact join inherits the preceding scene's accepted correction. Starting
 after the retained overlap, that correction moves smoothly to the next scene's
 target over 72 frames. Consequently the option cannot introduce a new grade
@@ -575,12 +602,21 @@ relative to that output root, supports nested folders and the same date tokens,
 and may be empty to place the copy directly in `output/`. The existing
 `filename` value is used for both copies, and collisions are versioned.
 
-## Re-decode checkpoints to PNG
+## Re-decode checkpoints to PNG and WAV
 
-Connect a manifest and the original H3 video VAE to **Export PNG Sequence**. It
-verifies each safetensors checkpoint, decodes one scene at a time, removes the
-repeated overlap, and writes a continuous 8-bit RGB PNG sequence plus
-`export.json` under:
+Connect a manifest to **Export PNG Sequence + Audio**, then connect the original
+H3 video VAE, audio VAE, or both. Video-only writes PNGs, audio-only writes one
+continuous `audio.wav`, and both inputs produce a synchronized image sequence
+and soundtrack in the same folder. The WAV is decoded from the checkpointed H3
+audio latents, preserves the generated AV boundary ownership, and follows the
+same selected scene order and latent-safe trims as the gap-free PNG sequence.
+
+The node verifies each safetensors checkpoint, decodes one scene at a time,
+removes repeated overlap, converts small frame chunks to 8-bit RGB in one
+operation, and writes each chunk through bounded parallel atomic PNG workers.
+ComfyUI's progress bar covers verification, GPU decode, and saving. The server
+log reports verify, checkpoint-load, decode, conversion, and save timings. The
+deliverables and `export.json` are written under:
 
 ```text
 output/h3_chains/<run_name>/frames/<export_name>/
@@ -589,4 +625,15 @@ output/h3_chains/<run_name>/frames/<export_name>/
 PNG compression is lossless. Use the same VAE, ComfyUI version, precision, and
 decode settings for the closest reconstruction. The checkpointed latent is
 exact, but a new VAE decode is not guaranteed to be bit-identical to an older
-decode made under different settings.
+decode made under different settings. New nodes use compression level 1 and
+`save_workers = 0`, which automatically selects at most eight workers. Set the
+worker count to 1 for serial saving or raise it explicitly only when the output
+storage can sustain more concurrent writes.
+
+`checkpoint_verification = cached` still performs a complete SHA-256 check the
+first time. Later exports skip re-hashing only while the checkpoint's recorded
+hash, byte size, and nanosecond modification time all match. Select `strict` to
+re-hash every checkpoint on every export. During execution,
+`export.partial.json` is updated after every converted chunk and retained if the
+export fails or is interrupted; a successful export replaces it with
+`export.json`, including the effective settings and per-scene timings.

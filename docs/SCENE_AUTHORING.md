@@ -71,11 +71,11 @@ second prompt copy.
 - Live word/character counts stay in the footer. Both dedicated editors can
   switch between the ordinary prompt source and rich H3 token presentation;
   this changes presentation only, never Plan text.
-- `#picture[2.50s]` adds a scene-local Qwen semantic checkpoint when the
-  picture is supplied through Semantic Anchor Bundle. With the Bundle set to
-  `picture_storyboard`, it instead becomes a separate Qwen-only Picture plus
-  an approximate scene-relative timing instruction. It never consumes a
-  native H3 reference slot.
+- `#picture` adds an untimed Qwen-only semantic Picture when the picture is
+  supplied through Semantic Anchor Bundle. Add a time as
+  `#picture[2.50s]` for a scene-local Qwen checkpoint; with the Bundle set to
+  `picture_storyboard`, the time becomes an approximate prompt instruction.
+  Neither form consumes a native H3 reference slot.
 - `A−` and `A+` change persistent type size.
 - The node may sit inline before Loop Start or on an editor-only branch.
 

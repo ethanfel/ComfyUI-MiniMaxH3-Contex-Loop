@@ -222,8 +222,9 @@ VIDEO_RUN_GRID = (
     107, 90, 73, 56, 39, 22, 5, 1,
 )
 # These video-VAE runs also end on an integer 40 Hz audio-latent tick at
-# H3's native 24 fps. Masked AV continuation must use this stricter subset so
-# picture and sound protect exactly the same physical interval.
+# H3's native 24 fps. Masked continuation carrying predecessor audio must use
+# this stricter subset so picture and sound protect exactly the same physical
+# interval. Video-only AV diagnostics may use VIDEO_RUN_GRID from five frames.
 AV_RUN_GRID = tuple(
     frames for frames in VIDEO_RUN_GRID
     if (frames * int(AUDIO_HZ)) % FPS == 0
@@ -369,7 +370,11 @@ def _audio_tail_from_latent(latent, a_frames):
         raise ValueError("h3_motion_context: expected audio latent [B,C,2,T], "
                          "got shape %s" % (tuple(audio.shape),))
     total_t = int(audio.shape[-1])
-    frames = _pixel_frames(int(video.shape[2]))
+    authored_audio_frames = (latent.get("_h3_audio_context_frames")
+                             if isinstance(latent, dict) else None)
+    frames = (int(authored_audio_frames)
+              if authored_audio_frames is not None
+              else _pixel_frames(int(video.shape[2])))
     overhang = total_t - FRAME_RESCALE * frames
     if not (-0.5 < overhang < 0.5):
         _LOG.warning(
@@ -565,7 +570,6 @@ class MiniMaxH3MotionContext:
                 and audio_mode == "timeline"),
         )
         native_guides = guide_api == "native"
-
         video = _video_from_latent(latent)
         latent_t = int(video.shape[2])
         width = int(video.shape[4]) * 16

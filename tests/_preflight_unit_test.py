@@ -359,6 +359,14 @@ with tempfile.TemporaryDirectory() as temporary:
     ]
     assert semantic["scenes"][0]["references"][0]["tag"] == "replacement"
 
+    _prepared, bare_semantic = chain._preflight_chain(
+        semantic_plan("Use #replacement as an untimed semantic visual."),
+        tagged_references=tagged_picture)
+    assert bare_semantic["ok"] is True
+    assert bare_semantic["scenes"][0]["semantic_anchors"] == [
+        {"tag": "replacement", "timestamp_seconds": None},
+    ]
+
     dedicated_draft = chain.MiniMaxH3SemanticPictureAnchor().add(
         torch.zeros((1, 32, 32, 3)), "semantic_only")[0]
     dedicated_references = chain.MiniMaxH3SemanticAnchorBundle().bundle(

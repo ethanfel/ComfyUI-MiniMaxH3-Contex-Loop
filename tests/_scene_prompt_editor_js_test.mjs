@@ -112,7 +112,7 @@ assert.match(source, /makeRichToken\(part, partStart, partEnd\)/);
 assert.match(source, /popoverPinned/);
 assert.match(source, /taggedPictureReferenceMode/);
 assert.match(source, /h3sp-ref-mode/);
-assert.match(source, /Use semantic #tag\[time\]/);
+assert.match(source, /Use untimed Qwen-only #tag/);
 assert.match(source, /referenceButton\.addEventListener\("pointerdown", rememberPromptSelection\)/);
 assert.match(source, /document\.activeElement === state\.richEditor/);
 assert.match(source, /current\.slice\(0, insertionStart\)/);
@@ -129,6 +129,9 @@ assert.match(source, /richEditor\.addEventListener\("cut"/);
 assert.match(source, /PromptUndoHistory/);
 assert.match(source, /promptUndoDirection/);
 assert.match(source, /applyPromptUndo/);
+assert.match(source, /activeSceneIndexAfterRefresh/);
+assert.match(source, /ownsPromptHistoryTarget/);
+assert.match(source, /stopImmediatePropagation\(\)/);
 assert.match(source, /event\.inputType \|\| state\.richInputType/);
 assert.match(source, /promptUndoForScene\(shotId, text, \{external:true\}\)/);
 assert.match(source, /window\.setInterval\(\(\) => loadPlan\(false\), 500\)/);
@@ -159,5 +162,24 @@ assert.match(source, /removeEventListener\?\.\(\s*PROJECT_ASSET_CATALOG_CHANGED_
 assert.match(source, /const scrollTop = state\.richEditor\.scrollTop/);
 assert.match(source, /state\.richEditor\.scrollTop = scrollTop/);
 assert.match(source, /target\.focus\(\{preventScroll:true\}\)/);
+assert.match(source, /const PROMPT_SYNC_DELAY_MS = 140/);
+assert.match(source, /const PROMPT_ANALYSIS_DELAY_MS = 90/);
+assert.match(source, /writePlan\(status, \{deferEffects:true\}\)/);
+assert.match(source, /function flushPlanEffects\(\)/);
+assert.match(source, /state\.planWidget\.value = value/);
+assert.match(source, /window\.setTimeout\(\s*flushPlanEffects, PROMPT_SYNC_DELAY_MS/);
+assert.match(source, /liveValue !== state\.lastValue && !rebaseActivePromptOntoLivePlan\(\)/);
+assert.match(source, /textarea\.addEventListener\("blur", \(\) => \{\s*flushPlanEffects\(\)/);
+assert.match(source, /schedulePromptAnalysis\(\)/);
+const teardown = source.slice(
+    source.indexOf("node.onRemoved = function ()"),
+    source.indexOf("node._h3PromptCompanionSetActiveScene"),
+);
+assert.match(teardown, /state\.disposed = true/);
+assert.match(teardown, /state\.planSyncPending = null/);
+assert.match(teardown, /state\.history\.pendingDraft = null/);
+assert.doesNotMatch(teardown, /flushPlanEffects\(\)/);
+assert.doesNotMatch(teardown, /flushPromptAnalysis\(\)/);
+assert.doesNotMatch(teardown, /flushHistoryDraft\(\)/);
 
 console.log("H3 Scene Prompt companion: Plan synchronization and controls pass");

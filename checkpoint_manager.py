@@ -355,22 +355,33 @@ class CheckpointGraphManager:
 
         visual_frames = max(0, self._integer(record.get("context_length")))
         if visual_frames:
-            source_scene = self._integer(
-                segment.get("visual_context_source_scene"), scene - 1)
-            if source_scene == scene - 1 and not segment.get(
-                    "visual_context_source_revision"):
-                if parent_key in records:
-                    found.append(parent_key)
+            visual_blocks = segment.get("visual_context_blocks")
+            if isinstance(visual_blocks, list):
+                for block in visual_blocks:
+                    if not isinstance(block, dict):
+                        continue
+                    add(block.get("source_scene"),
+                        block.get("source_revision"),
+                        block.get("source_checkpoint_sha256"))
             else:
-                add(source_scene,
-                    segment.get("visual_context_source_revision"),
-                    segment.get("visual_context_source_checkpoint_sha256"))
-            lead_frames = max(0, self._integer(
-                segment.get("visual_context_lead_frames")))
-            if lead_frames:
-                add(segment.get("visual_context_lead_source_scene"),
-                    segment.get("visual_context_lead_source_revision"),
-                    segment.get("visual_context_lead_checkpoint_sha256"))
+                source_scene = self._integer(
+                    segment.get("visual_context_source_scene"), scene - 1)
+                if source_scene == scene - 1 and not segment.get(
+                        "visual_context_source_revision"):
+                    if parent_key in records:
+                        found.append(parent_key)
+                else:
+                    add(source_scene,
+                        segment.get("visual_context_source_revision"),
+                        segment.get(
+                            "visual_context_source_checkpoint_sha256"))
+                lead_frames = max(0, self._integer(
+                    segment.get("visual_context_lead_frames")))
+                if lead_frames:
+                    add(segment.get("visual_context_lead_source_scene"),
+                        segment.get("visual_context_lead_source_revision"),
+                        segment.get(
+                            "visual_context_lead_checkpoint_sha256"))
 
         dependency = record["_metadata"].get("scene_dependency")
         scopes = dependency.get("scopes") if isinstance(dependency, dict) else None
@@ -472,6 +483,12 @@ class CheckpointGraphManager:
                                 segment.get("prompt") or "").strip())[:240],
                         "prompt": str(segment.get("prompt") or
                                       segment.get("scene_prompt") or ""),
+                        "take_kind": str(segment.get("take_kind") or
+                                         "generation"),
+                        "alternate_of_revision": str(
+                            segment.get("alternate_of_revision") or "").lower(),
+                        "alternate_media_mode": str(
+                            segment.get("alternate_media_mode") or ""),
                         "_metadata": metadata,
                         "_metadata_path": metadata_path,
                         "_segment": segment,
@@ -534,6 +551,24 @@ class CheckpointGraphManager:
             for dependency_key in dependencies:
                 record["_dependencies"].append(dependency_key)
                 records[dependency_key]["_dependents"].append(key)
+
+        # An editorial alternate is not a lineage child, but its immutable
+        # files are meaningful only while the same-scene base revision still
+        # exists. Model that as a cleanup dependency so Checkpoint Manager
+        # requires deleting unused alternates before their base take.
+        for key, record in records.items():
+            if record.get("take_kind") != "editorial_alternate":
+                continue
+            base_key = (record["scene"], record["alternate_of_revision"])
+            base = records.get(base_key)
+            if base is None:
+                if not record["_lineage_issue"]:
+                    record["_lineage_issue"] = "missing alternate base"
+                continue
+            if base_key not in record["_dependencies"]:
+                record["_dependencies"].append(base_key)
+            if key not in base["_dependents"]:
+                base["_dependents"].append(key)
 
         try:
             review_names = os.listdir(review_dir) if os.path.isdir(
@@ -677,6 +712,8 @@ class CheckpointGraphManager:
         for key, candidate in records.items():
             if key[0] != scene or key == leaf_key or not candidate["ready"]:
                 continue
+            if candidate.get("take_kind") == "editorial_alternate":
+                continue
             if candidate["_parent"] == leaf_key:
                 continue
             if not self._attributable_without_predecessor(candidate):
@@ -752,8 +789,15 @@ class CheckpointGraphManager:
 
     def _public_graph(self, scan: dict[str, Any]) -> dict[str, Any]:
         records = scan["records"]
-        leaves = [key for key, record in records.items()
-                  if not record["_children"]]
+        lineage_keys = {
+            key for key, record in records.items()
+            if record.get("take_kind") != "editorial_alternate"
+        }
+        leaves = [
+            key for key in lineage_keys
+            if not any(child in lineage_keys
+                       for child in records[key]["_children"])
+        ]
         branch_paths = []
         memberships: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
         for leaf_key in leaves:
@@ -762,7 +806,8 @@ class CheckpointGraphManager:
             seen = set()
             while cursor in records and cursor not in seen:
                 seen.add(cursor)
-                path.append(cursor)
+                if cursor in lineage_keys:
+                    path.append(cursor)
                 cursor = records[cursor]["_parent"]
             path.reverse()
             leaf = records[leaf_key]
@@ -812,6 +857,8 @@ class CheckpointGraphManager:
             children = []
             for child_key in sorted(record["_children"]):
                 child = records[child_key]
+                if child.get("take_kind") == "editorial_alternate":
+                    continue
                 children.append({
                     "scene": child["scene"],
                     "scene_id": child["scene_id"],
@@ -828,7 +875,8 @@ class CheckpointGraphManager:
                 "predecessor_revision",
                 "predecessor_checkpoint_sha256", "checkpoint_sha256",
                 "continuation_mode", "context_length", "audio_context_length",
-                "compatibility", "prompt_preview", "prompt")}
+                "compatibility", "prompt_preview", "prompt", "take_kind",
+                "alternate_of_revision", "alternate_media_mode")}
             item.update({
                 "size_bytes": sum(part["size_bytes"] for part in artifacts),
                 "owned_size_bytes": sum(
@@ -857,6 +905,43 @@ class CheckpointGraphManager:
                     record["_metadata_path"], self.output_root),
             })
             public_records.append(item)
+        try:
+            editorial = self._read_json(os.path.join(
+                scan["run_dir"], "editorial.json"))
+            replacement_rows = editorial.get("replacements", [])
+        except (OSError, TypeError, ValueError, json.JSONDecodeError,
+                AttributeError):
+            replacement_rows = []
+        active_revisions = {
+            int(item["scene"]): str(item["revision"])
+            for item in public_records
+            if item["active"] and item["take_kind"] != "editorial_alternate"
+        }
+        selected_alternates = {
+            (self._integer(item.get("scene")),
+             str(item.get("alternate_revision") or "").lower())
+            for item in replacement_rows if isinstance(item, dict)
+            and str(item.get("base_revision") or "").lower() ==
+            active_revisions.get(self._integer(item.get("scene")), "")
+        }
+        by_key = {
+            (int(item["scene"]), str(item["revision"])): item
+            for item in public_records
+        }
+        for item in public_records:
+            if item["take_kind"] == "editorial_alternate":
+                item["used_in_final_cut"] = (
+                    (int(item["scene"]), str(item["revision"]))
+                    in selected_alternates)
+                base = by_key.get((
+                    int(item["scene"]), str(item["alternate_of_revision"])))
+                if base is not None:
+                    base.setdefault("alternates", []).append(item)
+        for item in public_records:
+            if item.get("alternates"):
+                item["alternates"].sort(key=lambda alternate: (
+                    not bool(alternate.get("used_in_final_cut")),
+                    str(alternate.get("created_at") or "")))
         scenes = []
         grouped: dict[int, list[dict[str, Any]]] = defaultdict(list)
         for item in public_records:
@@ -942,6 +1027,12 @@ class CheckpointGraphManager:
                 raise FileNotFoundError(
                     "Candidate scene %d revision %s is no longer available." %
                     (candidate_scene_number, candidate_token[:8]))
+            if (parent.get("take_kind") == "editorial_alternate" or
+                    candidate.get("take_kind") == "editorial_alternate"):
+                raise ValueError(
+                    "Picture-only editorial alternates cannot be attached to "
+                    "generation lineage. Select them in Plan Studio's final "
+                    "cut instead.")
             if not parent["ready"] or not candidate["ready"]:
                 raise ValueError(
                     "Both the target branch tip and candidate must have intact video and checkpoint files.")
@@ -1062,6 +1153,44 @@ class CheckpointGraphManager:
             dependents.sort(key=lambda item: (
                 not item["leaf"], -int(item["scene"]), item["revision"]))
             blockers = []
+            try:
+                editorial = self._read_json(os.path.join(
+                    scan["run_dir"], "editorial.json"))
+                active_revision = next((
+                    str(record.get("revision") or "").lower()
+                    for record in scan["records"].values()
+                    if int(record.get("scene", 0)) == scene_number
+                    and bool(record.get("active"))
+                    and str(record.get("take_kind") or "") !=
+                    "editorial_alternate"), "")
+                selected_in_cut = any(
+                    isinstance(item, dict)
+                    and self._integer(item.get("scene")) == scene_number
+                    and str(item.get("alternate_revision") or "").lower()
+                    == token
+                    and str(item.get("base_revision") or "").lower()
+                    == active_revision
+                    for item in editorial.get("replacements", []))
+                selected_base = any(
+                    isinstance(item, dict)
+                    and self._integer(item.get("scene")) == scene_number
+                    and str(item.get("base_revision") or "").lower() == token
+                    and str(item.get("base_revision") or "").lower()
+                    == active_revision
+                    for item in editorial.get("replacements", []))
+            except (OSError, TypeError, ValueError, json.JSONDecodeError,
+                    AttributeError):
+                selected_in_cut = False
+                selected_base = False
+            if selected_in_cut:
+                blockers.append(
+                    "This alternate is selected in the final cut. Restore the "
+                    "original take in Plan Studio before deleting it.")
+            if selected_base:
+                blockers.append(
+                    "This generation revision is the immutable base of the "
+                    "selected final-cut alternate. Restore the original take "
+                    "in Plan Studio before rolling it back.")
             later_active = sorted(
                 item["scene"] for item in scan["records"].values()
                 if (item["active"] and item["scene"] > scene_number and

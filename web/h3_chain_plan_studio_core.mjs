@@ -5,13 +5,78 @@ export function studioCheckpointSignature(runName, records) {
             scene: item?.scene,
             scene_id: item?.scene_id,
             ready: item?.ready,
+            continuation_stale: item?.continuation_stale,
+            continuation_stale_reason: item?.continuation_stale_reason,
             delivered_frames: item?.delivered_frames,
             video: item?.video,
             audio: item?.audio,
             preview_video: item?.preview_video,
             partial_video: item?.partial_video,
+            presentation_revision:item?.presentation_revision,
+            presentation_video:item?.presentation_video,
+            alternates:(Array.isArray(item?.alternates) ? item.alternates : [])
+                .map((alternate) => ({
+                    revision:alternate?.revision,
+                    base_revision:alternate?.base_revision,
+                    ready:alternate?.ready,
+                    prompt:alternate?.prompt,
+                    seed:alternate?.seed,
+                    used_in_final_cut:alternate?.used_in_final_cut,
+                    video:alternate?.video,
+                })),
         })),
     });
+}
+
+export function studioCheckpointCacheSnapshot(runName, records, editorial) {
+    const run = String(runName ?? "").trim();
+    if (!run) return null;
+    // The include_graph=false response is intentionally small and contains
+    // only media descriptors plus active/alternate revision presentation.
+    // Clone it so later response mutation cannot change serialized UI state.
+    try {
+        return JSON.parse(JSON.stringify({
+            version:1,
+            run_name:run,
+            checkpoints:Array.isArray(records) ? records : [],
+            editorial:editorial && typeof editorial === "object"
+                ? editorial : null,
+        }));
+    } catch (_error) {
+        return null;
+    }
+}
+
+export function restoreStudioCheckpointCache(value, runName) {
+    const requested = String(runName ?? "").trim();
+    if (!value || typeof value !== "object" || Array.isArray(value)
+            || Number(value.version) !== 1
+            || String(value.run_name ?? "").trim() !== requested
+            || !Array.isArray(value.checkpoints)) return null;
+    return studioCheckpointCacheSnapshot(
+        requested, value.checkpoints, value.editorial,
+    );
+}
+
+export function remapStudioEditorialSceneId(editorial, previousId, nextId) {
+    if (!editorial || typeof editorial !== "object") return editorial;
+    const previous = String(previousId ?? "");
+    const next = String(nextId ?? "");
+    if (!previous || !next || previous === next) return editorial;
+    for (const field of ["placements", "trims", "replacements"]) {
+        for (const item of Array.isArray(editorial[field]) ? editorial[field] : []) {
+            if (String(item?.scene_id ?? "") === previous) item.scene_id = next;
+        }
+    }
+    if (Array.isArray(editorial.locked_scene_ids)) {
+        editorial.locked_scene_ids = editorial.locked_scene_ids.map(
+            (sceneId) => String(sceneId) === previous ? next : sceneId,
+        );
+    }
+    if (String(editorial.alternate_draft?.scene_id ?? "") === previous) {
+        editorial.alternate_draft.scene_id = next;
+    }
+    return editorial;
 }
 
 export function matchingStudioCheckpoint(checkpoints, index, timingRow) {
@@ -87,8 +152,59 @@ function normalizedStartFrame(value) {
         ? Math.max(0, Math.min(864000, Math.round(frames))) : null;
 }
 
+export function studioLatentSafeOutFrames(rawFrames, deliveredFrames) {
+    const raw = Math.round(Number(rawFrames));
+    const delivered = Math.round(Number(deliveredFrames));
+    if (!Number.isInteger(raw) || !Number.isInteger(delivered)
+            || raw < 1 || delivered < 1 || delivered > raw) return [];
+    const technicalTrim = raw - delivered;
+    const boundaries = [];
+    let covered = 0;
+    let step = 0;
+    const framePerToken = [1, 4, 4, 4, 4];
+    while (covered < raw) {
+        covered += framePerToken[step % framePerToken.length];
+        step += 1;
+        if (covered > raw) break;
+        const out = covered - technicalTrim;
+        // A shortened cut must end on both a video-latent boundary and an
+        // integer 40 Hz audio interval measured from the delivered start.
+        if (out > 0 && out <= delivered && out % 3 === 0) boundaries.push(out);
+    }
+    // Keeping the original endpoint is always lossless even when its nominal
+    // 24/40 Hz duration lands between audio ticks; no tensor is sliced.
+    if (!boundaries.includes(delivered)) boundaries.push(delivered);
+    return boundaries.sort((left, right) => left - right);
+}
+
+export function studioNearestLatentSafeOutFrame(
+    rawFrames, deliveredFrames, requestedFrames,
+) {
+    const options = studioLatentSafeOutFrames(rawFrames, deliveredFrames);
+    if (!options.length) return Math.max(1, Math.round(Number(deliveredFrames) || 1));
+    const requested = Number(requestedFrames);
+    return options.reduce((best, candidate) => (
+        Math.abs(candidate - requested) < Math.abs(best - requested)
+            ? candidate : best
+    ), options[0]);
+}
+
+function editorialOutFrame(row, trims) {
+    const sceneId = String(row?.id ?? "");
+    const full = Math.max(
+        0, Math.round(Number(row?.deliveredFrames)
+            || (Number(row?.deliveredSeconds) || 0) * 24),
+    );
+    const trim = (Array.isArray(trims) ? trims : []).find(
+        (item) => String(item?.scene_id ?? "") === sceneId,
+    );
+    const requested = Math.round(Number(trim?.out_frame));
+    return Number.isInteger(requested) && requested > 0 && requested <= full
+        ? requested : full;
+}
+
 export function studioTimelineSegments(
-    rows, placements = [], workspaceEndFrame = null,
+    rows, placements = [], workspaceEndFrame = null, trims = [],
 ) {
     const scenes = Array.isArray(rows) ? rows : [];
     const bySceneId = new Map();
@@ -102,10 +218,7 @@ export function studioTimelineSegments(
     let naturalStartFrame = 0;
     scenes.forEach((row, sceneIndex) => {
         const sceneId = String(row?.id ?? "");
-        const durationFrames = Math.max(
-            0, Math.round(Number(row?.deliveredFrames) ||
-                (Number(row?.deliveredSeconds) || 0) * 24),
-        );
+        const durationFrames = editorialOutFrame(row, trims);
         const explicit = bySceneId.has(sceneId);
         orderedScenes.push({
             row, sceneIndex, sceneId, durationFrames, explicit,
@@ -220,14 +333,15 @@ export function studioEditorialSceneStartSeconds(segments, sceneIndex) {
 
 export function studioTimelineLayout(
     rows, viewportWidth, zoom = 1, placements = [], workspaceEndFrame = null,
+    trims = [],
 ) {
     const packedSceneSeconds = studioTimelineTotalSeconds(
-        studioTimelineSegments(rows),
+        studioTimelineSegments(rows, [], null, trims),
     );
-    const sceneSegments = studioTimelineSegments(rows, placements);
+    const sceneSegments = studioTimelineSegments(rows, placements, null, trims);
     const sceneEndSeconds = studioTimelineTotalSeconds(sceneSegments);
     const segments = studioTimelineSegments(
-        rows, placements, workspaceEndFrame,
+        rows, placements, workspaceEndFrame, trims,
     );
     const width = Math.max(1, Number(viewportWidth) || 1);
     const scale = Math.max(1, Math.min(6, Number(zoom) || 1));
@@ -294,6 +408,27 @@ export function locateStudioTimelineSegment(segments, seconds) {
         ...values.at(-1), index:Number(values.at(-1)?.sceneIndex),
         segmentIndex:values.length - 1, localSeconds:0,
         targetSeconds, totalSeconds,
+    };
+}
+
+export function studioPlayerSegmentClock(
+    segments, segmentKey, mediaSeconds, fps = 24,
+) {
+    const segment = (Array.isArray(segments) ? segments : []).find(
+        (candidate) => candidate?.key === segmentKey,
+    );
+    if (!segment || segment.kind !== "scene") return null;
+    const localSeconds = Math.max(0, Number(mediaSeconds) || 0);
+    const durationSeconds = Math.max(0, Number(segment.durationSeconds) || 0);
+    const tolerance = 1 / Math.max(1, (Number(fps) || 24) * 8);
+    return {
+        segment,
+        localSeconds:Math.min(durationSeconds, localSeconds),
+        timelineSeconds:Math.min(
+            Number(segment.endSeconds) || 0,
+            (Number(segment.startSeconds) || 0) + localSeconds,
+        ),
+        boundaryReached:localSeconds >= Math.max(0, durationSeconds - tolerance),
     };
 }
 
@@ -432,15 +567,16 @@ export function matchingStudioSourceScene(payload, index, timingRow) {
     return references.length ? item : null;
 }
 
-export function matchingStudioSourceAudio(payload, timingRows) {
+export function matchingStudioSourceAudio(
+    payload, timingRows, expectedRun = payload?.run_name,
+) {
     const audio = payload?.source_audio;
     if (!payload?.token || !audio?.available) return null;
-    const rows = Array.isArray(timingRows) ? timingRows : [];
-    const plannedFrames = rows.reduce(
-        (total, row) => total + Math.max(0, Number(row?.deliveredFrames) || 0),
-        0,
-    );
-    if (Number(audio.frame_count) !== plannedFrames) return null;
+    if (String(payload.run_name ?? "") !== String(expectedRun ?? "")) return null;
+    if (!Array.isArray(timingRows) || !timingRows.length) return null;
+    // This is the whole source file, not a render tied to the saved Plan's
+    // frame count. Length edits, trims and scene reordering only move the
+    // timeline windows over it; they must not disconnect the audio track.
     return audio;
 }
 
@@ -481,7 +617,16 @@ export function studioWaveformIntervalSamples(
         ((Number(startSeconds) || 0) + Math.max(0, Number(durationSeconds) || 0))
             * pointsPerSecond,
     ));
-    return samples.slice(start, end);
+    if (start >= samples.length) return [];
+    const interval = samples.slice(start, end);
+    // Keep seconds mapped to the same horizontal positions if a resized
+    // scene crosses the source end (or newly requested waveform coverage).
+    // Stretching the remaining samples across the entire card is misleading.
+    if (end > samples.length) {
+        interval.length = end - start;
+        interval.fill(0, samples.length - start);
+    }
+    return interval;
 }
 
 export function studioSourceSecond(reference, deliveredLocalSeconds, fps = 24) {
@@ -494,6 +639,7 @@ export function studioSourceSecond(reference, deliveredLocalSeconds, fps = 24) {
 
 export function h3StudioGridMarkers(
     rawFrames, contextFrames = 0, continuationMode = "guide",
+    preserveAudioPrefix = true,
 ) {
     const frames = Math.trunc(Number(rawFrames));
     const context = Math.trunc(Number(contextFrames));
@@ -518,16 +664,22 @@ export function h3StudioGridMarkers(
     if (avMode && Number.isInteger(context) && context > 0) {
         const latentIndex = (context - 5) / 17;
         const latentGrid = Number.isInteger(latentIndex) && latentIndex >= 0;
-        const exact = latentGrid && context % 3 === 0;
+        const audioAligned = context % 3 === 0;
+        const audioPreserved = Boolean(preserveAudioPrefix);
+        const exact = latentGrid && (!audioPreserved || audioAligned);
         const audioTicks = context * 5 / 3;
         av = {
             frames:context,
             latentGrid,
             exact,
+            audioAligned,
+            audioPreserved,
             audioTicks,
-            label:exact
-                ? `${context}f AV = ${audioTicks} audio ticks`
-                : `${context}f AV = ${audioTicks.toFixed(3)} audio ticks`,
+            label:audioPreserved
+                ? (audioAligned
+                    ? `${context}f AV = ${audioTicks} audio ticks`
+                    : `${context}f AV = ${audioTicks.toFixed(3)} audio ticks`)
+                : `${context}f video-only AV`,
         };
     }
 

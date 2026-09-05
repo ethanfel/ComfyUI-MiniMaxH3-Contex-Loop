@@ -67,8 +67,7 @@ const caseSensitiveRecords = [
     {kind:"picture", tag:"maison", token:"@maison", active:true},
 ];
 const caseSensitiveTokens = tokenizeRichPrompt(
-    "Use @Maison and @maison, but not @MAISON. "
-    + "Keep #Maison[1.00s] distinct from #maison[1.00s].",
+    "Use @Maison and @maison, but not @MAISON. Keep #Maison distinct from #maison.",
     caseSensitiveRecords,
 ).filter((item) => item.type === "reference");
 assert.equal(caseSensitiveTokens[0].record, caseSensitiveRecords[0]);
@@ -126,6 +125,9 @@ assert.match(source, /shared text-level undo survives later tag decoration/);
 assert.match(source, /PromptUndoHistory/);
 assert.match(source, /promptUndoDirection/);
 assert.match(source, /applyPromptUndo/);
+assert.match(source, /activeSceneIndexAfterRefresh/);
+assert.match(source, /ownsPromptHistoryTarget/);
+assert.match(source, /stopImmediatePropagation\(\)/);
 assert.match(source, /recordPromptReplacement/);
 assert.match(source, /promptUndoForScene\(shotId, text, \{external:true\}\)/);
 assert.match(source, /tokenizeRichPrompt/);
@@ -163,7 +165,7 @@ assert.match(source, /makeToken\(part, partStart, partEnd\)/);
 assert.match(source, /popoverPinned/);
 assert.match(source, /taggedPictureReferenceMode/);
 assert.match(source, /h3rp-ref-mode/);
-assert.match(source, /Use semantic #tag\[time\]/);
+assert.match(source, /Use untimed Qwen-only #tag/);
 assert.match(source, /refsButton\.addEventListener\("pointerdown", rememberPromptSelection\)/);
 assert.match(source, /document\.activeElement === state\.editor/);
 assert.match(source, /current\.slice\(0, insertionStart\)/);
@@ -203,5 +205,24 @@ assert.match(source, /removeEventListener\?\.\(\s*PROJECT_ASSET_CATALOG_CHANGED_
 assert.match(source, /const scrollTop = state\.editor\.scrollTop/);
 assert.match(source, /state\.editor\.scrollTop = scrollTop/);
 assert.match(source, /editor\.focus\(\{preventScroll:true\}\)/);
+assert.match(source, /const PROMPT_SYNC_DELAY_MS = 140/);
+assert.match(source, /const PROMPT_ANALYSIS_DELAY_MS = 90/);
+assert.match(source, /writePlan\("Saved to connected Plan", \{deferEffects:true\}\)/);
+assert.match(source, /function flushPlanEffects\(\)/);
+assert.match(source, /state\.planWidget\.value = value/);
+assert.match(source, /window\.setTimeout\(\s*flushPlanEffects, PROMPT_SYNC_DELAY_MS/);
+assert.match(source, /liveValue !== state\.lastValue && !rebaseActivePromptOntoLivePlan\(\)/);
+assert.match(source, /editor\.addEventListener\("blur", \(\) => \{\s*flushPlanEffects\(\)/);
+assert.match(source, /schedulePromptAnalysis\(\)/);
+const teardown = source.slice(
+    source.indexOf("node.onRemoved = function ()"),
+    source.indexOf("node._h3PromptCompanionSetActiveScene"),
+);
+assert.match(teardown, /state\.disposed = true/);
+assert.match(teardown, /state\.planSyncPending = null/);
+assert.match(teardown, /state\.history\.pendingDraft = null/);
+assert.doesNotMatch(teardown, /flushPlanEffects\(\)/);
+assert.doesNotMatch(teardown, /flushPromptAnalysis\(\)/);
+assert.doesNotMatch(teardown, /flushHistoryDraft\(\)/);
 
 console.log("H3 Rich Scene Prompt Editor: tokens, guides, previews, optimizer, and history pass");

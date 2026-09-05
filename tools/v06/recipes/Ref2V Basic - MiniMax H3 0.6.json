@@ -1,0 +1,584 @@
+{
+  "nodes": [
+    {
+      "key": "n1",
+      "type": "UNETLoader",
+      "settings": {
+        "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      },
+      "inputs": {},
+      "label": "Load Diffusion Model — H3 MODEL — REQUIRED"
+    },
+    {
+      "key": "n2",
+      "type": "CLIPLoader",
+      "settings": {
+        "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "type": "minimax",
+        "device": "default"
+      },
+      "inputs": {},
+      "label": "Load CLIP — H3 TEXT ENCODER"
+    },
+    {
+      "key": "n3",
+      "type": "KSamplerSelect",
+      "settings": {
+        "sampler_name": "res_multistep"
+      },
+      "inputs": {},
+      "label": "KSamplerSelect — Sampler algorithm"
+    },
+    {
+      "key": "n4",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+      },
+      "inputs": {},
+      "label": "Load VAE — H3 Video VAE"
+    },
+    {
+      "key": "n5",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+      },
+      "inputs": {},
+      "label": "Load VAE — H3 Audio VAE"
+    },
+    {
+      "key": "n6",
+      "type": "Note",
+      "settings": {
+        "text": "0.6 ORIGINAL REFERENCE EXAMPLE\n\nThe matching courier and greenhouse pictures were generated specifically for this catalog. They replace the old community demonstration assets and prompts."
+      },
+      "inputs": {},
+      "label": "0.6 ORIGINAL REFERENCE EXAMPLE"
+    },
+    {
+      "key": "n7",
+      "type": "MiniMaxH3ChainScenePromptEditor",
+      "settings": {},
+      "inputs": {
+        "plan": [
+          "n34",
+          "plan"
+        ]
+      },
+      "label": "MiniMax H3 Scene Prompt Editor — SCENE PROMPT EDITOR — STANDARD AUTHORING"
+    },
+    {
+      "key": "n8",
+      "type": "Note",
+      "settings": {
+        "text": "REF2VA PROMPT FORMAT — SIX SECTIONS\n\nKeep subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, and non_diegetic_music in that order. References define identity; the prompt defines the new action."
+      },
+      "inputs": {},
+      "label": "REF2VA PROMPT FORMAT — SIX SECTIONS"
+    },
+    {
+      "key": "n11",
+      "type": "MiniMaxH3ChainLoopStart",
+      "settings": {
+        "start_clip": 1,
+        "scene_range": "",
+        "verify_resume_history": true
+      },
+      "inputs": {
+        "plan": [
+          "n40",
+          "plan"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Start — LOOP START / RESUME"
+    },
+    {
+      "key": "n14",
+      "type": "MiniMaxH3ChainCurrent",
+      "settings": {
+        "align_audio_reference": false
+      },
+      "inputs": {
+        "state": [
+          "n11",
+          "state"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Current Shot — CURRENT REF2V SCENE — PROMPT / SEED / TIMING"
+    },
+    {
+      "key": "n15",
+      "type": "MiniMaxH3ChainAssemble",
+      "settings": {
+        "audio_source": "plan",
+        "filename": "t2v_normal_recovered_%date:yyyy-MM-dd%",
+        "audio_bitrate": 256,
+        "copy_to_output": false,
+        "output_subfolder": "",
+        "blend_schedule": "plan",
+        "boundary_tone_match": "off",
+        "color_stabilization": "off"
+      },
+      "inputs": {
+        "manifest": [
+          "n35",
+          "manifest"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Assemble — RECOVERY: ASSEMBLE WITHOUT RENDERING",
+      "mode": 2
+    },
+    {
+      "key": "n17",
+      "type": "RandomNoise",
+      "settings": {
+        "noise_seed": 0,
+        "control_after_generate": "fixed"
+      },
+      "inputs": {
+        "noise_seed": [
+          "n14",
+          "noise_seed"
+        ]
+      },
+      "label": "RandomNoise — Per-shot noise seed"
+    },
+    {
+      "key": "n18",
+      "type": "MiniMaxH3ReferenceToVideo",
+      "settings": {
+        "prompt": "subject_definitions:\n<Picture 1> defines <Subject 1>, the exact adult bicycle courier, including his face, mustard-yellow waterproof jacket, dark teal trousers, charcoal helmet, olive messenger bag, silver bicycle, kraft parcel, proportions, and photographic rendering.\n<Picture 2> defines the greenhouse delivery destination, including the glass structure, wooden potting table, dense plants, warm practical bulbs, wet floor reflections, and the same courier's end pose.\n<Subject 1> is the single courier shown by both references. Preserve his identity, clothing, equipment, and scale while allowing the described movement.\n\nsummary:\n[reference generation] One continuous delivery moves <Subject 1> from the wet greenhouse entrance in <Picture 1> toward the completed parcel placement in <Picture 2>.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - retain the exact face, adult age, body proportions, mustard jacket, teal trousers, helmet, bag, bicycle, and parcel across the complete shot.\n<Picture 1>: fully_preserved - use its courier identity, wardrobe, bicycle geometry, exterior doorway, wet paving, camera height, and cool daylight as the opening state.\n<Picture 2>: reference - use its potting table, plants, warm bulbs, interior reflections, and delivery pose as the destination; do not copy the final pose before the action reaches it.\n\ndetailed_description:\n[Shot 1] Begin at the greenhouse entrance with exactly one courier and one bicycle. He walks the bicycle through the open glass door, glances down to confirm the parcel, then turns toward the wooden potting table. The camera tracks laterally at walking speed with restrained handheld movement. He stops the bicycle with his left hand and sets the parcel on the clear corner of the table with his right hand. Preserve face, hands, clothing, bicycle structure, parcel dimensions, plant layout, lighting direction, and coherent reflections. End immediately after the parcel makes contact; no cut, duplicate subject, added customer, text, logo, or early freeze.\n\noverall_soundscape:\nLight rain on greenhouse glass, wet tire roll, a quiet freewheel tick, rubber soles, door hinge, jacket movement, muted ventilation, and soft cardboard contact on wood. Keep every sound synchronized and spatially plausible.\n\nnon_diegetic_music:\nNo non-diegetic music.",
+        "width": 896,
+        "height": 672,
+        "length": 243,
+        "ref_image_size": "match"
+      },
+      "inputs": {
+        "clip": [
+          "n2",
+          "CLIP"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ],
+        "audio_vae": [
+          "n5",
+          "VAE"
+        ],
+        "ref_images.ref_image_0": [
+          "n37",
+          "IMAGE"
+        ],
+        "ref_images.ref_image_1": [
+          "n38",
+          "IMAGE"
+        ],
+        "prompt": [
+          "n14",
+          "prompt"
+        ],
+        "width": [
+          "n14",
+          "width"
+        ],
+        "height": [
+          "n14",
+          "height"
+        ],
+        "length": [
+          "n14",
+          "length"
+        ]
+      },
+      "label": "MiniMax H3 Reference to Video — CORE REF2VA — TWO GLOBAL PICTURES"
+    },
+    {
+      "key": "n19",
+      "type": "MiniMaxH3ChainContext",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n14",
+          "state"
+        ],
+        "conditioning": [
+          "n18",
+          "positive"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ],
+        "latent": [
+          "n18",
+          "LATENT"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Context — AUTO CONTEXT — clip 1 bypass / continuation"
+    },
+    {
+      "key": "n20",
+      "type": "MiniMaxH3SigmaShift",
+      "settings": {
+        "shift_video": 12,
+        "shift_audio": 3
+      },
+      "inputs": {
+        "model": [
+          "n31",
+          "MODEL"
+        ]
+      }
+    },
+    {
+      "key": "n23",
+      "type": "BasicGuider",
+      "settings": {},
+      "inputs": {
+        "model": [
+          "n20",
+          "MODEL"
+        ],
+        "conditioning": [
+          "n19",
+          "conditioning"
+        ]
+      },
+      "label": "Basic Guider — Loop guider"
+    },
+    {
+      "key": "n24",
+      "type": "BasicScheduler",
+      "settings": {
+        "scheduler": "simple",
+        "steps": 20,
+        "denoise": 1
+      },
+      "inputs": {
+        "model": [
+          "n20",
+          "MODEL"
+        ],
+        "steps": [
+          "n14",
+          "steps"
+        ]
+      },
+      "label": "BasicScheduler — Per-shot scheduler steps"
+    },
+    {
+      "key": "n25",
+      "type": "SamplerCustomAdvanced",
+      "settings": {},
+      "inputs": {
+        "noise": [
+          "n17",
+          "NOISE"
+        ],
+        "guider": [
+          "n23",
+          "GUIDER"
+        ],
+        "sampler": [
+          "n3",
+          "SAMPLER"
+        ],
+        "sigmas": [
+          "n24",
+          "SIGMAS"
+        ],
+        "latent_image": [
+          "n19",
+          "latent"
+        ]
+      },
+      "label": "SamplerCustomAdvanced — H3 sampler — SINGLE LOOP BODY"
+    },
+    {
+      "key": "n26",
+      "type": "VAEDecode",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n25",
+          "output"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ]
+      },
+      "label": "VAE Decode — Decode current clip frames"
+    },
+    {
+      "key": "n27",
+      "type": "VAEDecodeAudio",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n25",
+          "output"
+        ],
+        "vae": [
+          "n5",
+          "VAE"
+        ]
+      },
+      "label": "VAE Decode Audio — Decode current clip audio"
+    },
+    {
+      "key": "n28",
+      "type": "MiniMaxH3LoopTrim",
+      "settings": {
+        "trim_frames": 0,
+        "fps": 24,
+        "match_tail": true,
+        "retain_overlap_frames": 0
+      },
+      "inputs": {
+        "images": [
+          "n26",
+          "IMAGE"
+        ],
+        "audio": [
+          "n27",
+          "AUDIO"
+        ],
+        "trim_frames": [
+          "n19",
+          "trim_frames"
+        ],
+        "state": [
+          "n14",
+          "state"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Trim — TRIM CONTEXT / AUTO-RESOLVE SCENE BLEND"
+    },
+    {
+      "key": "n29",
+      "type": "MiniMaxH3ChainSegmentSave",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n14",
+          "state"
+        ],
+        "images": [
+          "n28",
+          "images"
+        ],
+        "sampled_latent": [
+          "n25",
+          "output"
+        ],
+        "audio": [
+          "n28",
+          "audio"
+        ],
+        "images_with_overlap": [
+          "n28",
+          "images_with_overlap"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Segment + Checkpoint — SAVE DELIVERED + BLEND-READY SEGMENTS"
+    },
+    {
+      "key": "n30",
+      "type": "MiniMaxH3ChainAssemble",
+      "settings": {
+        "audio_source": "plan",
+        "filename": "t2v_normal_%date:yyyy-MM-dd%",
+        "audio_bitrate": 256,
+        "copy_to_output": false,
+        "output_subfolder": "",
+        "blend_schedule": "plan",
+        "boundary_tone_match": "off",
+        "color_stabilization": "off"
+      },
+      "inputs": {
+        "manifest": [
+          "n32",
+          "manifest"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Assemble — FINAL ASSEMBLY — 5-FRAME VISUAL BLEND"
+    },
+    {
+      "key": "n31",
+      "type": "ModelAttentionBackend",
+      "settings": {
+        "attention": "pytorch attention"
+      },
+      "inputs": {
+        "model": [
+          "n1",
+          "MODEL"
+        ]
+      },
+      "label": "ModelAttentionBackend — COMFY KITCHEN ATTENTION"
+    },
+    {
+      "key": "n32",
+      "type": "MiniMaxH3ChainLoopEnd",
+      "settings": {
+        "between_scene_cleanup": "off"
+      },
+      "inputs": {
+        "flow": [
+          "n11",
+          "flow"
+        ],
+        "state": [
+          "n14",
+          "state"
+        ],
+        "images": [
+          "n28",
+          "images"
+        ],
+        "sampled_latent": [
+          "n25",
+          "output"
+        ],
+        "segment": [
+          "n39",
+          "segment"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop End — LOOP END — ADVANCE REF2V SCENE"
+    },
+    {
+      "key": "n33",
+      "type": "Note",
+      "settings": {
+        "text": "REF2V 0.6 QUICK START\n\nCopy both courier PNGs to ComfyUI/input. The two picture references are activated as courier_arrival and greenhouse_delivery. Edit the Plan, then queue and approve each checkpointed scene."
+      },
+      "inputs": {},
+      "label": "REF2V 0.6 QUICK START"
+    },
+    {
+      "key": "n34",
+      "type": "MiniMaxH3ChainPlanModern",
+      "settings": {
+        "plan_json": "{\n  \"defaults\": {\n    \"steps\": 20\n  },\n  \"shots\": [\n    {\n      \"id\": \"reference_delivery\",\n      \"prompt\": \"subject_definitions:\\n<Picture 1> defines <Subject 1>, the exact adult bicycle courier, including his face, mustard-yellow waterproof jacket, dark teal trousers, charcoal helmet, olive messenger bag, silver bicycle, kraft parcel, proportions, and photographic rendering.\\n<Picture 2> defines the greenhouse delivery destination, including the glass structure, wooden potting table, dense plants, warm practical bulbs, wet floor reflections, and the same courier's end pose.\\n<Subject 1> is the single courier shown by both references. Preserve his identity, clothing, equipment, and scale while allowing the described movement.\\n\\nsummary:\\n[reference generation] One continuous delivery moves <Subject 1> from the wet greenhouse entrance in <Picture 1> toward the completed parcel placement in <Picture 2>.\\n\\nretention_analysis:\\n<Subject 1> (appears in [Shot 1]): fully_preserved - retain the exact face, adult age, body proportions, mustard jacket, teal trousers, helmet, bag, bicycle, and parcel across the complete shot.\\n<Picture 1>: fully_preserved - use its courier identity, wardrobe, bicycle geometry, exterior doorway, wet paving, camera height, and cool daylight as the opening state.\\n<Picture 2>: reference - use its potting table, plants, warm bulbs, interior reflections, and delivery pose as the destination; do not copy the final pose before the action reaches it.\\n\\ndetailed_description:\\n[Shot 1] Begin at the greenhouse entrance with exactly one courier and one bicycle. He walks the bicycle through the open glass door, glances down to confirm the parcel, then turns toward the wooden potting table. The camera tracks laterally at walking speed with restrained handheld movement. He stops the bicycle with his left hand and sets the parcel on the clear corner of the table with his right hand. Preserve face, hands, clothing, bicycle structure, parcel dimensions, plant layout, lighting direction, and coherent reflections. End immediately after the parcel makes contact; no cut, duplicate subject, added customer, text, logo, or early freeze.\\n\\noverall_soundscape:\\nLight rain on greenhouse glass, wet tire roll, a quiet freewheel tick, rubber soles, door hinge, jacket movement, muted ventilation, and soft cardboard contact on wood. Keep every sound synchronized and spatially plausible.\\n\\nnon_diegetic_music:\\nNo non-diegetic music.\",\n      \"length\": 243,\n      \"steps\": 20,\n      \"seed\": \"6101\"\n    },\n    {\n      \"id\": \"reference_confirmation\",\n      \"prompt\": \"subject_definitions:\\n<Picture 1> preserves the exact identity, clothing, bicycle, parcel, exterior weather, and entrance geography established before the boundary.\\n<Picture 2> defines the same greenhouse interior, potting table, plants, warm bulbs, and final delivery area.\\n<Subject 1> is the same single adult courier carried by the incoming H3 Motion Context and both references.\\n\\nsummary:\\n[reference generation] The uninterrupted delivery continues inside the greenhouse after the carried overlap and ends with the courier calmly confirming the parcel placement.\\n\\nretention_analysis:\\n<Subject 1> (appears in [Shot 1]): fully_preserved - preserve the exact face, mustard jacket, teal trousers, helmet, bag, body proportions, bicycle, and motion phase inherited from context.\\n<Picture 1>: reference - retain its cool exterior light and entrance geometry only where still visible behind the courier.\\n<Picture 2>: fully_preserved - retain the greenhouse table, plant arrangement, warm practical lights, reflections, parcel position, and photographic rendering.\\n\\ndetailed_description:\\n[Shot 1] Continue directly from the incoming H3 Motion Context. The carried opening overlap already contains the threshold crossing; begin new action only after it and never reset the stride. The courier rolls the same bicycle beside the potting table, steadies it with his left hand, and places the kraft parcel on the dry corner with his right hand. He checks the label area without showing readable text, then gives a small satisfied smile. Keep exactly one person and one bicycle, stable hands, coherent wheels, continuous camera direction, and consistent light. No cut, duplicate, wardrobe change, or early freeze.\\n\\noverall_soundscape:\\nContinue rain-muted greenhouse ambience, footsteps, tire roll, freewheel ticks, clothing movement, ventilation, and the soft parcel contact without restarting any sound at the scene boundary.\\n\\nnon_diegetic_music:\\nNo non-diegetic music.\",\n      \"length\": 243,\n      \"steps\": 20,\n      \"seed\": \"6102\"\n    }\n  ]\n}",
+        "run_name": "ref2v_basic_minimax_h3_0_6_json",
+        "generation_fingerprint": "h3-v06-release-example",
+        "width": 896,
+        "height": 672,
+        "encode_mode": "video",
+        "crop": "disabled",
+        "default_duration_seconds": 10.0,
+        "default_steps": 20,
+        "base_seed": 0,
+        "segment_crf": 20,
+        "video_blend_frames": 0
+      },
+      "inputs": {
+        "chain_policy": [
+          "n41",
+          "chain_policy"
+        ]
+      },
+      "label": "MiniMax H3 Production Plan — 0.6 SCENE COLUMNS"
+    },
+    {
+      "key": "n35",
+      "type": "MiniMaxH3ChainManifestLoad",
+      "settings": {},
+      "inputs": {
+        "plan": [
+          "n7",
+          "plan"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Load Manifest — RECOVERY: LOAD ALL SAVED CLIPS",
+      "mode": 2
+    },
+    {
+      "key": "n36",
+      "type": "Note",
+      "settings": {
+        "text": "The two amber recovery nodes are MUTED by default.\n\nIf all segments finished but final assembly did not, mute the main green Assemble node, enable both recovery nodes, and queue. They validate every SHA-256 checkpoint pair and assemble without rerendering the completed clips.\n\nFor an interrupted generation, leave recovery muted and set Loop Start's start_clip to the first unfinished clip."
+      },
+      "inputs": {},
+      "label": "Note — RECOVERY / ASSEMBLE LATER"
+    },
+    {
+      "key": "n37",
+      "type": "LoadImage",
+      "settings": {
+        "image": "h3_v06_courier_greenhouse_arrival.png"
+      },
+      "inputs": {},
+      "label": "Load Image — 0.6 COURIER ARRIVAL"
+    },
+    {
+      "key": "n38",
+      "type": "LoadImage",
+      "settings": {
+        "image": "h3_v06_courier_greenhouse_delivery.png"
+      },
+      "inputs": {},
+      "label": "Load Image — 0.6 GREENHOUSE DELIVERY"
+    },
+    {
+      "key": "n39",
+      "type": "MiniMaxH3ChainReview",
+      "settings": {
+        "enabled": true,
+        "play_notification_sound": false,
+        "auto_continue_timeout_minutes": 0,
+        "unload_models_while_waiting": false,
+        "assemble_partial_on_stop": true,
+        "partial_audio_source": "checkpointed",
+        "candidate_count": 1,
+        "review_each_candidate": false
+      },
+      "inputs": {
+        "state": [
+          "n14",
+          "state"
+        ],
+        "segment": [
+          "n29",
+          "segment"
+        ],
+        "audio": [
+          "n28",
+          "audio"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Review Gate — REVIEW GATE — APPROVE / EDIT+RETRY / REROLL / STOP"
+    },
+    {
+      "key": "n40",
+      "type": "MiniMaxH3ChainPreflight",
+      "settings": {
+        "start_clip": 1,
+        "scene_range": "",
+        "verify_resume_history": true
+      },
+      "inputs": {
+        "plan": [
+          "n7",
+          "plan"
+        ]
+      },
+      "label": "MiniMax H3 Chain Preflight — 0.6 PREFLIGHT — BLOCKS BEFORE MODELS"
+    },
+    {
+      "key": "n41",
+      "type": "MiniMaxH3GenerationProfile",
+      "settings": {
+        "scene_continuity": "Visual continuity",
+        "audio_profile": "Generate audio"
+      },
+      "inputs": {},
+      "label": "MiniMax H3 Generation Profile — RELEASE DEFAULTS"
+    }
+  ]
+}

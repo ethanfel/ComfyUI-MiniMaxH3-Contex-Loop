@@ -24,11 +24,6 @@ During early denoising, native reference-video rows remain at full value
 strength. After `fade_start`, their value contribution follows a half-cosine
 curve toward `end_strength`:
 
-Its tuning widgets are collapsed on the simplified 0.5 surface. Right-click
-the node and choose **Show advanced H3 controls** to select a preset, tune the
-custom curve, or reveal an unconnected full-schedule input. Existing connected
-schedule sockets remain visible when a saved workflow is loaded.
-
 ```text
 strength = 1                                      progress <= fade_start
 u = (progress - fade_start) / (1 - fade_start)

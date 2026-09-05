@@ -1,0 +1,1741 @@
+{
+  "last_node_id": 27,
+  "last_link_id": 48,
+  "nodes": [
+    {
+      "id": 2,
+      "type": "MiniMaxH3ChainCheckpointManager",
+      "pos": [
+        -1920,
+        416
+      ],
+      "size": [
+        1376,
+        1088
+      ],
+      "flags": {},
+      "order": 3,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "selected_manifest",
+          "type": "H3_CHAIN_MANIFEST",
+          "links": [
+            2
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-minimaxh3-contex-loop",
+        "Node name for S&R": "MiniMaxH3ChainCheckpointManager"
+      },
+      "widgets_values": [
+        ""
+      ]
+    },
+    {
+      "id": 3,
+      "type": "MiniMaxH3ChainUpscaleAdapter",
+      "pos": [
+        -448,
+        416
+      ],
+      "size": [
+        544,
+        448
+      ],
+      "flags": {},
+      "order": 9,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "source_manifest",
+          "type": "H3_CHAIN_MANIFEST",
+          "link": 2
+        }
+      ],
+      "outputs": [
+        {
+          "name": "flow",
+          "type": "H3_CHAIN_UPSCALE_FLOW",
+          "links": [
+            4
+          ]
+        },
+        {
+          "name": "state",
+          "type": "H3_CHAIN_UPSCALE_STATE",
+          "links": [
+            3
+          ]
+        },
+        {
+          "name": "source_manifest",
+          "type": "H3_CHAIN_MANIFEST",
+          "links": null
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ChainUpscaleAdapter"
+      },
+      "widgets_values": [
+        "h3_lbh_3d",
+        "h3_latent",
+        "{\"upscaler\":\"LBH 3D\",\"target_megapixels\":1.5,\"pass2_steps\":2,\"denoise\":0.24,\"conditioning\":\"latent_sync\",\"audio_denoise\":0}",
+        1,
+        0,
+        false,
+        18
+      ]
+    },
+    {
+      "id": 4,
+      "type": "MiniMaxH3ChainUpscaleCurrent",
+      "pos": [
+        416,
+        -320
+      ],
+      "size": [
+        544,
+        672
+      ],
+      "flags": {},
+      "order": 11,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "state",
+          "type": "H3_CHAIN_UPSCALE_STATE",
+          "link": 3
+        }
+      ],
+      "outputs": [
+        {
+          "name": "state",
+          "type": "H3_CHAIN_UPSCALE_STATE",
+          "links": [
+            5,
+            6,
+            16,
+            45
+          ]
+        },
+        {
+          "name": "source_latent",
+          "type": "LATENT",
+          "links": null
+        },
+        {
+          "name": "source_video_latent",
+          "type": "LATENT",
+          "links": [
+            21,
+            42
+          ]
+        },
+        {
+          "name": "source_audio_latent",
+          "type": "LATENT",
+          "links": [
+            38
+          ]
+        },
+        {
+          "name": "clip_index",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "clip_count",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "prompt",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "seed",
+          "type": "INT",
+          "links": [
+            20
+          ]
+        },
+        {
+          "name": "trim_frames",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "raw_frames",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "delivered_frames",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "source_audio",
+          "type": "AUDIO",
+          "links": null
+        },
+        {
+          "name": "previous_upscaled_frames",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "previous_upscaled_latent",
+          "type": "LATENT",
+          "links": null
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ChainUpscaleCurrent"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 5,
+      "type": "UNETLoader",
+      "pos": [
+        -1824,
+        -384
+      ],
+      "size": [
+        352,
+        96
+      ],
+      "flags": {},
+      "order": 0,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            7
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "UNETLoader"
+      },
+      "widgets_values": [
+        "MiniMax-H3/minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "default"
+      ]
+    },
+    {
+      "id": 6,
+      "type": "ModelAttentionBackend",
+      "pos": [
+        -1408,
+        -384
+      ],
+      "size": [
+        288,
+        64
+      ],
+      "flags": {},
+      "order": 8,
+      "mode": 4,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            9
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.31.0",
+        "Node name for S&R": "ModelAttentionBackend"
+      },
+      "widgets_values": [
+        "comfy kitchen attention"
+      ]
+    },
+    {
+      "id": 8,
+      "type": "MiniMaxH3SigmaShift",
+      "pos": [
+        -704,
+        -384
+      ],
+      "size": [
+        320,
+        160
+      ],
+      "flags": {},
+      "order": 12,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 9
+        }
+      ],
+      "outputs": [
+        {
+          "name": "MODEL",
+          "type": "MODEL",
+          "links": [
+            10,
+            11,
+            12
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "MiniMaxH3SigmaShift"
+      },
+      "widgets_values": [
+        12,
+        3
+      ]
+    },
+    {
+      "id": 9,
+      "type": "CLIPLoader",
+      "pos": [
+        -1824,
+        -160
+      ],
+      "size": [
+        352,
+        128
+      ],
+      "flags": {},
+      "order": 1,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "CLIP",
+          "type": "CLIP",
+          "links": [
+            13
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "CLIPLoader"
+      },
+      "widgets_values": [
+        "MiniMax-H3/qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "minimax",
+        "default"
+      ]
+    },
+    {
+      "id": 10,
+      "type": "VAELoader",
+      "pos": [
+        -1824,
+        0
+      ],
+      "size": [
+        352,
+        96
+      ],
+      "flags": {},
+      "order": 2,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VAE",
+          "type": "VAE",
+          "links": [
+            15,
+            48
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "VAELoader"
+      },
+      "widgets_values": [
+        "MiniMaw-H3/minimax_h3_video_vae_fp16.safetensors"
+      ]
+    },
+    {
+      "id": 27,
+      "type": "MiniMaxH3UpscaleReferencePromptOverride",
+      "pos": [
+        1024,
+        480
+      ],
+      "size": [
+        544,
+        256
+      ],
+      "flags": {},
+      "order": 13,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "prompt_override",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt_override"
+          },
+          "link": null
+        },
+        {
+          "name": "disabled_tags",
+          "type": "STRING",
+          "widget": {
+            "name": "disabled_tags"
+          },
+          "link": null
+        },
+        {
+          "name": "references",
+          "type": "H3_TAGGED_REFERENCES",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "references",
+          "type": "H3_TAGGED_REFERENCES",
+          "links": [
+            46
+          ]
+        },
+        {
+          "name": "prompt_override",
+          "type": "STRING",
+          "links": [
+            47
+          ]
+        },
+        {
+          "name": "reference_fingerprint",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3UpscaleReferencePromptOverride"
+      },
+      "widgets_values": [
+        "",
+        ""
+      ],
+      "color": "#346434",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 11,
+      "type": "MiniMaxH3ChainUpscaleReferenceConditioning",
+      "pos": [
+        1024,
+        128
+      ],
+      "size": [
+        544,
+        320
+      ],
+      "flags": {},
+      "order": 14,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "state",
+          "type": "H3_CHAIN_UPSCALE_STATE",
+          "link": 16
+        },
+        {
+          "name": "clip",
+          "type": "CLIP",
+          "link": 13
+        },
+        {
+          "name": "missing_cache",
+          "type": "COMBO",
+          "widget": {
+            "name": "missing_cache"
+          },
+          "link": null
+        },
+        {
+          "name": "motion_ref_mode",
+          "type": "COMBO",
+          "widget": {
+            "name": "motion_ref_mode"
+          },
+          "link": null
+        },
+        {
+          "name": "target_video_latent",
+          "type": "LATENT",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "video_vae",
+          "type": "VAE",
+          "link": 48,
+          "shape": 7
+        },
+        {
+          "name": "prompt_override",
+          "type": "STRING",
+          "widget": {
+            "name": "prompt_override"
+          },
+          "link": 47
+        },
+        {
+          "name": "tagged_references",
+          "type": "H3_TAGGED_REFERENCES",
+          "link": 46,
+          "shape": 7
+        },
+        {
+          "name": "audio_vae",
+          "type": "VAE",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "override_ref_image_size",
+          "type": "COMBO",
+          "widget": {
+            "name": "override_ref_image_size"
+          },
+          "link": null
+        },
+        {
+          "name": "override_reference_policy",
+          "type": "COMBO",
+          "widget": {
+            "name": "override_reference_policy"
+          },
+          "link": null
+        }
+      ],
+      "outputs": [
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "links": [
+            25
+          ]
+        },
+        {
+          "name": "compiled_prompt",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "reference_cache_used",
+          "type": "BOOLEAN",
+          "links": null
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ChainUpscaleReferenceConditioning"
+      },
+      "widgets_values": [
+        "text_only",
+        "exclude_video_keep_audio",
+        "",
+        "inherit",
+        "strict"
+      ],
+      "color": "#346434",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 12,
+      "type": "RandomNoise",
+      "pos": [
+        1056,
+        -128
+      ],
+      "size": [
+        288,
+        96
+      ],
+      "flags": {},
+      "order": 16,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise_seed",
+          "type": "INT",
+          "widget": {
+            "name": "noise_seed"
+          },
+          "link": 20
+        }
+      ],
+      "outputs": [
+        {
+          "name": "NOISE",
+          "type": "NOISE",
+          "links": [
+            22
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "RandomNoise"
+      },
+      "widgets_values": [
+        0,
+        "fixed"
+      ]
+    },
+    {
+      "id": 13,
+      "type": "BasicScheduler",
+      "pos": [
+        1056,
+        -352
+      ],
+      "size": [
+        480,
+        128
+      ],
+      "flags": {},
+      "order": 17,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 10
+        }
+      ],
+      "outputs": [
+        {
+          "name": "SIGMAS",
+          "type": "SIGMAS",
+          "links": [
+            23,
+            24
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.33.0",
+        "Node name for S&R": "BasicScheduler"
+      },
+      "widgets_values": [
+        "simple",
+        20,
+        0.24
+      ]
+    },
+    {
+      "id": 14,
+      "type": "MinimaxH3LatentUpscaler3D",
+      "pos": [
+        1600,
+        -160
+      ],
+      "size": [
+        448,
+        192
+      ],
+      "flags": {},
+      "order": 15,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "latent",
+          "type": "*",
+          "link": 21
+        },
+        {
+          "name": "mode.megapixels",
+          "type": "FLOAT",
+          "widget": {
+            "name": "mode.megapixels"
+          },
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "latent",
+          "type": "*",
+          "links": [
+            39,
+            43
+          ]
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MinimaxH3LatentUpscaler3D"
+      },
+      "widgets_values": [
+        "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "megapixels",
+        1.5,
+        32,
+        "cuda",
+        "fp16"
+      ],
+      "widgets_values_named": {
+        "model_name": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "mode": "megapixels",
+        "mode.megapixels": 1.5,
+        "align": 32,
+        "device": "cuda",
+        "precision": "fp16"
+      }
+    },
+    {
+      "id": 26,
+      "type": "H3ConditioningSyncFromLatents",
+      "pos": [
+        2080,
+        192
+      ],
+      "size": [
+        512,
+        224
+      ],
+      "flags": {},
+      "order": 18,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "original_latent",
+          "type": "LATENT",
+          "link": 42
+        },
+        {
+          "name": "upscaled_latent",
+          "type": "LATENT",
+          "link": 43
+        },
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "link": 25
+        },
+        {
+          "name": "method",
+          "type": "COMBO",
+          "widget": {
+            "name": "method"
+          },
+          "link": null
+        },
+        {
+          "name": "motion_ref_mode",
+          "type": "COMBO",
+          "widget": {
+            "name": "motion_ref_mode"
+          },
+          "link": null
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "positive",
+          "type": "CONDITIONING",
+          "links": [
+            44
+          ]
+        },
+        {
+          "name": "negative",
+          "type": "CONDITIONING",
+          "links": null
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "scale_x",
+          "type": "FLOAT",
+          "links": null
+        },
+        {
+          "name": "scale_y",
+          "type": "FLOAT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "H3ConditioningSyncFromLatents"
+      },
+      "widgets_values": [
+        "bilinear",
+        "conditioning_policy"
+      ],
+      "color": "#346434",
+      "bgcolor": "rgba(24,24,27,.9)"
+    },
+    {
+      "id": 25,
+      "type": "MiniMaxH3ChainPass2Prepare",
+      "pos": [
+        2176,
+        -96
+      ],
+      "size": [
+        320,
+        128
+      ],
+      "flags": {},
+      "order": 19,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "upscaled_video",
+          "type": "LATENT",
+          "link": 39
+        },
+        {
+          "name": "source_audio",
+          "type": "LATENT",
+          "link": 38
+        },
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 11
+        },
+        {
+          "name": "noise",
+          "type": "NOISE",
+          "link": 22
+        },
+        {
+          "name": "sigmas",
+          "type": "SIGMAS",
+          "link": 23
+        },
+        {
+          "name": "state",
+          "type": "H3_CHAIN_UPSCALE_STATE",
+          "link": 45,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "latent",
+          "type": "LATENT",
+          "links": [
+            27
+          ]
+        },
+        {
+          "name": "width",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "height",
+          "type": "INT",
+          "links": null
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "Node name for S&R": "MiniMaxH3ChainPass2Prepare"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 15,
+      "type": "BasicGuider",
+      "pos": [
+        2624,
+        32
+      ],
+      "size": [
+        288,
+        96
+      ],
+      "flags": {},
+      "order": 20,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "model",
+          "type": "MODEL",
+          "link": 12
+        },
+        {
+          "name": "conditioning",
+          "type": "CONDITIONING",
+          "link": 44
+        }
+      ],
+      "outputs": [
+        {
+          "name": "GUIDER",
+          "type": "GUIDER",
+          "links": [
+            28
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "BasicGuider"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 16,
+      "type": "DisableNoise",
+      "pos": [
+        2592,
+        -128
+      ],
+      "size": [
+        320,
+        96
+      ],
+      "flags": {},
+      "order": 4,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "NOISE",
+          "type": "NOISE",
+          "links": [
+            29
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "DisableNoise"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 17,
+      "type": "KSamplerSelect",
+      "pos": [
+        2624,
+        -288
+      ],
+      "size": [
+        288,
+        96
+      ],
+      "flags": {},
+      "order": 5,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "SAMPLER",
+          "type": "SAMPLER",
+          "links": [
+            30
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "KSamplerSelect"
+      },
+      "widgets_values": [
+        "res_multistep"
+      ]
+    },
+    {
+      "id": 18,
+      "type": "SamplerCustomAdvanced",
+      "pos": [
+        3072,
+        -32
+      ],
+      "size": [
+        384,
+        544
+      ],
+      "flags": {},
+      "order": 21,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "noise",
+          "type": "NOISE",
+          "link": 29
+        },
+        {
+          "name": "guider",
+          "type": "GUIDER",
+          "link": 28
+        },
+        {
+          "name": "sampler",
+          "type": "SAMPLER",
+          "link": 30
+        },
+        {
+          "name": "sigmas",
+          "type": "SIGMAS",
+          "link": 24
+        },
+        {
+          "name": "latent_image",
+          "type": "LATENT",
+          "link": 27
+        }
+      ],
+      "outputs": [
+        {
+          "name": "output",
+          "type": "LATENT",
+          "links": [
+            31,
+            32,
+            33
+          ]
+        },
+        {
+          "name": "denoised_output",
+          "type": "LATENT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "SamplerCustomAdvanced"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 19,
+      "type": "VAEDecode",
+      "pos": [
+        3520,
+        -32
+      ],
+      "size": [
+        256,
+        96
+      ],
+      "flags": {},
+      "order": 22,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "samples",
+          "type": "LATENT",
+          "link": 31
+        },
+        {
+          "name": "vae",
+          "type": "VAE",
+          "link": 15
+        }
+      ],
+      "outputs": [
+        {
+          "name": "IMAGE",
+          "type": "IMAGE",
+          "links": [
+            34,
+            35
+          ]
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "ver": "0.30.0",
+        "Node name for S&R": "VAEDecode"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 20,
+      "type": "MiniMaxH3ChainUpscaleSegmentSave",
+      "pos": [
+        3936,
+        -32
+      ],
+      "size": [
+        448,
+        320
+      ],
+      "flags": {},
+      "order": 23,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "state",
+          "type": "H3_CHAIN_UPSCALE_STATE",
+          "link": 5
+        },
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 34
+        },
+        {
+          "name": "upscaled_latent",
+          "type": "LATENT",
+          "link": 32,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "segment",
+          "type": "H3_CHAIN_UPSCALE_SEGMENT",
+          "links": [
+            36
+          ]
+        },
+        {
+          "name": "status",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-minimaxh3-contex-loop",
+        "Node name for S&R": "MiniMaxH3ChainUpscaleSegmentSave"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 21,
+      "type": "MiniMaxH3ChainUpscaleLoopEnd",
+      "pos": [
+        4512,
+        -64
+      ],
+      "size": [
+        448,
+        384
+      ],
+      "flags": {},
+      "order": 24,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "flow",
+          "type": "H3_CHAIN_UPSCALE_FLOW",
+          "link": 4
+        },
+        {
+          "name": "state",
+          "type": "H3_CHAIN_UPSCALE_STATE",
+          "link": 6
+        },
+        {
+          "name": "images",
+          "type": "IMAGE",
+          "link": 35
+        },
+        {
+          "name": "segment",
+          "type": "H3_CHAIN_UPSCALE_SEGMENT",
+          "link": 36
+        },
+        {
+          "name": "upscaled_latent",
+          "type": "LATENT",
+          "link": 33,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "manifest",
+          "type": "H3_CHAIN_MANIFEST",
+          "links": [
+            37
+          ]
+        },
+        {
+          "name": "manifest_json",
+          "type": "STRING",
+          "links": null
+        },
+        {
+          "name": "last_context_frames",
+          "type": "IMAGE",
+          "links": null
+        },
+        {
+          "name": "last_context_latent",
+          "type": "LATENT",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-minimaxh3-contex-loop",
+        "Node name for S&R": "MiniMaxH3ChainUpscaleLoopEnd"
+      },
+      "widgets_values": []
+    },
+    {
+      "id": 22,
+      "type": "MiniMaxH3ChainAssemble",
+      "pos": [
+        5184,
+        -32
+      ],
+      "size": [
+        992,
+        672
+      ],
+      "flags": {},
+      "order": 25,
+      "mode": 0,
+      "inputs": [
+        {
+          "name": "manifest",
+          "type": "H3_CHAIN_MANIFEST",
+          "link": 37
+        },
+        {
+          "name": "source_audio",
+          "type": "AUDIO",
+          "link": null,
+          "shape": 7
+        },
+        {
+          "name": "source_timeline",
+          "type": "H3_SOURCE_TIMELINE",
+          "link": null,
+          "shape": 7
+        }
+      ],
+      "outputs": [
+        {
+          "name": "video_path",
+          "type": "STRING",
+          "links": null
+        }
+      ],
+      "properties": {
+        "cnr_id": "comfyui-minimaxh3-contex-loop",
+        "Node name for S&R": "MiniMaxH3ChainAssemble"
+      },
+      "widgets_values": [
+        "plan",
+        "h3_upscaled_%date:yyyy-MM-dd%",
+        256
+      ]
+    },
+    {
+      "id": 23,
+      "type": "Note",
+      "pos": [
+        -2688,
+        -96
+      ],
+      "size": [
+        704,
+        1344
+      ],
+      "flags": {},
+      "order": 7,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "Note"
+      },
+      "widgets_values": [
+        "STANDALONE H3 CHECKPOINT UPSCALE\n\n1. Open Checkpoint Manager and select the right-hand tip you want to finish. A partial generated branch is valid; no ungenerated scenes are required.\n2. The selected_manifest cable is the complete parent-chain contract. No Plan, Source Timeline, source audio, or external context enters the upscale loop. Original reference media is unnecessary unless you deliberately connect a new Tagged Ref line to the override node.\n3. Choose a unique profile in Upscale Adapter. start_clip=1/end_clip=0 processes every generated scene in the selection.\n4. Set LBH target megapixels. The default is 1.5 MP with grid-32 alignment.\n5. Queue. Each HQ scene is saved before the loop advances; Assemble writes under output/h3_chains/<run>/upscaled/<profile>/final/.\n\nsave_latent is OFF by default. Enable it only when you need to reopen the complete HQ latent later. Drift-Control compatibility still saves only the small 12-step HQ context tail needed by the following scene and by interrupted-run resume.\n\nUpscale Reference Conditioning restores the scene's original Ref2VA conditioning from its automatic cache. Upscale Reference + Prompt Override stays inline on the normal H3 Tagged Ref line: leave its references input empty for automatic cache restore, or connect a new Tagged registry to replace the cached refs for pass 2. Use disabled_tags to omit selected connected refs. Its prompt override is blank by default, so pass 2 uses the exact compiled source prompt.\n\nOPTIONAL NEUTRAL REPLACEMENT PROMPT — copy this into the override only for a controlled comparison:\nPreserve the existing video's identity, appearance, composition, framing, lighting, color, action, motion timing, and audio. Use the supplied picture references only to maintain the identities and appearance already present. Improve only fine spatial detail and high-resolution texture fidelity. Do not introduce new motion, objects, cuts, camera moves, or scene changes.\n\nThe default motion policy excludes both the Qwen motion-video presentation and native motion-reference latent because the source latent already contains the generated motion; paired reference audio is retained. H3 Conditioning Sync From Latents follows that policy automatically, measures LBH's real X/Y latent scale, and resizes match picture minimax_refs plus minimax_keyframes while keeping max picture refs at their cached geometry. Its positive output creates a fresh pass-2 Basic Guider. Older non-reference runs fall back to text-only by default; choose error when a Ref2VA cache is mandatory."
+      ],
+      "title": "HOW TO RUN"
+    },
+    {
+      "id": 24,
+      "type": "Note",
+      "pos": [
+        416,
+        768
+      ],
+      "size": [
+        2016,
+        544
+      ],
+      "flags": {},
+      "order": 6,
+      "mode": 0,
+      "inputs": [],
+      "outputs": [],
+      "properties": {
+        "cnr_id": "comfy-core",
+        "Node name for S&R": "Note"
+      },
+      "widgets_values": [
+        "REQUIRES\nhttps://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler\nDownload minimax_h3_latent_upscaler_3d_fp16.safetensors into ComfyUI/models/latent_upscale_models/.\n\nLBH receives only the saved clean 24-channel VIDEO x0. MiniMax H3 Pass-2 AV Prepare rejoins the untouched 32-channel audio and reads the current upscale state. For Drift-Control AV scene 2+, it replaces the 12-step pass-2 prefix with the previous HQ latent tail, gives that prefix zero added noise and a zero denoise mask, refines only the new video region, and keeps audio locked. Other continuation modes retain the open-video behavior. H3 Conditioning Sync From Latents follows the community pass-2 method: original latent + LBH latent + original conditioning -> spatially synchronized conditioning -> new Guider -> sampler 2. Choose motion policy once on Upscale Reference Conditioning: exclude_video_keep_audio is the upscale default; keep_video_native and resize_video remain available for controlled comparisons. Leave the sync node on conditioning_policy. The default interpolation is bilinear.\n\nConservative defaults: 1.5 MP, align 32, FP16, 2 pass-2 steps, denoise 0.24, simple schedule, Euler. Raise denoise only after checking identity and scene boundaries. The Comfy Kitchen attention override remains bypassed because large H3 target sequences can exceed Sage prequantized int32 stride limits; this graph uses ComfyUI's PyTorch attention path. Functional nodes intentionally retain their original display names."
+      ],
+      "title": "DEPENDENCY / PASS-2 NOTES"
+    }
+  ],
+  "links": [
+    [
+      2,
+      2,
+      0,
+      3,
+      0,
+      "H3_CHAIN_MANIFEST"
+    ],
+    [
+      3,
+      3,
+      1,
+      4,
+      0,
+      "H3_CHAIN_UPSCALE_STATE"
+    ],
+    [
+      4,
+      3,
+      0,
+      21,
+      0,
+      "H3_CHAIN_UPSCALE_FLOW"
+    ],
+    [
+      5,
+      4,
+      0,
+      20,
+      0,
+      "H3_CHAIN_UPSCALE_STATE"
+    ],
+    [
+      6,
+      4,
+      0,
+      21,
+      1,
+      "H3_CHAIN_UPSCALE_STATE"
+    ],
+    [
+      7,
+      5,
+      0,
+      6,
+      0,
+      "MODEL"
+    ],
+    [
+      9,
+      6,
+      0,
+      8,
+      0,
+      "MODEL"
+    ],
+    [
+      10,
+      8,
+      0,
+      13,
+      0,
+      "MODEL"
+    ],
+    [
+      11,
+      8,
+      0,
+      25,
+      2,
+      "MODEL"
+    ],
+    [
+      12,
+      8,
+      0,
+      15,
+      0,
+      "MODEL"
+    ],
+    [
+      13,
+      9,
+      0,
+      11,
+      1,
+      "CLIP"
+    ],
+    [
+      15,
+      10,
+      0,
+      19,
+      1,
+      "VAE"
+    ],
+    [
+      16,
+      4,
+      0,
+      11,
+      0,
+      "H3_CHAIN_UPSCALE_STATE"
+    ],
+    [
+      20,
+      4,
+      9,
+      12,
+      0,
+      "INT"
+    ],
+    [
+      21,
+      4,
+      2,
+      14,
+      0,
+      "LATENT"
+    ],
+    [
+      22,
+      12,
+      0,
+      25,
+      3,
+      "NOISE"
+    ],
+    [
+      23,
+      13,
+      0,
+      25,
+      4,
+      "SIGMAS"
+    ],
+    [
+      24,
+      13,
+      0,
+      18,
+      3,
+      "SIGMAS"
+    ],
+    [
+      25,
+      11,
+      0,
+      26,
+      2,
+      "CONDITIONING"
+    ],
+    [
+      27,
+      25,
+      0,
+      18,
+      4,
+      "LATENT"
+    ],
+    [
+      28,
+      15,
+      0,
+      18,
+      1,
+      "GUIDER"
+    ],
+    [
+      29,
+      16,
+      0,
+      18,
+      0,
+      "NOISE"
+    ],
+    [
+      30,
+      17,
+      0,
+      18,
+      2,
+      "SAMPLER"
+    ],
+    [
+      31,
+      18,
+      0,
+      19,
+      0,
+      "LATENT"
+    ],
+    [
+      32,
+      18,
+      0,
+      20,
+      2,
+      "LATENT"
+    ],
+    [
+      33,
+      18,
+      0,
+      21,
+      4,
+      "LATENT"
+    ],
+    [
+      34,
+      19,
+      0,
+      20,
+      1,
+      "IMAGE"
+    ],
+    [
+      35,
+      19,
+      0,
+      21,
+      2,
+      "IMAGE"
+    ],
+    [
+      36,
+      20,
+      0,
+      21,
+      3,
+      "H3_CHAIN_UPSCALE_SEGMENT"
+    ],
+    [
+      37,
+      21,
+      0,
+      22,
+      0,
+      "H3_CHAIN_MANIFEST"
+    ],
+    [
+      38,
+      4,
+      3,
+      25,
+      1,
+      "LATENT"
+    ],
+    [
+      39,
+      14,
+      0,
+      25,
+      0,
+      "LATENT"
+    ],
+    [
+      42,
+      4,
+      2,
+      26,
+      0,
+      "LATENT"
+    ],
+    [
+      43,
+      14,
+      0,
+      26,
+      1,
+      "LATENT"
+    ],
+    [
+      44,
+      26,
+      0,
+      15,
+      1,
+      "CONDITIONING"
+    ],
+    [
+      45,
+      4,
+      0,
+      25,
+      5,
+      "H3_CHAIN_UPSCALE_STATE"
+    ],
+    [
+      46,
+      27,
+      0,
+      11,
+      7,
+      "H3_TAGGED_REFERENCES"
+    ],
+    [
+      47,
+      27,
+      1,
+      11,
+      6,
+      "STRING"
+    ],
+    [
+      48,
+      10,
+      0,
+      11,
+      5,
+      "VAE"
+    ]
+  ],
+  "groups": [
+    {
+      "id": 1,
+      "title": "LOAD SAVED H3 BRANCH",
+      "bounding": [
+        -1920,
+        320,
+        2160,
+        1200
+      ],
+      "color": "#8a5a2b",
+      "flags": {}
+    },
+    {
+      "id": 2,
+      "title": "H3 PASS-2 MODEL STACK",
+      "bounding": [
+        -1888,
+        -448,
+        2112,
+        704
+      ],
+      "color": "#3f789e",
+      "flags": {}
+    },
+    {
+      "id": 3,
+      "title": "LBH 3D H3 UPSCALE LOOP",
+      "bounding": [
+        352,
+        -448,
+        4640,
+        1200
+      ],
+      "color": "#744c8c",
+      "flags": {}
+    },
+    {
+      "id": 4,
+      "title": "UPSCALED FINAL",
+      "bounding": [
+        5088,
+        -128,
+        1184,
+        800
+      ],
+      "color": "#2f6b3f",
+      "flags": {}
+    }
+  ],
+  "config": {},
+  "extra": {
+    "ds": {
+      "scale": 0.28477414223819925,
+      "offset": [
+        4563.2104520143885,
+        1478.146283125673
+      ]
+    },
+    "frontendVersion": "1.48.7",
+    "comfyui_mcp": {
+      "workflow_uuid": "3f6f3198-b35b-4c08-9681-45accc20efab"
+    }
+  },
+  "version": 0.4
+}

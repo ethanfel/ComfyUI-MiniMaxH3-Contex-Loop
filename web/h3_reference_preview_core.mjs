@@ -1,5 +1,7 @@
 export const SCHEDULED_REF2VA_TYPE = "MiniMaxH3ScheduledReferenceToVideo";
 export const TAGGED_REF2VA_TYPE = "MiniMaxH3TaggedReferenceToVideo";
+export const CURRENT_TAGGED_REF2VA_TYPE =
+    "MiniMaxH3CurrentTaggedReferenceScene";
 export const CORE_REF2VA_TYPE = "MiniMaxH3ReferenceToVideo";
 export const IMAGE_TO_VIDEO_TYPE = "MiniMaxH3ImageToVideo";
 export const FIRST_SCENE_IMAGE_TYPE = "MiniMaxH3ChainFirstSceneImage";
@@ -32,6 +34,10 @@ const TAGGED_TYPES = new Set([
     TAGGED_MOTION_TIMELINE_REF_TYPE,
     TAGGED_AUDIO_REF_TYPE,
 ]);
+const TAGGED_REF2VA_TYPES = new Set([
+    TAGGED_REF2VA_TYPE,
+    CURRENT_TAGGED_REF2VA_TYPE,
+]);
 
 export function nodeType(node) {
     return node?.comfyClass ?? node?.type ?? null;
@@ -51,12 +57,15 @@ function escapedPattern(value) {
     return String(value ?? "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function taggedPictureReferenceToken(tag, mode = "native", timestamp = 0) {
+export function taggedPictureReferenceToken(tag, mode = "native", timestamp = null) {
     const cleanTag = referenceTag(tag);
     if (!cleanTag) return "";
     if (mode !== "semantic") return `@${cleanTag}`;
+    if (timestamp === null || timestamp === undefined
+            || String(timestamp).trim() === "") return `#${cleanTag}`;
     const seconds = Number(timestamp);
-    const safeSeconds = Number.isFinite(seconds) ? Math.max(0, seconds) : 0;
+    if (!Number.isFinite(seconds)) return `#${cleanTag}`;
+    const safeSeconds = Math.max(0, seconds);
     return `#${cleanTag}[${safeSeconds.toFixed(2)}s]`;
 }
 
@@ -68,7 +77,7 @@ export function taggedPictureReferenceMode(prompt, tag) {
         `(^|[^A-Za-z0-9_])@${escaped}(?![A-Za-z0-9_-])`,
     ).test(String(prompt ?? ""));
     const semantic = new RegExp(
-        `(^|[^A-Za-z0-9_])#${escaped}\\[[0-9]+(?:\\.[0-9]+)?s?\\]`,
+        `(^|[^A-Za-z0-9_])#${escaped}(?:\\[[0-9]+(?:\\.[0-9]+)?s?\\]|(?!\\[))(?![A-Za-z0-9_-])`,
     ).test(String(prompt ?? ""));
     if (native && semantic) return "mixed";
     if (semantic) return "semantic";
@@ -77,7 +86,7 @@ export function taggedPictureReferenceMode(prompt, tag) {
 }
 
 export function convertTaggedPictureReference(
-        prompt, tag, mode = "native", timestamp = 0) {
+        prompt, tag, mode = "native", timestamp = null) {
     const source = String(prompt ?? "");
     const cleanTag = referenceTag(tag);
     if (!cleanTag || !["native", "semantic"].includes(mode)) return source;
@@ -96,7 +105,7 @@ export function convertTaggedPictureReference(
     const replacement = taggedPictureReferenceToken(cleanTag, "native");
     return source.replace(
         new RegExp(
-            `(^|[^A-Za-z0-9_])#${escaped}\\[[0-9]+(?:\\.[0-9]+)?s?\\]`,
+            `(^|[^A-Za-z0-9_])#${escaped}(?:\\[[0-9]+(?:\\.[0-9]+)?s?\\]|(?!\\[))(?![A-Za-z0-9_-])`,
             "g",
         ),
         (_match, prefix) => `${prefix}${replacement}`,
@@ -104,7 +113,7 @@ export function convertTaggedPictureReference(
 }
 
 export function referenceReplacementToken(
-        record, mode = "native", timestamp = 0) {
+        record, mode = "native", timestamp = null) {
     if (!record || !["native", "semantic"].includes(mode)) return "";
     if (mode === "semantic") {
         if (record.kind !== "picture" || !record.tag) return "";
@@ -115,7 +124,7 @@ export function referenceReplacementToken(
 }
 
 export function replacePromptReferenceOccurrence(
-        prompt, start, end, record, mode = "native", timestamp = 0) {
+        prompt, start, end, record, mode = "native", timestamp = null) {
     const source = String(prompt ?? "");
     const first = Number(start);
     const last = Number(end);
@@ -356,17 +365,21 @@ function outputTargets(node) {
     return targets;
 }
 
-function findDownstreamType(start, wantedType) {
+function findDownstreamTypes(start, wantedTypes) {
     const queue = [start];
     const seen = new Set();
     while (queue.length) {
         const node = queue.shift();
         if (!node || seen.has(node)) continue;
         seen.add(node);
-        if (node !== start && nodeType(node) === wantedType) return node;
+        if (node !== start && wantedTypes.has(nodeType(node))) return node;
         queue.push(...outputTargets(node));
     }
     return null;
+}
+
+function findDownstreamType(start, wantedType) {
+    return findDownstreamTypes(start, new Set([wantedType]));
 }
 
 function findUpstreamType(start, wantedType) {
@@ -390,7 +403,7 @@ export function findScheduledRef2VA(start) {
 }
 
 export function findTaggedRef2VA(start) {
-    return findDownstreamType(start, TAGGED_REF2VA_TYPE);
+    return findDownstreamTypes(start, TAGGED_REF2VA_TYPES);
 }
 
 export function findCoreRef2VA(start) {
@@ -549,10 +562,18 @@ function promptTagSet(prompt) {
     )].map((match) => match[1]));
 }
 
-function semanticPromptTagSet(prompt) {
-    return new Set([...String(prompt ?? "").matchAll(
-        /(?<![A-Za-z0-9_])#([A-Za-z][A-Za-z0-9_-]{0,63})\[[0-9]+(?:\.[0-9]+)?s?\]/gi,
-    )].map((match) => match[1]));
+function semanticPromptTagState(prompt) {
+    const result = new Map();
+    for (const match of String(prompt ?? "").matchAll(
+        /(?<![A-Za-z0-9_])#([A-Za-z][A-Za-z0-9_-]{0,63})(?:\[([0-9]+(?:\.[0-9]+)?)s?\]|(?!\[))(?![A-Za-z0-9_-])/gi,
+    )) {
+        const tag = match[1];
+        const current = result.get(tag) ?? {untimed:false, timed:false};
+        if (match[2] === undefined) current.untimed = true;
+        else current.timed = true;
+        result.set(tag, current);
+    }
+    return result;
 }
 
 function projectCatalog(node) {
@@ -578,7 +599,8 @@ export function projectAssetReferenceRecords(manager, prompt = "") {
     const catalog = projectCatalog(manager);
     if (!catalog) return [];
     const used = promptTagSet(prompt);
-    const semanticUsed = semanticPromptTagSet(prompt);
+    const semanticState = semanticPromptTagState(prompt);
+    const semanticUsed = new Set(semanticState.keys());
     const pictures = [];
     const semanticPictures = [];
     const videos = [];
@@ -666,13 +688,14 @@ export function projectAssetReferenceRecords(manager, prompt = "") {
     }
     const anchorMode = String(widgetValue(
         manager, "semantic_anchor_mode", "timestamped_video"));
-    ordinal = anchorMode === "picture_storyboard"
-        ? pictures.filter((item) => item.nativeActive).length
-        : videos.filter((item) => item.active).length;
-    for (const item of semanticPictures) {
-        if (!item.active) continue;
-        item.label = anchorMode === "picture_storyboard"
-            ? `<Picture ${++ordinal}>` : `<Video ${++ordinal}>`;
+    let pictureOrdinal = pictures.filter((item) => item.nativeActive).length;
+    let videoOrdinal = videos.filter((item) => item.active).length;
+    for (const item of [...pictures, ...semanticPictures]) {
+        if (!item.semanticActive) continue;
+        const timed = Boolean(semanticState.get(item.tag)?.timed);
+        item.semanticLabel = anchorMode === "timestamped_video" && timed
+            ? `<Video ${++videoOrdinal}>` : `<Picture ${++pictureOrdinal}>`;
+        if (!item.nativeActive) item.label = item.semanticLabel;
     }
     return [...pictures, ...semanticPictures, ...videos, ...pairedAudios, ...audios]
         .map((item) => ({
@@ -712,7 +735,8 @@ export function taggedReferenceRecords(editorNode, prompt = "") {
     const nodes = collectTaggedNodes(wrapper);
     const dedicated = collectSemanticAnchorNodes(wrapper);
     const used = promptTagSet(prompt);
-    const semanticUsed = semanticPromptTagSet(prompt);
+    const semanticState = semanticPromptTagState(prompt);
+    const semanticUsed = new Set(semanticState.keys());
     const pictures = [];
     const videos = [];
     const pairedAudios = [];
@@ -822,13 +846,14 @@ export function taggedReferenceRecords(editorNode, prompt = "") {
     }
     const anchorMode = String(widgetValue(
         dedicated.bundle, "semantic_anchor_mode", "timestamped_video"));
-    ordinal = anchorMode === "picture_storyboard"
-        ? pictures.filter((item) => item.nativeActive).length
-        : videos.filter((item) => item.active).length;
-    for (const item of semanticPictures) {
-        if (!item.active) continue;
-        item.label = anchorMode === "picture_storyboard"
-            ? `<Picture ${++ordinal}>` : `<Video ${++ordinal}>`;
+    let pictureOrdinal = pictures.filter((item) => item.nativeActive).length;
+    let videoOrdinal = videos.filter((item) => item.active).length;
+    for (const item of [...pictures, ...semanticPictures]) {
+        if (!item.semanticActive) continue;
+        const timed = Boolean(semanticState.get(item.tag)?.timed);
+        item.semanticLabel = anchorMode === "timestamped_video" && timed
+            ? `<Video ${++videoOrdinal}>` : `<Picture ${++pictureOrdinal}>`;
+        if (!item.nativeActive) item.label = item.semanticLabel;
     }
     return {
         wrapper,
