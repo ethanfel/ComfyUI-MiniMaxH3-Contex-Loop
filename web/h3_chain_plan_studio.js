@@ -60,7 +60,7 @@ import {
     convertTaggedPictureReference,
     taggedPictureReferenceMode,
     taggedPictureReferenceToken,
-} from "./h3_reference_preview_core.mjs?v=0.6.0";
+} from "./h3_reference_preview_core.mjs?v=0.6.2";
 import {
     applySceneAudioOverride,
     applySceneTransitionPreset,
@@ -110,7 +110,7 @@ import {
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
 } from "./h3_chain_plan_studio_core.mjs?v=0.6.0";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.2";
 
 const {
     connectedPromptEditors,

@@ -5,7 +5,7 @@ import {
     planToJson,
     promptValueToText,
 } from "./h3_chain_plan_core.mjs?v=0.6.0";
-import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.0";
+import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.2";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,

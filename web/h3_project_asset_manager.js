@@ -10,7 +10,7 @@ import {
     publishProjectAssetCatalogChanged,
     serializedProjectAssetCatalog,
     serializedProjectAssetIdentity,
-} from "./h3_project_asset_sync_core.mjs?v=0.6.1";
+} from "./h3_project_asset_sync_core.mjs?v=0.6.2";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const SEMANTIC_SETTING_WIDGETS = [
