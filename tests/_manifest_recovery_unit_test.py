@@ -59,6 +59,78 @@ def fake_segment(plan, index):
     }
 
 
+def check_archive_compatibility(plan, legacy_archives):
+    token = "e" * 32
+    metadata = {"segment": {"revision": token}, "archives": legacy_archives}
+    before = json.dumps(metadata, sort_keys=True)
+    assert chain._checkpoint_run_archives(plan, metadata) == {}
+    assert json.dumps(metadata, sort_keys=True) == before
+    for references in (None, {}, {"plan": None}, {"plan": ""},
+                       {"workflow": legacy_archives["workflow"]}):
+        assert chain._checkpoint_run_archives(plan, {
+            "segment": {}, "archives": references,
+        }) == {}
+    absolute = {key: chain._absolute_output_path(value)
+                for key, value in legacy_archives.items()}
+    assert chain._checkpoint_run_archives(plan, {"archives": absolute}) == {}
+
+    # Immutable snapshots must still require the exact revision and paths;
+    # shared documents must never become an immutable snapshot via validation.
+    try:
+        chain._validated_run_archive_snapshot(plan, legacy_archives)
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("shared root archives were accepted as immutable")
+    exact = chain._write_run_archives(plan, revision=token, promote=False)
+    assert chain._checkpoint_run_archives(plan, {
+        "segment": {"revision": token}, "archives": exact,
+    }) == exact
+    invalid_references = [
+        dict(legacy_archives, workflow=exact["workflow"]),
+        dict(exact, workflow=legacy_archives["workflow"]),
+        {key: value.replace(plan["run_name"], "other_run")
+         for key, value in legacy_archives.items()},
+        dict(legacy_archives, plan="../outside.json"),
+        dict(legacy_archives, plan=legacy_archives["workflow"]),
+        dict(legacy_archives, workflow="h3_chains/%s/editorial.json"
+             % plan["run_name"]),
+        dict(legacy_archives, workflow=42),
+        [legacy_archives["plan"]],
+    ]
+    for references in invalid_references:
+        try:
+            chain._checkpoint_run_archives(plan, {
+                "segment": {"revision": token}, "archives": references,
+            })
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("invalid or mixed archive paths were accepted")
+    try:
+        chain._checkpoint_run_archives(plan, {
+            "segment": {"revision": "f" * 32}, "archives": exact,
+        })
+    except ValueError as exc:
+        assert "different revision" in str(exc)
+    else:
+        raise AssertionError("a mismatched immutable snapshot was accepted")
+    pathlib.Path(chain._absolute_output_path(exact["plan"])).unlink()
+    try:
+        chain._checkpoint_run_archives(plan, {
+            "segment": {"revision": token}, "archives": exact,
+        })
+    except FileNotFoundError:
+        pass
+    else:
+        raise AssertionError("missing immutable snapshot fell back to shared files")
+
+    # Activation of a legacy revision rebuilds from the restored Plan rather
+    # than pretending the old mutable files belong to that revision.
+    assert chain._promote_checkpoint_run_archives(plan, metadata)
+    assert chain._read_json(absolute["plan"])["plan_hash"] == plan["plan_hash"]
+
+
 def main():
     with tempfile.TemporaryDirectory() as temporary:
         folder_paths.output_directory = temporary
@@ -66,6 +138,23 @@ def main():
         checkpoints = pathlib.Path(
             chain._run_dir(plan), "checkpoints")
         checkpoints.mkdir(parents=True)
+        # Actual pre-snapshot checkpoints contain explicit root-archive
+        # references, not only absent/empty archives. Exercise Load Manifest
+        # with this format so stricter snapshot validation cannot hide it.
+        legacy_archives = {}
+        for key, filename in chain._run_archive_paths(plan).items():
+            path = pathlib.Path(filename)
+            path.write_text(json.dumps(plan if key == "plan" else {}),
+                            encoding="utf-8")
+            legacy_archives[key] = chain._relative_output_path(filename)
+
+        def write_pointer(scene):
+            (checkpoints / ("clip_%04d.json" % scene)).write_text(json.dumps({
+                "segment": {"index": scene, "revision": "%032x" % scene},
+                "archives": legacy_archives,
+            }), encoding="utf-8")
+
+        check_archive_compatibility(plan, legacy_archives)
 
         calls = []
         original_loader = chain._load_resume_state
@@ -91,8 +180,8 @@ def main():
             else:
                 raise AssertionError("empty run was accepted for recovery")
 
-            (checkpoints / "clip_0001.json").write_text("{}")
-            (checkpoints / "clip_0002.json").write_text("{}")
+            write_pointer(1)
+            write_pointer(2)
             partial, partial_json, partial_status = (
                 chain.MiniMaxH3ChainManifestLoad().load(plan))
             assert calls[-1][0] == 3
@@ -101,6 +190,7 @@ def main():
             assert partial["planned_clip_count"] == 3
             assert partial["last_completed_clip"] == 2
             assert json.loads(partial_json)["segments"] == partial["segments"]
+            assert partial["archives"] == legacy_archives
             assert "partial manifest through clip 2/3" in partial_status
             partial_path = pathlib.Path(
                 chain._run_dir(plan), "partial",
@@ -109,19 +199,20 @@ def main():
 
             # A later orphan does not cross a gap in the active pointer chain.
             (checkpoints / "clip_0002.json").unlink()
-            (checkpoints / "clip_0003.json").write_text("{}")
+            write_pointer(3)
             gap, _gap_json, gap_status = (
                 chain.MiniMaxH3ChainManifestLoad().load(plan))
             assert calls[-1][0] == 2
             assert gap["clip_count"] == 1
             assert "partial manifest through clip 1/3" in gap_status
 
-            (checkpoints / "clip_0002.json").write_text("{}")
+            write_pointer(2)
             complete, _complete_json, complete_status = (
                 chain.MiniMaxH3ChainManifestLoad().load(plan))
             assert calls[-1][0] == 4
             assert complete["format"] == "h3_chain_manifest_v3"
             assert complete["clip_count"] == 3
+            assert complete["archives"] == legacy_archives
             assert "completed manifest through clip 3/3" in complete_status
             complete_path = pathlib.Path(chain._manifest_path(plan))
             assert json.loads(complete_path.read_text())["clip_count"] == 3

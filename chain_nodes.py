@@ -9492,7 +9492,7 @@ def _validated_run_archive_snapshot(
 
 def _checkpoint_run_archives(
         plan: dict[str, Any], metadata: dict[str, Any]) -> dict[str, str]:
-    """Return one checkpoint's validated immutable recovery documents."""
+    """Return immutable recovery documents, or use fallback for legacy saves."""
     archives = metadata.get("archives") if isinstance(metadata, dict) else None
     if archives is None:
         return {}
@@ -9502,6 +9502,19 @@ def _checkpoint_run_archives(
         # Some transitional builds serialized an empty placeholder. It carries
         # no snapshot claim, so retain the legacy root-archive fallback.
         return {}
+    if isinstance(archives, dict):
+        canonical = _run_archive_paths(plan)
+        references = {key: archives[key] for key in canonical
+                      if archives.get(key) is not None}
+        if references and all(
+                isinstance(value, str) and value and
+                _absolute_output_path(value) == canonical[key]
+                for key, value in references.items()):
+            # Pre-snapshot saves explicitly referenced these shared Run files.
+            # They are not an immutable revision: readers use the existing
+            # root fallback, while activation rebuilds from the restored Plan.
+            # Do not relax snapshot validation for mixed or foreign paths.
+            return {}
     segment = metadata.get("segment")
     revision = (str(segment.get("revision") or "").strip().lower()
                 if isinstance(segment, dict) else "")

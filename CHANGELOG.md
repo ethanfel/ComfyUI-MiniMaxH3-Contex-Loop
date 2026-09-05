@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Load Manifest and checkpoint recovery rejecting legacy shared archive
+  references as invalid immutable revision IDs. Older Runs now use their
+  existing root-archive fallback; newer per-revision snapshots retain strict
+  revision, location, and file-existence validation.
+
 - Fixed Checkpoint Manager failing to list older Runs whose checkpoints refer
   to shared Run-level Plan, workflow, and API-prompt snapshots. These legacy
   references are readable again and remain permanently excluded from
