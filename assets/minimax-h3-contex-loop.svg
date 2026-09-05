@@ -1,6 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1400" height="460" viewBox="0 0 1400 460" role="img" aria-labelledby="title desc">
-  <title id="title">MiniMax H3 Context Loop nightly</title>
-  <desc id="desc">Nightly branding with a luminous video and audio ribbon looping through scene checkpoints.</desc>
+  <title id="title">MiniMax H3 Context Loop 0.6</title>
+  <desc id="desc">Version 0.6 with a luminous video and audio ribbon looping through scene checkpoints.</desc>
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#070a18"/>
@@ -45,7 +45,7 @@
       <text x="70" y="82" fill="#7ce9f3" font-size="18" font-weight="700" letter-spacing="4.2">COMFYUI × MINIMAX H3</text>
       <g transform="translate(365 55)">
         <rect width="74" height="34" rx="17" fill="#18183b" stroke="#8d72ff" stroke-width="1.5"/>
-        <text x="37" y="22" fill="#e5ddff" font-size="11" font-weight="800" letter-spacing=".5" text-anchor="middle">NIGHTLY</text>
+        <text x="37" y="22" fill="#e5ddff" font-size="11" font-weight="800" letter-spacing=".5" text-anchor="middle">0.6</text>
       </g>
       <rect x="70" y="105" width="250" height="4" rx="2" fill="url(#accent)"/>
       <text x="66" y="196" fill="#f7f8ff" font-size="66" font-weight="760" letter-spacing="-2">Context Loop</text>

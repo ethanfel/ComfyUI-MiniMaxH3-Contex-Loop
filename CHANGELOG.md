@@ -1,8 +1,64 @@
 # Changelog
 
-Newest first. This file keeps release history out of the onboarding README.
+Newest first. The [README](README.md#changelog) keeps a short highlight reel;
+this file records the detailed changes.
 
 ## v0.6.0 — Production context authoring and synchronized export
+
+### Release preparation
+
+- Rebuilt the 0.6 example catalog from named recipes and this release's node
+  definitions, rather than reserializing archived workflows. The 19 examples
+  have typed widget validation, required-input and bidirectional-link checks,
+  title-aware layout checks, and companion setup guides. Studio Plan outputs
+  are connected to Loop Start; the Carousel and Checkpoint Manager are included.
+  Older examples remain in `example_workflows/Archive/0.5/`.
+
+- Corrected release-workflow execution settings and switched maintained source
+  video examples to native VIDEO inputs. Bounded smoke renders exercised the
+  15 non-upscale examples; the test setup and its Ref2VA model-substitution
+  limits are recorded in [Workflow validation](tools/v06/README.md#layout-and-release-checks).
+  These checks are not a full-resolution quality or GPU-memory guarantee.
+
+- Added an experimental pixel-upscale backend and DLSS5 + USDU example, adapted
+  from **Illynir's** contribution. Pixel Current Scene decodes saved video
+  checkpoints one scene at a time; Pixel Conditioning uses the actual upscaled
+  image dimensions, rebuilds matching references at that size, and passes the
+  same images to the refiner without applying a second upscale. Image-only
+  segment saving preserves original audio and supports resume and assembly.
+  Pixel mode does not require or splice HQ latent continuity. CPU integration
+  tests cover geometry, audio, trimming, recursion, and resume; external
+  DLSS5/USDU GPU refinement remains untested. See the
+  [experimental workflow guide](<example_workflows/guides/Deferred Upscale - Pixel DLSS5 + USDU - EXPERIMENTAL - MiniMax H3 0.6.md>).
+
+- Added visible Carousel semantic-anchor size and mode controls, with an
+  **inherit** choice that delegates to downstream Tagged Scene Options without
+  requiring another Options wire into the Carousel. Older explicit values
+  remain readable. The controls can be hidden without changing their values.
+
+- Hardened asynchronous project switching, run restoration, and editorial
+  saving. Responses from an old run or detached workflow no longer update the
+  newly selected graph; saves serialize with revision checks so late responses
+  cannot overwrite newer edits. Switching or closing a project flushes pending
+  editorial changes. Unused stale Studio scene entries can be reconciled,
+  while entries carrying saved work remain protected.
+
+- Fixed source-audio preview and waveform mapping after scene-length changes,
+  including clearing the previous run's source preview on project switches.
+  Empty-scene navigation and seeking now preserve the selected scene and
+  playhead instead of jumping to a rendered or prompted scene.
+
+- Clear a selected final-cut alternate when its base scene is regenerated,
+  retaining the saved alternate revision without applying it to the wrong
+  generation lineage. Connected Review Gate previews now replace the redundant
+  silent Segment + Checkpoint preview.
+
+- Restored the concise README changelog, corrected the release banner from
+  NIGHTLY to 0.6, and updated the installation URL to the renamed Context-Loop
+  repository. Existing custom-node folder names and serialized node IDs do not
+  need to change.
+
+### Features and fixes
 
 - Fixed Windows mapped network drives used as ComfyUI input/output directories
   (#45). Root and artifact paths now resolve consistently before calculating
@@ -70,8 +126,8 @@ Newest first. This file keeps release history out of the onboarding README.
 
 - Corrected the user-visible **Contex Loop** typo to **Context Loop** across
   node titles, Add Node categories, settings, documentation, branding, and
-  bundled workflow titles. Serialized node IDs, settings keys, and the public
-  repository slug remain unchanged for compatibility.
+  bundled workflow titles. Serialized node IDs and settings keys remain
+  unchanged for compatibility.
 
 - Fixed Review candidate acceptance and rerolls leaving Plan Studio and
   prompt-editor companions on stale scene metadata. Selecting a 10x candidate
@@ -80,7 +136,7 @@ Newest first. This file keeps release history out of the onboarding README.
   fast path. The shared companion module now has an explicit cache revision,
   with safe fallbacks for partially refreshed browser sessions.
 
-- Added the nightly **Picture Context Builder** to Plan Studio. Scene Context
+- Added the multi-block **Picture Context Builder** to Plan Studio. Scene Context
   now owns picture/audio totals, boundary implementation, and spatial proxy;
   selecting 1–N picture blocks exposes every H3-native repartition through
   ordered boundary selectors plus an independent earlier-scene source and
