@@ -173,6 +173,54 @@ async def check():
         assert active_only["checkpoints"][0]["ready"] is True
         assert "revisions" not in active_only
 
+        # Empty editorial order entries may be reconciled, but not when any
+        # active/retained checkpoint (even broken or under another slot) exists.
+        unused_run = pathlib.Path(temporary) / "h3_chains" / "unused_scene"
+        unused_checkpoints = unused_run / "checkpoints"
+        unused_checkpoints.mkdir(parents=True)
+        unused_editorial = {
+            "run_name": "unused_scene",
+            "scene_order": [{"scene": 2, "scene_id": "old_empty"}],
+        }
+        chain._atomic_json(str(unused_run / "editorial.json"), unused_editorial)
+
+        def unused_ids():
+            return chain._saved_checkpoint_listing(
+                "unused_scene", include_graph=False)["editorial_unused_scene_ids"]
+
+        assert unused_ids() == ["old_empty"]
+        retained_metadata = {
+            "segment": {
+                "index": 3, "id": "old_empty",
+                "segment": str(segment.relative_to(temporary)),
+                "checkpoint": str(checkpoint.relative_to(temporary)),
+            },
+        }
+        retained_path = unused_checkpoints / ("clip_0003.%s.json" % ("a" * 32))
+        retained_path.write_text(json.dumps(retained_metadata), encoding="utf-8")
+        assert unused_ids() == [], "retained revisions protect scene IDs, not just slot numbers"
+        retained_path.unlink()
+        orphan = unused_checkpoints / ("clip_0002.%s.safetensors" % ("b" * 32))
+        orphan.write_bytes(b"orphaned saved checkpoint")
+        assert unused_ids() == [], "orphaned artifacts are not unused placeholders"
+        orphan.unlink()
+        orphan_video = unused_run / "segments" / "clip_0002.retained.mp4"
+        orphan_video.parent.mkdir()
+        orphan_video.write_bytes(b"saved video without checkpoint metadata")
+        assert unused_ids() == [], "a saved segment without a checkpoint is still protected"
+        orphan_video.unlink()
+        retained_path.write_text("invalid JSON", encoding="utf-8")
+        assert unused_ids() == [], "incomplete inventory must fail closed"
+        retained_path.unlink()
+        active_path = unused_checkpoints / "clip_0002.json"
+        active_path.write_text("[]", encoding="utf-8")
+        assert unused_ids() == [], "malformed metadata must not claim scenes are unused"
+        active_path.write_text(json.dumps(retained_metadata), encoding="utf-8")
+        assert unused_ids() == [], "mismatched active pointers must fail closed"
+        active_path.unlink()
+        assert unused_ids() == ["old_empty"]
+        assert json.loads((unused_run / "editorial.json").read_text()) == unused_editorial
+
         preview = reviews / (
             "clip_0001.%s.audiohash.review.mp4" % video_hash[:12])
         preview.write_bytes(b"synchronized preview")

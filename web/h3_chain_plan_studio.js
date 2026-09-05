@@ -1146,7 +1146,7 @@ function mount(node) {
         };
     }
 
-    function applyEditorialPayload(payload, expectedEpoch = state.editorialEditEpoch ?? 0) {
+    function applyEditorialPayload(payload, expectedEpoch = state.editorialEditEpoch ?? 0, unusedSceneIds = []) {
         const currentRun = runName();
         if (!payload || String(payload.run_name ?? "") !== currentRun) return false;
         if (expectedEpoch !== (state.editorialEditEpoch ?? 0)) return false;
@@ -1166,16 +1166,24 @@ function mount(node) {
         state.editorialStored = structuredClone(payload);
         state.editorialBaseline = editorialPayload();
         const knownIds = new Set(state.editorialBaseline.scene_order.map((row) => row.scene_id));
+        // Only the same fresh checkpoint response can prove a missing order
+        // entry has no active or retained render. Cached/older servers fail
+        // closed. This permission never applies to saved editorial edits.
+        const unusedIds = new Set(Array.isArray(unusedSceneIds) ? unusedSceneIds : []);
+        state.editorialUnusedSceneIds = (payload.scene_order ?? [])
+            .map((row) => row.scene_id).filter((id) => !knownIds.has(id) && unusedIds.has(id));
         const savedIds = [
-            ...(payload.scene_order ?? []).map((row) => row.scene_id),
+            ...(payload.scene_order ?? []).map((row) => row.scene_id).filter((id) => !unusedIds.has(id)),
             ...(payload.chapters ?? []).map((row) => row.start_scene_id),
             ...(payload.placements ?? []).map((row) => row.scene_id),
             ...(payload.trims ?? []).map((row) => row.scene_id),
             ...(payload.locked_scene_ids ?? []),
             ...(payload.replacements ?? []).map((row) => row.scene_id),
+            payload.alternate_draft?.scene_id,
         ].filter(Boolean);
-        state.editorialBindingError = savedIds.some((id) => !knownIds.has(id))
-            ? "Editorial saving paused: this Run contains scenes absent from the connected Plan. Load its matching Plan or choose a new Run name."
+        const missingIds = [...new Set(savedIds.filter((id) => !knownIds.has(id)))];
+        state.editorialBindingError = missingIds.length
+            ? `Editorial saving paused: this Run contains saved scenes or edits absent from the connected Plan (${missingIds.slice(0, 5).join(", ")}${missingIds.length > 5 ? ", …" : ""}). Load its matching Plan or choose a new Run name.`
             : "";
         state.lastEditorialSignature = editorialSignature(state.editorialStored);
         syncAlternateTakeWidget();
@@ -1272,6 +1280,11 @@ function mount(node) {
             }
         }
         payload.run_name = local.run_name;
+        // Do not turn a GET (or a seed/prompt-only edit) into a project write.
+        if (editorialSignature(payload) === state.lastEditorialSignature) return;
+        if (state.editorialUnusedSceneIds?.length) {
+            payload.scene_order = local.scene_order;
+        }
         cacheStudioPresentation([...state.checkpoints.values()], payload);
         const signature = editorialSignature(payload);
         if (signature === state.lastEditorialSignature) return;
@@ -1490,7 +1503,9 @@ function mount(node) {
             const payload = await response.json();
             if (!response.ok) throw new Error(payload.error || `HTTP ${response.status}`);
             if (state.disposed || token !== state.checkpointToken || currentRun !== runName()) return;
-            editorialChanged = applyEditorialPayload(payload.editorial, editorialEpoch);
+            editorialChanged = applyEditorialPayload(
+                payload.editorial, editorialEpoch, payload.editorial_unused_scene_ids,
+            );
             const records = payload.checkpoints ?? [];
             cacheStudioPresentation(records, payload.editorial);
             const signature = studioCheckpointSignature(currentRun, records);
@@ -5987,6 +6002,7 @@ function mount(node) {
                 state.checkpointError = ""; state.timelinePosition = null;
                 state.editorialReady = false; state.editorialRun = "";
                 state.editorialBindingError = "";
+                state.editorialUnusedSceneIds = [];
                 state.editorial = cached?.editorial
                     ? normalizedEditorial(cached.editorial)
                     : {revision:"", placements:[], trims:[], locked_scene_ids:[], subtitles:{
