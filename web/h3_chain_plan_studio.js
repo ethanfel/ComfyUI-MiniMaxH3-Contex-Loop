@@ -5004,6 +5004,14 @@ function mount(node) {
         };
         const playerTimelineSecond = () => {
             const model = timelineModel();
+            // With no generated video, load() leaves currentTime at zero.
+            // Audio monitor/canplay sync must keep the editorial playhead,
+            // not turn that zero into a seek back to the scene's start.
+            if (!video.dataset.source) {
+                return Math.max(0, Math.min(
+                    model.totalSeconds, Number(state.timelinePosition) || 0,
+                ));
+            }
             const clock = studioPlayerSegmentClock(
                 model.segments, state.playerSegmentKey,
                 Number(video.currentTime) || 0, FPS,
