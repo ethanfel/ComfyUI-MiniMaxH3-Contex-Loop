@@ -47,3 +47,9 @@ Copy both soldier_crabs_bribie_island_cc0.webm and soldier_crabs_reference_cc0.p
 2. Import soldier_crabs_reference_cc0.png; tag crabs (Picture).
 3. Edit scenes in Production Plan or Plan Studio.
 4. Queue; inspect, branch, trim, or restore in Checkpoint Manager.
+
+---
+
+NATIVE SOURCE VIDEO
+
+Core Load Video connects directly to Existing Video Context's source_video input. The node reads embedded audio and the actual video frame rate, fits the source to the Plan canvas, and prepares the protected tail. There is no VHS frame cap or manual FPS conversion. Leave source_frames and source_audio disconnected unless intentionally switching to the separate IMAGE/AUDIO route or overriding the soundtrack.

@@ -1,8 +1,8 @@
 {
   "id": "b52ef4d4-e39d-519d-9063-ab607f2a0915",
   "revision": 0,
-  "last_node_id": 40,
-  "last_link_id": 72,
+  "last_node_id": 41,
+  "last_link_id": 74,
   "nodes": [
     {
       "id": 1,
@@ -126,7 +126,7 @@
             6,
             15,
             29,
-            60
+            61
           ]
         }
       ],
@@ -161,7 +161,7 @@
             7,
             17,
             31,
-            61
+            62
           ]
         }
       ],
@@ -245,7 +245,7 @@
       "type": "MiniMaxH3ChainCurrent",
       "pos": [
         3820,
-        3328
+        3128
       ],
       "size": [
         460,
@@ -276,8 +276,8 @@
             36,
             51,
             55,
-            58,
-            70
+            59,
+            72
           ]
         },
         {
@@ -376,7 +376,7 @@
       "type": "MiniMaxH3ChainAssemble",
       "pos": [
         4390,
-        4116
+        4180
       ],
       "size": [
         440,
@@ -571,7 +571,7 @@
           "name": "LATENT",
           "type": "LATENT",
           "links": [
-            59
+            60
           ]
         }
       ],
@@ -667,7 +667,7 @@
           "name": "latent",
           "type": "LATENT",
           "links": [
-            64
+            66
           ]
         },
         {
@@ -1166,7 +1166,7 @@
       "type": "ModelAttentionBackend",
       "pos": [
         3820,
-        3828
+        3628
       ],
       "size": [
         360,
@@ -1376,7 +1376,7 @@
             1,
             43,
             49,
-            72
+            74
           ]
         },
         {
@@ -1458,7 +1458,7 @@
       "type": "MiniMaxH3ChainManifestLoad",
       "pos": [
         3820,
-        4116
+        4180
       ],
       "size": [
         440,
@@ -1654,73 +1654,98 @@
     },
     {
       "id": 28,
-      "type": "VHS_LoadVideo",
+      "type": "LoadVideo",
       "pos": [
         3820,
         1608
       ],
       "size": [
         400,
-        580
+        380
       ],
       "flags": {},
       "order": 27,
       "mode": 0,
+      "inputs": [],
+      "outputs": [
+        {
+          "name": "VIDEO",
+          "type": "VIDEO",
+          "links": [
+            58
+          ]
+        }
+      ],
+      "title": "Source Video",
+      "properties": {
+        "Node name for S&R": "LoadVideo"
+      },
+      "widgets_values": [
+        "soldier_crabs_bribie_island_cc0.webm"
+      ]
+    },
+    {
+      "id": 29,
+      "type": "GetVideoComponents",
+      "pos": [
+        3820,
+        3836
+      ],
+      "size": [
+        360,
+        164
+      ],
+      "flags": {},
+      "order": 28,
+      "mode": 0,
       "inputs": [
         {
-          "name": "meta_batch",
-          "type": "VHS_BatchManager",
-          "link": null
-        },
-        {
-          "name": "vae",
-          "type": "VAE",
-          "link": null
+          "name": "video",
+          "type": "VIDEO",
+          "link": 58
         }
       ],
       "outputs": [
         {
-          "name": "IMAGE",
+          "name": "images",
           "type": "IMAGE",
-          "links": [
-            62
-          ]
-        },
-        {
-          "name": "frame_count",
-          "type": "INT",
-          "links": null
-        },
-        {
-          "name": "audio",
-          "type": "AUDIO",
           "links": [
             63
           ]
         },
         {
-          "name": "video_info",
-          "type": "VHS_VIDEOINFO",
+          "name": "audio",
+          "type": "AUDIO",
+          "links": [
+            64
+          ]
+        },
+        {
+          "name": "fps",
+          "type": "FLOAT",
+          "links": [
+            65
+          ]
+        },
+        {
+          "name": "bit_depth",
+          "type": "COMBO",
+          "links": null
+        },
+        {
+          "name": "color_space",
+          "type": "COMBO",
           "links": null
         }
       ],
-      "title": "VHS_Load Video",
+      "title": "Get Video Components",
       "properties": {
-        "Node name for S&R": "VHS_LoadVideo"
+        "Node name for S&R": "GetVideoComponents"
       },
-      "widgets_values": {
-        "video": "soldier_crabs_bribie_island_cc0.webm",
-        "force_rate": 24,
-        "custom_width": 960,
-        "custom_height": 544,
-        "frame_load_cap": 0,
-        "skip_first_frames": 0,
-        "select_every_nth": 1,
-        "format": "AnimateDiff"
-      }
+      "widgets_values": []
     },
     {
-      "id": 29,
+      "id": 30,
       "type": "MiniMaxH3ContexLoopSourceAVTarget",
       "pos": [
         4430,
@@ -1728,41 +1753,49 @@
       ],
       "size": [
         360,
-        232
+        252
       ],
       "flags": {},
-      "order": 28,
+      "order": 29,
       "mode": 0,
       "inputs": [
         {
           "name": "state",
           "type": "H3_CHAIN_STATE",
-          "link": 58
+          "link": 59
         },
         {
           "name": "latent",
           "type": "LATENT",
-          "link": 59
+          "link": 60
         },
         {
           "name": "vae",
           "type": "VAE",
-          "link": 60
+          "link": 61
         },
         {
           "name": "audio_vae",
           "type": "VAE",
-          "link": 61
+          "link": 62
         },
         {
           "name": "source_frames",
           "type": "IMAGE",
-          "link": 62
+          "link": 63
         },
         {
           "name": "source_audio",
           "type": "AUDIO",
-          "link": 63
+          "link": 64
+        },
+        {
+          "name": "source_fps",
+          "type": "FLOAT",
+          "link": 65,
+          "widget": {
+            "name": "source_fps"
+          }
         }
       ],
       "outputs": [
@@ -1777,7 +1810,7 @@
           "name": "scene_frames",
           "type": "IMAGE",
           "links": [
-            66
+            68
           ]
         },
         {
@@ -1789,7 +1822,7 @@
           "name": "status",
           "type": "STRING",
           "links": [
-            69
+            71
           ]
         }
       ],
@@ -1803,7 +1836,7 @@
       ]
     },
     {
-      "id": 30,
+      "id": 31,
       "type": "MiniMaxH3ContexMaskedTarget",
       "pos": [
         5100,
@@ -1814,18 +1847,18 @@
         196
       ],
       "flags": {},
-      "order": 29,
+      "order": 30,
       "mode": 0,
       "inputs": [
         {
           "name": "target_latent",
           "type": "LATENT",
-          "link": 64
+          "link": 66
         },
         {
           "name": "mask",
           "type": "MASK",
-          "link": 65
+          "link": 67
         },
         {
           "name": "audio_mask",
@@ -1858,18 +1891,18 @@
       ]
     },
     {
-      "id": 31,
+      "id": 32,
       "type": "LoadImageMask",
       "pos": [
         3820,
-        2288
+        2088
       ],
       "size": [
         400,
         420
       ],
       "flags": {},
-      "order": 30,
+      "order": 31,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -1877,7 +1910,7 @@
           "name": "MASK",
           "type": "MASK",
           "links": [
-            71
+            73
           ]
         }
       ],
@@ -1891,7 +1924,7 @@
       ]
     },
     {
-      "id": 32,
+      "id": 33,
       "type": "MiniMaxH3ContexMaskGridPreview",
       "pos": [
         5100,
@@ -1902,18 +1935,18 @@
         292
       ],
       "flags": {},
-      "order": 31,
+      "order": 32,
       "mode": 0,
       "inputs": [
         {
           "name": "image",
           "type": "IMAGE",
-          "link": 66
+          "link": 68
         },
         {
           "name": "mask",
           "type": "MASK",
-          "link": 67
+          "link": 69
         }
       ],
       "outputs": [
@@ -1921,14 +1954,14 @@
           "name": "snapped_mask",
           "type": "MASK",
           "links": [
-            65
+            67
           ]
         },
         {
           "name": "grid_preview",
           "type": "IMAGE",
           "links": [
-            68
+            70
           ]
         },
         {
@@ -1952,7 +1985,7 @@
       ]
     },
     {
-      "id": 33,
+      "id": 34,
       "type": "PreviewImage",
       "pos": [
         5100,
@@ -1963,13 +1996,13 @@
         380
       ],
       "flags": {},
-      "order": 32,
+      "order": 33,
       "mode": 0,
       "inputs": [
         {
           "name": "images",
           "type": "IMAGE",
-          "link": 68
+          "link": 70
         }
       ],
       "outputs": [
@@ -1986,7 +2019,7 @@
       "widgets_values": []
     },
     {
-      "id": 34,
+      "id": 35,
       "type": "PreviewAny",
       "pos": [
         5100,
@@ -1997,13 +2030,13 @@
         180
       ],
       "flags": {},
-      "order": 33,
+      "order": 34,
       "mode": 0,
       "inputs": [
         {
           "name": "source",
           "type": "*",
-          "link": 69
+          "link": 71
         }
       ],
       "outputs": [
@@ -2020,7 +2053,7 @@
       "widgets_values": []
     },
     {
-      "id": 35,
+      "id": 36,
       "type": "MiniMaxH3ContexLoopMaskSlice",
       "pos": [
         4430,
@@ -2031,18 +2064,18 @@
         148
       ],
       "flags": {},
-      "order": 34,
+      "order": 35,
       "mode": 0,
       "inputs": [
         {
           "name": "state",
           "type": "H3_CHAIN_STATE",
-          "link": 70
+          "link": 72
         },
         {
           "name": "mask",
           "type": "MASK",
-          "link": 71
+          "link": 73
         }
       ],
       "outputs": [
@@ -2050,7 +2083,7 @@
           "name": "scene_mask",
           "type": "MASK",
           "links": [
-            67
+            69
           ]
         },
         {
@@ -2073,18 +2106,18 @@
       ]
     },
     {
-      "id": 36,
+      "id": 37,
       "type": "LoadImage",
       "pos": [
         3820,
-        2808
+        2608
       ],
       "size": [
         400,
         420
       ],
       "flags": {},
-      "order": 35,
+      "order": 36,
       "mode": 0,
       "inputs": [],
       "outputs": [
@@ -2110,7 +2143,7 @@
       ]
     },
     {
-      "id": 37,
+      "id": 38,
       "type": "MiniMaxH3GenerationProfile",
       "pos": [
         80,
@@ -2121,7 +2154,7 @@
         152
       ],
       "flags": {},
-      "order": 36,
+      "order": 37,
       "mode": 0,
       "inputs": [
         {
@@ -2154,7 +2187,7 @@
       ]
     },
     {
-      "id": 38,
+      "id": 39,
       "type": "MiniMaxH3ProjectAssetManager",
       "pos": [
         1200,
@@ -2165,7 +2198,7 @@
         880
       ],
       "flags": {},
-      "order": 37,
+      "order": 38,
       "mode": 0,
       "inputs": [
         {
@@ -2224,7 +2257,7 @@
       ]
     },
     {
-      "id": 39,
+      "id": 40,
       "type": "MiniMaxH3ChainCheckpointManager",
       "pos": [
         2400,
@@ -2235,13 +2268,13 @@
         900
       ],
       "flags": {},
-      "order": 38,
+      "order": 39,
       "mode": 0,
       "inputs": [
         {
           "name": "plan",
           "type": "H3_CHAIN_PLAN",
-          "link": 72
+          "link": 74
         }
       ],
       "outputs": [
@@ -2260,7 +2293,7 @@
       ]
     },
     {
-      "id": 40,
+      "id": 41,
       "type": "Note",
       "pos": [
         80,
@@ -2271,7 +2304,7 @@
         330
       ],
       "flags": {},
-      "order": 39,
+      "order": 40,
       "mode": 0,
       "inputs": [],
       "outputs": [],
@@ -2343,7 +2376,7 @@
     ],
     [
       8,
-      36,
+      37,
       0,
       10,
       7,
@@ -2407,7 +2440,7 @@
     ],
     [
       16,
-      29,
+      30,
       0,
       11,
       3,
@@ -2495,7 +2528,7 @@
     ],
     [
       27,
-      30,
+      31,
       0,
       15,
       4,
@@ -2631,7 +2664,7 @@
     ],
     [
       44,
-      37,
+      38,
       0,
       23,
       0,
@@ -2639,7 +2672,7 @@
     ],
     [
       45,
-      38,
+      39,
       0,
       23,
       2,
@@ -2655,7 +2688,7 @@
     ],
     [
       47,
-      38,
+      39,
       1,
       24,
       3,
@@ -2663,7 +2696,7 @@
     ],
     [
       48,
-      38,
+      39,
       0,
       24,
       6,
@@ -2743,87 +2776,87 @@
     ],
     [
       58,
-      7,
+      28,
       0,
       29,
+      0,
+      "VIDEO"
+    ],
+    [
+      59,
+      7,
+      0,
+      30,
       0,
       "H3_CHAIN_STATE"
     ],
     [
-      59,
+      60,
       10,
       1,
-      29,
+      30,
       1,
       "LATENT"
     ],
     [
-      60,
+      61,
       4,
       0,
-      29,
+      30,
       2,
-      "VAE"
-    ],
-    [
-      61,
-      5,
-      0,
-      29,
-      3,
       "VAE"
     ],
     [
       62,
-      28,
+      5,
       0,
+      30,
+      3,
+      "VAE"
+    ],
+    [
+      63,
       29,
+      0,
+      30,
       4,
       "IMAGE"
     ],
     [
-      63,
-      28,
-      2,
+      64,
       29,
+      1,
+      30,
       5,
       "AUDIO"
     ],
     [
-      64,
+      65,
+      29,
+      2,
+      30,
+      6,
+      "FLOAT"
+    ],
+    [
+      66,
       11,
       3,
-      30,
+      31,
       0,
       "LATENT"
     ],
     [
-      65,
-      32,
-      0,
-      30,
-      1,
-      "MASK"
-    ],
-    [
-      66,
-      29,
-      1,
-      32,
-      0,
-      "IMAGE"
-    ],
-    [
       67,
-      35,
+      33,
       0,
-      32,
+      31,
       1,
       "MASK"
     ],
     [
       68,
-      32,
+      30,
       1,
       33,
       0,
@@ -2831,33 +2864,49 @@
     ],
     [
       69,
-      29,
-      3,
-      34,
+      36,
       0,
-      "STRING"
-    ],
-    [
-      70,
-      7,
-      0,
-      35,
-      0,
-      "H3_CHAIN_STATE"
-    ],
-    [
-      71,
-      31,
-      0,
-      35,
+      33,
       1,
       "MASK"
     ],
     [
+      70,
+      33,
+      1,
+      34,
+      0,
+      "IMAGE"
+    ],
+    [
+      71,
+      30,
+      3,
+      35,
+      0,
+      "STRING"
+    ],
+    [
       72,
+      7,
+      0,
+      36,
+      0,
+      "H3_CHAIN_STATE"
+    ],
+    [
+      73,
+      32,
+      0,
+      36,
+      1,
+      "MASK"
+    ],
+    [
+      74,
       24,
       0,
-      39,
+      40,
       0,
       "H3_CHAIN_PLAN"
     ]
@@ -2881,7 +2930,7 @@
         3780,
         90,
         540,
-        3886
+        3950
       ],
       "color": "#393f58",
       "font_size": 24,
@@ -2893,7 +2942,7 @@
         4390,
         90,
         600,
-        2054
+        2074
       ],
       "color": "#394c49",
       "font_size": 24,
@@ -2963,7 +3012,7 @@
       "title": "RECOVERY • DISABLED / NO SAMPLING",
       "bounding": [
         3780,
-        4026,
+        4090,
         1090,
         490
       ],

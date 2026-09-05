@@ -57,3 +57,18 @@ API prompts. All project writes and queue requests were blocked. This checks
 loading, settings and wiring, not numerical model output or GPU memory use.
 Before release, also test representative real renders with installed models and
 assets, particularly the optional external upscale packs.
+
+The September 5–6 local execution pass completed all 15 non-upscale workflows
+with bounded smoke settings (two steps, reduced canvas and loop-scene lengths).
+The seven corrected workflows were rerun and their final audio/video streams and
+expected checkpoints verified. The unavailable Ref2VA model was substituted with
+FL2VA for these execution tests, and a compatible installed H3 text encoder was
+used. This does not replace full-resolution or genuine Ref2VA quality testing.
+
+Maintained media examples now use core Load Video/native VIDEO paths. In the
+tested frontend, VHS could reinterpret named widget values as its old positional
+layout, silently changing frame caps and frame selection; its lazy audio mapping
+also failed strict AUDIO-dictionary consumers. Check that serialized API values
+equal the recipe values, not merely that they satisfy a type/range schema.
+The native bridge preserves the 114-frame gap and uses a 311-frame H3-safe source
+span, dropping only the former demo's final two frames.

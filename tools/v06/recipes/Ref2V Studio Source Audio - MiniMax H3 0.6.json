@@ -206,6 +206,10 @@
           "n4",
           "VAE"
         ],
+        "audio_vae": [
+          "n5",
+          "VAE"
+        ],
         "latent": [
           "n16",
           "latent"

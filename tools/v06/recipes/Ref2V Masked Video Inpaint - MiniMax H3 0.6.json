@@ -1,6 +1,14 @@
 {
   "nodes": [
     {
+      "key": "core_source_note",
+      "type": "Note",
+      "settings": {
+        "text": "CORE SOURCE VIDEO\n\nLoad Video feeds Get Video Components. Keep all three images, audio, and fps outputs connected to Loop Source AV Target: that node converts the native source rate to H3's 24 fps and fits each scene to the Plan canvas. Do not replace the fps connection with a fixed 24 for non-24-fps input. The included single-frame mask is broadcast across the scene; if using a tracked mask video, supply that mask's actual source frame rate to Mask Slice."
+      },
+      "inputs": {}
+    },
+    {
       "key": "n1",
       "type": "UNETLoader",
       "settings": {
@@ -583,19 +591,18 @@
     },
     {
       "key": "n39",
-      "type": "VHS_LoadVideo",
+      "type": "LoadVideo",
       "settings": {
-        "video": "soldier_crabs_bribie_island_cc0.webm",
-        "force_rate": 24,
-        "custom_width": 960,
-        "custom_height": 544,
-        "frame_load_cap": 0,
-        "skip_first_frames": 0,
-        "select_every_nth": 1,
-        "format": "AnimateDiff"
+        "file": "soldier_crabs_bribie_island_cc0.webm"
       },
       "inputs": {},
-      "label": "Load Video (Upload) 🎥🅥🅗🅢 — CC0 2015 SOLDIER CRABS — SOURCE AV"
+      "label": "Source Video — CC0 Soldier Crabs"
+    },
+    {
+      "key": "source_components",
+      "type": "GetVideoComponents",
+      "settings": {},
+      "inputs": {"video": ["n39", "VIDEO"]}
     },
     {
       "key": "n40",
@@ -622,12 +629,16 @@
           "VAE"
         ],
         "source_frames": [
-          "n39",
-          "IMAGE"
+          "source_components",
+          "images"
         ],
         "source_audio": [
-          "n39",
+          "source_components",
           "audio"
+        ],
+        "source_fps": [
+          "source_components",
+          "fps"
         ]
       },
       "label": "MiniMax H3 Masking · Loop Source AV Target — FRAME-LOCK CURRENT LOOP SCENE TO SOURCE AV"

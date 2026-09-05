@@ -578,19 +578,12 @@
     },
     {
       "key": "n39",
-      "type": "VHS_LoadVideo",
+      "type": "LoadVideo",
       "settings": {
-        "video": "soldier_crabs_bribie_island_cc0.webm",
-        "force_rate": 24,
-        "custom_width": 960,
-        "custom_height": 544,
-        "frame_load_cap": 0,
-        "skip_first_frames": 0,
-        "select_every_nth": 1,
-        "format": "AnimateDiff"
+        "file": "soldier_crabs_bribie_island_cc0.webm"
       },
       "inputs": {},
-      "label": "Load Video (Upload) 🎥🅥🅗🅢 — CC0 SOLDIER CRABS SOURCE"
+      "label": "Source Video"
     },
     {
       "key": "n40",
@@ -604,13 +597,9 @@
           "n33",
           "plan"
         ],
-        "source_frames": [
+        "source_video": [
           "n39",
-          "IMAGE"
-        ],
-        "source_audio": [
-          "n39",
-          "audio"
+          "VIDEO"
         ]
       },
       "label": "MiniMax H3 Existing Video Context — CC0 SOURCE VIDEO → MASKED SCENE 1 PREFIX"
@@ -660,6 +649,14 @@
       },
       "inputs": {},
       "label": "0.6 STUDIO QUICK START"
+    },
+    {
+      "key": "native_video_note",
+      "type": "Note",
+      "settings": {
+        "text": "NATIVE SOURCE VIDEO\n\nCore Load Video connects directly to Existing Video Context's source_video input. The node reads embedded audio and the actual video frame rate, fits the source to the Plan canvas, and prepares the protected tail. There is no VHS frame cap or manual FPS conversion. Leave source_frames and source_audio disconnected unless intentionally switching to the separate IMAGE/AUDIO route or overriding the soundtrack."
+      },
+      "inputs": {}
     }
   ]
 }

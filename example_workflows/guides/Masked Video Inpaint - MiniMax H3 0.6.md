@@ -4,6 +4,12 @@ Built for the **0.6 branch**, not nightly.
 
 Setup controls come first, followed by numbered generation columns. Recovery is disabled by default. Enable it only to assemble saved clips without sampling.
 
+CORE SOURCE VIDEO
+
+Load Video feeds Get Video Components. Keep all three images, audio, and fps outputs connected to Loop Source AV Target: that node converts the native source rate to H3's 24 fps and fits each scene to the Plan canvas. Do not replace the fps connection with a fixed 24 for non-24-fps input. The included single-frame mask is broadcast across the scene; if using a tracked mask video, supply that mask's actual source frame rate to Mask Slice.
+
+---
+
 SOURCE ASSET — CC0
 
 Light-blue soldier crabs on Bribie Island, filmed in 2015 by Watermark Resort Caloundra. Wikimedia Commons records the video as CC0 1.0.

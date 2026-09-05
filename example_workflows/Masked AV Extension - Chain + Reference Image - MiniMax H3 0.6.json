@@ -2,7 +2,7 @@
   "id": "df2e36ac-eeeb-585c-b160-1815771ebbe9",
   "revision": 0,
   "last_node_id": 33,
-  "last_link_id": 64,
+  "last_link_id": 63,
   "nodes": [
     {
       "id": 1,
@@ -376,7 +376,7 @@
       "type": "MiniMaxH3ChainAssemble",
       "pos": [
         4390,
-        2552
+        2352
       ],
       "size": [
         440,
@@ -1194,7 +1194,7 @@
       "type": "ModelAttentionBackend",
       "pos": [
         3820,
-        1972
+        1772
       ],
       "size": [
         360,
@@ -1232,7 +1232,7 @@
       "type": "MiniMaxH3ChainManifestLoad",
       "pos": [
         3820,
-        2552
+        2352
       ],
       "size": [
         440,
@@ -1486,7 +1486,7 @@
             46,
             58,
             61,
-            64
+            63
           ]
         },
         {
@@ -1683,77 +1683,42 @@
     },
     {
       "id": 28,
-      "type": "VHS_LoadVideo",
+      "type": "LoadVideo",
       "pos": [
         3820,
         1292
       ],
       "size": [
         400,
-        580
+        380
       ],
       "flags": {},
       "order": 27,
       "mode": 0,
-      "inputs": [
-        {
-          "name": "meta_batch",
-          "type": "VHS_BatchManager",
-          "link": null
-        },
-        {
-          "name": "vae",
-          "type": "VAE",
-          "link": null
-        }
-      ],
+      "inputs": [],
       "outputs": [
         {
-          "name": "IMAGE",
-          "type": "IMAGE",
+          "name": "VIDEO",
+          "type": "VIDEO",
           "links": [
             62
           ]
-        },
-        {
-          "name": "frame_count",
-          "type": "INT",
-          "links": null
-        },
-        {
-          "name": "audio",
-          "type": "AUDIO",
-          "links": [
-            63
-          ]
-        },
-        {
-          "name": "video_info",
-          "type": "VHS_VIDEOINFO",
-          "links": null
         }
       ],
-      "title": "VHS_Load Video",
+      "title": "Source Video",
       "properties": {
-        "Node name for S&R": "VHS_LoadVideo"
+        "Node name for S&R": "LoadVideo"
       },
-      "widgets_values": {
-        "video": "soldier_crabs_bribie_island_cc0.webm",
-        "force_rate": 24,
-        "custom_width": 960,
-        "custom_height": 544,
-        "frame_load_cap": 0,
-        "skip_first_frames": 0,
-        "select_every_nth": 1,
-        "format": "AnimateDiff"
-      }
+      "widgets_values": [
+        "soldier_crabs_bribie_island_cc0.webm"
+      ]
     },
     {
       "id": 29,
       "type": "MiniMaxH3ChainExternalVideo",
       "pos": [
         3820,
-        2180
+        1980
       ],
       "size": [
         360,
@@ -1771,17 +1736,17 @@
         {
           "name": "source_video",
           "type": "VIDEO",
-          "link": null
+          "link": 62
         },
         {
           "name": "source_frames",
           "type": "IMAGE",
-          "link": 62
+          "link": null
         },
         {
           "name": "source_audio",
           "type": "AUDIO",
-          "link": 63
+          "link": null
         }
       ],
       "outputs": [
@@ -1940,7 +1905,7 @@
         {
           "name": "plan",
           "type": "H3_CHAIN_PLAN",
-          "link": 64
+          "link": 63
         }
       ],
       "outputs": [
@@ -2477,19 +2442,11 @@
       28,
       0,
       29,
-      2,
-      "IMAGE"
+      1,
+      "VIDEO"
     ],
     [
       63,
-      28,
-      2,
-      29,
-      3,
-      "AUDIO"
-    ],
-    [
-      64,
       25,
       0,
       32,
@@ -2516,7 +2473,7 @@
         3780,
         90,
         480,
-        2322
+        2122
       ],
       "color": "#393f58",
       "font_size": 24,
@@ -2598,7 +2555,7 @@
       "title": "RECOVERY • DISABLED / NO SAMPLING",
       "bounding": [
         3780,
-        2462,
+        2262,
         1090,
         490
       ],

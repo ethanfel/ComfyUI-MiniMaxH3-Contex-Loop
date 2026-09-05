@@ -8,6 +8,35 @@
     "note": "External-only offline contracts; H3 Context Loop contracts are imported from this checkout, never from a server."
   },
   "nodes": {
+    "GetVideoComponents": {
+      "input": {"required": {"video": ["VIDEO", {}]}},
+      "output": ["IMAGE", "AUDIO", "FLOAT", "COMBO", "COMBO"],
+      "output_is_list": [false, false, false, false, false],
+      "output_name": ["images", "audio", "fps", "bit_depth", "color_space"]
+    },
+    "Video Slice": {
+      "input": {"required": {
+        "video": ["VIDEO", {}],
+        "start_time": ["FLOAT", {"default": 0.0, "min": -100000.0, "max": 100000.0, "step": 0.001}],
+        "duration": ["FLOAT", {"default": 0.0, "min": 0.0, "step": 0.001}],
+        "strict_duration": ["BOOLEAN", {"default": false}]
+      }},
+      "output": ["VIDEO"],
+      "output_is_list": [false],
+      "output_name": ["VIDEO"]
+    },
+    "ImageScale": {
+      "input": {"required": {
+        "image": ["IMAGE"],
+        "upscale_method": [["nearest-exact", "bilinear", "area", "bicubic", "lanczos"]],
+        "width": ["INT", {"default": 512, "min": 0, "max": 16384, "step": 1}],
+        "height": ["INT", {"default": 512, "min": 0, "max": 16384, "step": 1}],
+        "crop": [["disabled", "center"]]
+      }},
+      "output": ["IMAGE"],
+      "output_is_list": [false],
+      "output_name": ["IMAGE"]
+    },
     "AudioConcat": {
       "input": {
         "required": {
@@ -461,7 +490,8 @@
         "required": {
           "file": [
             [
-              "SELECT_LONG_MOTION_REFERENCE_WITH_AUDIO.mp4"
+              "SELECT_LONG_MOTION_REFERENCE_WITH_AUDIO.mp4",
+              "soldier_crabs_bribie_island_cc0.webm"
             ],
             {
               "multiselect": false

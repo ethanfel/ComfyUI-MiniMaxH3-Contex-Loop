@@ -272,6 +272,52 @@ def validate_studio(workflow: dict, path: Path) -> None:
         assert profile["widgets_values"][1] == "Lip-sync to source audio"
         assert not nodes(workflow, "LoadAudio")
         assert not nodes(workflow, "MiniMaxH3SourceTimeline")
+        context = one(workflow, "MiniMaxH3ChainContext")
+        audio_vae = origin(workflow, context, "audio_vae")
+        assert audio_vae["type"] == "VAELoader"
+        assert "audio_vae" in audio_vae["widgets_values"][0]
+
+
+def validate_execution_regressions(workflow: dict, path: Path) -> None:
+    for start in nodes(workflow, "MiniMaxH3ChainLoopStart"):
+        assert start["widgets_values"][0] == 1, "Release examples must start a fresh project"
+    for external in nodes(workflow, "MiniMaxH3ChainExternalVideo"):
+        assert origin(workflow, external, "source_video")["type"] == "LoadVideo"
+        assert input_socket(external, "source_frames")["link"] is None
+        assert input_socket(external, "source_audio")["link"] is None
+    for target in nodes(workflow, "MiniMaxH3ContexLoopSourceAVTarget"):
+        components = origin(workflow, target, "source_frames")
+        assert components["type"] == "GetVideoComponents"
+        assert origin(workflow, components, "video")["type"] == "LoadVideo"
+        # The core loader's native frame rate is not necessarily H3's 24 fps.
+        assert origin(workflow, target, "source_audio") == components
+        assert origin(workflow, target, "source_fps") == components
+        for field, output in (("source_frames", "images"), ("source_audio", "audio"),
+                              ("source_fps", "fps")):
+            wire = link(workflow, input_socket(target, field)["link"])
+            assert components["outputs"][wire[2]]["name"] == output
+    for bridge in nodes(workflow, "MiniMaxH3ContexMaskedAVBridge"):
+        assert not nodes(workflow, "VHS_LoadVideo")
+        prepare = one(workflow, "MiniMaxH3ReferenceVideoPrepare")
+        assert prepare["widgets_values"][0] == 311
+        resize = one(workflow, "ImageScale")
+        conditioning = one(workflow, "MiniMaxH3ImageToVideo")
+        assert resize["widgets_values"][1:3] == conditioning["widgets_values"][1:3]
+        assert conditioning["widgets_values"][3] == 192  # 39 + 114 + 39
+        for side, start, duration in (("start", 0, 99 / 24), ("end", 213 / 24, 0)):
+            components = origin(workflow, bridge, side + "_frames")
+            assert components["type"] == "GetVideoComponents"
+            assert origin(workflow, bridge, side + "_audio") == components
+            sliced = origin(workflow, components, "video")
+            assert sliced["type"] == "Video Slice"
+            assert sliced["widgets_values"] == [start, duration, True]
+            source = origin(workflow, sliced, "video")
+            assert source["type"] == "CreateVideo" and source["widgets_values"][0] == 24
+            assert origin(workflow, source, "images") == resize
+            assert origin(workflow, source, "audio") == prepare
+            assert any(origin(workflow, concat, field) == components
+                       for concat in nodes(workflow, "AudioConcat")
+                       for field in ("audio1", "audio2"))
 
 
 def validate_assets() -> None:
@@ -302,6 +348,7 @@ def main() -> None:
         validate_clean_metadata(workflow)
         validate_modern_authoring(workflow, path)
         validate_studio(workflow, path)
+        validate_execution_regressions(workflow, path)
         uuids.add(workflow["id"])
         for node in workflow["nodes"]:
             if node["type"] in {"UNETLoader", "CLIPLoader", "VAELoader"}:

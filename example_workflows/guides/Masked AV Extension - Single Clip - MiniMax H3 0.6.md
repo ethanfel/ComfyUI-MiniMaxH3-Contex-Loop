@@ -50,3 +50,9 @@ This intentionally uses the same recursive loop as long chains, with a one-scene
 2. Keep the bundled source media selected in the existing loader nodes; use the Carousel for additional project assets.
 3. Edit scenes in Production Plan or Plan Studio.
 4. Queue; inspect, branch, trim, or restore in Checkpoint Manager.
+
+---
+
+NATIVE SOURCE VIDEO
+
+Core Load Video connects directly to Existing Video Context's source_video input. The node reads embedded audio and the actual video frame rate, fits the source to the Plan canvas, and prepares the protected tail. There is no VHS frame cap or manual FPS conversion. Leave source_frames and source_audio disconnected unless intentionally switching to the separate IMAGE/AUDIO route or overriding the soundtrack.

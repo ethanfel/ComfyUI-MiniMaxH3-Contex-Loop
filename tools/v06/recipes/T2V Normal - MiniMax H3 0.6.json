@@ -93,7 +93,7 @@
       "key": "n11",
       "type": "MiniMaxH3ChainLoopStart",
       "settings": {
-        "start_clip": 2,
+        "start_clip": 1,
         "scene_range": "",
         "verify_resume_history": true
       },
