@@ -109,7 +109,7 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.7.0";
+} from "./h3_chain_plan_studio_core.mjs?v=0.7.1";
 import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.2";
 import {projectMutationOptions} from "./h3_project_ownership.mjs?v=0.7.3";
 
@@ -1856,7 +1856,9 @@ function mount(node) {
     }
 
     function sourceAudio() {
-        return matchingStudioSourceAudio(state.sourcePreview, timing().shots);
+        return matchingStudioSourceAudio(
+            state.sourcePreview, timing().shots, runName(),
+        );
     }
 
     function sourceAudioUrl() {
@@ -1950,10 +1952,16 @@ function mount(node) {
         const requestKey = `${token}:${url}`;
         if (state.sourceWaveformToken === requestKey && state.sourceWaveform) return;
         if (state.sourceWaveformToken === requestKey && state.sourceWaveformPromise) {
-            return state.sourceWaveformPromise;
+            // The owning request below reports errors in the timeline. A
+            // deduplicated fire-and-forget caller must not reject separately.
+            await state.sourceWaveformPromise.catch(() => {});
+            return;
         }
+        const sameSource = state.sourceWaveformToken.startsWith(`${token}:`);
         state.sourceWaveformToken = requestKey;
-        state.sourceWaveform = null;
+        // Keep the already-loaded portion visible while a longer arrangement
+        // requests more coverage. Never retain a different source's waveform.
+        if (!sameSource) state.sourceWaveform = null;
         const request = (async () => {
             const response = await api.fetchApi(url);
             const waveform = await response.json();
@@ -2620,9 +2628,9 @@ function mount(node) {
             tailCard.append(waveform);
             host.append(tailCard);
         }
-        if (!state.sourceWaveform && !state.sourceWaveformPromise) {
-            void loadSourceWaveform();
-        }
+        // Resizes, trims and placement edits can change the coverage needed.
+        // The token + URL cache coalesces repeated renders and in-flight loads.
+        void loadSourceWaveform();
     }
 
     function renderSubtitleTimeline() {

@@ -14,6 +14,7 @@ IMPORT = re.compile(
     r'''["'](\./[^"']+\.mjs)(?:\?v=([^"']+))?["']''')
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 MINIMUM_CACHE_VERSION = {
+    "h3_chain_plan_studio_core.mjs": "0.7.1",
     # These helpers changed during 0.7 nightly development. Reusing their
     # original 0.7.0 URL can load an incompatible browser-cached module and
     # leave an entire DOM node blank before it can render an error message.

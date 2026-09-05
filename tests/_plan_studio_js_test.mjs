@@ -266,7 +266,7 @@ assert.notEqual(
     }]),
 );
 
-const sourceTimeline = {token:"opaque", source_audio:{
+const sourceTimeline = {token:"opaque", run_name:"studio", source_audio:{
     available:true, frame_count:1042, seek_seconds:2,
     duration_seconds:1042 / 24, available_frame_count:2000,
     available_duration_seconds:2000 / 24,
@@ -292,8 +292,14 @@ assert.equal(
     matchingStudioSourceAudio(
         sourceTimeline, [{...rows[0], deliveredFrames:361}, ...rows.slice(1)],
     ),
-    null,
+    sourceTimeline.source_audio,
 );
+assert.equal(matchingStudioSourceAudio(sourceTimeline, rows, "other-run"), null);
+assert.equal(matchingStudioSourceAudio({...sourceTimeline, token:""}, rows), null);
+assert.equal(matchingStudioSourceAudio({
+    ...sourceTimeline, source_audio:{available:false},
+}, rows), null);
+assert.equal(matchingStudioSourceAudio(sourceTimeline, []), null);
 assert.ok(Math.abs(
     studioSourceAudioSecond(sourceTimeline.source_audio, 3) - 5,
 ) < 1e-9);
@@ -311,6 +317,12 @@ assert.deepEqual(
     ),
     [5, 6, 7],
 );
+assert.deepEqual(studioWaveformIntervalSamples(
+    {points_per_second:2, samples:[1, .8, .6, .4]}, 1, 2,
+), [.6, .4, 0, 0]);
+assert.deepEqual(studioWaveformIntervalSamples(
+    {points_per_second:2, samples:[1, .8, .6, .4]}, 2, 2,
+), []);
 
 const exactGrid = h3StudioGridMarkers(345, 39, "masked_av");
 assert.deepEqual(exactGrid.raw, {

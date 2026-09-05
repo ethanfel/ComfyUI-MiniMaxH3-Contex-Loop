@@ -4,6 +4,12 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Fixed Plan Studio dropping and disabling Source Timeline audio after scene
+  frame-count edits. The source track stays available as scene windows resize,
+  with updated waveform coverage and seek positions; the underlying audio and
+  generation settings remain unchanged. Waveforms no longer stretch visually
+  across silent space beyond the source end.
+
 - Chapter Delivery now exports already-generated scenes of unfinished chapters
   instead of requiring their planned final scene. Immutable recovery snapshots
   distinguish the available scene range from the planned chapter end.
