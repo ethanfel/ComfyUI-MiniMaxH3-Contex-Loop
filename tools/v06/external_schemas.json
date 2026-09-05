@@ -5,9 +5,353 @@
     "MAINodes": "https://github.com/matlowai/ComfyUI-MAINodes/blob/main/motion.py",
     "SeedVR2": "https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler/blob/main/src/interfaces/direct_video_upscaler.py",
     "LBH": "https://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler",
+    "USDU_H3": "https://github.com/lisitskyaa/ComfyUI_UltimateSDUpscaleGuider_H3/blob/main/usdu_nodes.py (2026-09-06; anchor_context BOOLEAN)",
+    "DLSS5": "https://github.com/Blueforcer/ComfyUI-DLSS5-Enhancer/tree/main/nodes (2026-09-06)",
     "note": "External-only offline contracts; H3 Context Loop contracts are imported from this checkout, never from a server."
   },
   "nodes": {
+    "LoraLoaderModelOnly": {
+      "input": {"required": {
+        "model": ["MODEL", {}],
+        "lora_name": [["minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors"], {}],
+        "strength_model": ["FLOAT", {"default": 1.0, "min": -100.0, "max": 100.0, "step": 0.01}]
+      }},
+      "output": ["MODEL"], "output_name": ["MODEL"], "output_is_list": [false]
+    },
+    "DLSS5Settings": {
+      "input": {
+        "required": {
+          "upscaling_mode": [
+            [
+              "1x (DLAA / native)",
+              "1.5x (Quality)",
+              "1.724x (Balanced)",
+              "2x (Performance)",
+              "3x (Ultra Performance)"
+            ],
+            {
+              "default": "1x (DLAA / native)"
+            }
+          ],
+          "nr_preset": [
+            [
+              "Default",
+              "Preset #1",
+              "Preset #2",
+              "Preset #3"
+            ],
+            {
+              "default": "Default"
+            }
+          ],
+          "nr_style": [
+            [
+              "Default",
+              "Natural",
+              "Cinematic"
+            ],
+            {
+              "default": "Default"
+            }
+          ],
+          "nr_intensity": [
+            "FLOAT",
+            {
+              "default": 1,
+              "min": 0,
+              "max": 2,
+              "step": 0.01
+            }
+          ],
+          "local_tone_strength": [
+            "FLOAT",
+            {
+              "default": 1,
+              "min": 0,
+              "max": 2,
+              "step": 0.01
+            }
+          ],
+          "local_structure_strength": [
+            "FLOAT",
+            {
+              "default": 1.5,
+              "min": 0,
+              "max": 2,
+              "step": 0.01
+            }
+          ],
+          "skin_structure_strength": [
+            "FLOAT",
+            {
+              "default": 2,
+              "min": -1,
+              "max": 2,
+              "step": 0.01
+            }
+          ],
+          "automatic_mask": [
+            "BOOLEAN",
+            {
+              "default": true
+            }
+          ],
+          "dlss_model_preset": [
+            [
+              "Default",
+              "J",
+              "K",
+              "L",
+              "M"
+            ],
+            {
+              "default": "M"
+            }
+          ],
+          "motion": [
+            [
+              "auto",
+              "optical_flow",
+              "none"
+            ],
+            {
+              "default": "auto"
+            }
+          ],
+          "scene_change_threshold": [
+            "FLOAT",
+            {
+              "default": 0.24,
+              "min": 0.01,
+              "max": 1,
+              "step": 0.01
+            }
+          ],
+          "warmup_frames": [
+            "INT",
+            {
+              "default": 0,
+              "min": 0,
+              "max": 16,
+              "step": 1
+            }
+          ],
+          "runtime_dir": [
+            "STRING",
+            {
+              "default": ""
+            }
+          ]
+        }
+      },
+      "output": [
+        "DLSS5_SETTINGS"
+      ],
+      "output_name": [
+        "settings"
+      ],
+      "output_is_list": [
+        false
+      ]
+    },
+    "DLSS5EnhanceImages": {
+      "input": {
+        "required": {
+          "images": [
+            "IMAGE",
+            {}
+          ],
+          "settings": [
+            "DLSS5_SETTINGS",
+            {}
+          ],
+          "verify_neural_rendering": [
+            "BOOLEAN",
+            {
+              "default": true
+            }
+          ]
+        }
+      },
+      "output": [
+        "IMAGE"
+      ],
+      "output_name": [
+        "images"
+      ],
+      "output_is_list": [
+        false
+      ]
+    },
+    "UltimateSDUpscaleNoUpscaleGuider": {
+      "input": {
+        "required": {
+          "upscaled_image": [
+            "IMAGE",
+            {}
+          ],
+          "guider": [
+            "GUIDER",
+            {}
+          ],
+          "sampler": [
+            "SAMPLER",
+            {}
+          ],
+          "sigmas": [
+            "SIGMAS",
+            {}
+          ],
+          "vae": [
+            "VAE",
+            {}
+          ],
+          "seed": [
+            "INT",
+            {
+              "default": 0,
+              "min": 0,
+              "max": 18446744073709551615
+            }
+          ],
+          "mode_type": [
+            [
+              "Linear",
+              "Chess",
+              "None"
+            ],
+            {}
+          ],
+          "tile_width": [
+            "INT",
+            {
+              "default": 512,
+              "min": 64,
+              "max": 8192,
+              "step": 8
+            }
+          ],
+          "tile_height": [
+            "INT",
+            {
+              "default": 512,
+              "min": 64,
+              "max": 8192,
+              "step": 8
+            }
+          ],
+          "mask_blur": [
+            "INT",
+            {
+              "default": 8,
+              "min": 0,
+              "max": 64,
+              "step": 1
+            }
+          ],
+          "tile_padding": [
+            "INT",
+            {
+              "default": 32,
+              "min": 0,
+              "max": 8192,
+              "step": 8
+            }
+          ],
+          "seam_fix_mode": [
+            [
+              "None",
+              "Band Pass",
+              "Half Tile",
+              "Half Tile + Intersections"
+            ],
+            {}
+          ],
+          "seam_fix_denoise": [
+            "FLOAT",
+            {
+              "default": 1,
+              "min": 0,
+              "max": 1,
+              "step": 0.01
+            }
+          ],
+          "seam_fix_width": [
+            "INT",
+            {
+              "default": 64,
+              "min": 0,
+              "max": 8192,
+              "step": 8
+            }
+          ],
+          "seam_fix_mask_blur": [
+            "INT",
+            {
+              "default": 8,
+              "min": 0,
+              "max": 64,
+              "step": 1
+            }
+          ],
+          "seam_fix_padding": [
+            "INT",
+            {
+              "default": 16,
+              "min": 0,
+              "max": 8192,
+              "step": 8
+            }
+          ],
+          "tile_overlap_mode": [
+            [
+              "Ignore Overlap",
+              "Reprocess Overlap",
+              "Context Only Overlap"
+            ],
+            {
+              "default": "Reprocess Overlap"
+            }
+          ],
+          "tiled_decode": [
+            "BOOLEAN",
+            {
+              "default": false
+            }
+          ],
+          "batch_size": [
+            "INT",
+            {
+              "default": 1,
+              "min": 1,
+              "max": 4096,
+              "step": 1
+            }
+          ]
+        },
+        "optional": {
+          "mask": [
+            "MASK",
+            {}
+          ],
+          "anchor_context": [
+            "BOOLEAN",
+            {
+              "default": false
+            }
+          ]
+        }
+      },
+      "output": [
+        "IMAGE"
+      ],
+      "output_name": [
+        "IMAGE"
+      ],
+      "output_is_list": [
+        false
+      ]
+    },
     "GetVideoComponents": {
       "input": {"required": {"video": ["VIDEO", {}]}},
       "output": ["IMAGE", "AUDIO", "FLOAT", "COMBO", "COMBO"],

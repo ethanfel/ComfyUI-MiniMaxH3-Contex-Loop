@@ -1,0 +1,324 @@
+{
+  "compatibility_note": "Validated against the **0.6 node definitions**. A corresponding nightly example is maintained on that branch.",
+  "nodes": [
+    {
+      "key": "manager",
+      "type": "MiniMaxH3ChainCheckpointManager",
+      "settings": {
+        "selection_json": ""
+      },
+      "inputs": {}
+    },
+    {
+      "key": "adapter",
+      "type": "MiniMaxH3ChainUpscaleAdapter",
+      "settings": {
+        "profile": "h3_pixel_dlss5",
+        "backend": "pixel",
+        "recipe_json": "{\"upscaler\":\"DLSS5\",\"refiner\":\"USDU H3\",\"conditioning\":\"actual_image_size\",\"audio\":\"preserve_source\",\"denoise\":0.2,\"steps\":3}",
+        "start_clip": 1,
+        "end_clip": 0,
+        "save_latent": false,
+        "segment_crf": 18
+      },
+      "inputs": {
+        "source_manifest": [
+          "manager",
+          "selected_manifest"
+        ]
+      }
+    },
+    {
+      "key": "video_vae",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "current",
+      "type": "MiniMaxH3ChainUpscalePixelCurrent",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "adapter",
+          "state"
+        ],
+        "video_vae": [
+          "video_vae",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "model",
+      "type": "UNETLoader",
+      "settings": {
+        "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "turbo",
+      "type": "LoraLoaderModelOnly",
+      "settings": {
+        "lora_name": "minimax_h3_turbo_v4_step600_ema_pruned_comfyui.safetensors",
+        "strength_model": 0.75
+      },
+      "inputs": {
+        "model": [
+          "model",
+          "MODEL"
+        ]
+      }
+    },
+    {
+      "key": "clip",
+      "type": "CLIPLoader",
+      "settings": {
+        "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "type": "minimax",
+        "device": "default"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "dlss_settings",
+      "type": "DLSS5Settings",
+      "settings": {
+        "upscaling_mode": "2x (Performance)",
+        "nr_preset": "Default",
+        "nr_style": "Default",
+        "nr_intensity": 0,
+        "local_tone_strength": 0,
+        "local_structure_strength": 0,
+        "skin_structure_strength": 0,
+        "automatic_mask": true,
+        "dlss_model_preset": "L",
+        "motion": "auto",
+        "scene_change_threshold": 0.24,
+        "warmup_frames": 0,
+        "runtime_dir": ""
+      },
+      "inputs": {}
+    },
+    {
+      "key": "dlss",
+      "type": "DLSS5EnhanceImages",
+      "settings": {
+        "verify_neural_rendering": true
+      },
+      "inputs": {
+        "images": [
+          "current",
+          "images"
+        ],
+        "settings": [
+          "dlss_settings",
+          "settings"
+        ]
+      }
+    },
+    {
+      "key": "override",
+      "type": "MiniMaxH3UpscaleReferencePromptOverride",
+      "settings": {
+        "prompt_override": "",
+        "disabled_tags": ""
+      },
+      "inputs": {}
+    },
+    {
+      "key": "conditioning",
+      "type": "MiniMaxH3ChainUpscalePixelConditioning",
+      "settings": {
+        "missing_cache": "text_only",
+        "motion_ref_mode": "exclude_video_keep_audio",
+        "method": "bilinear",
+        "prompt_override": "",
+        "override_ref_image_size": "inherit",
+        "override_reference_policy": "strict"
+      },
+      "inputs": {
+        "state": [
+          "current",
+          "state"
+        ],
+        "clip": [
+          "clip",
+          "CLIP"
+        ],
+        "video_vae": [
+          "video_vae",
+          "VAE"
+        ],
+        "images": [
+          "dlss",
+          "images"
+        ],
+        "prompt_override": [
+          "override",
+          "prompt_override"
+        ],
+        "tagged_references": [
+          "override",
+          "references"
+        ]
+      }
+    },
+    {
+      "key": "guider",
+      "type": "BasicGuider",
+      "settings": {},
+      "inputs": {
+        "model": [
+          "turbo",
+          "MODEL"
+        ],
+        "conditioning": [
+          "conditioning",
+          "positive"
+        ]
+      }
+    },
+    {
+      "key": "schedule",
+      "type": "BasicScheduler",
+      "settings": {
+        "scheduler": "beta",
+        "steps": 3,
+        "denoise": 0.2
+      },
+      "inputs": {
+        "model": [
+          "turbo",
+          "MODEL"
+        ]
+      }
+    },
+    {
+      "key": "sampler",
+      "type": "KSamplerSelect",
+      "settings": {
+        "sampler_name": "er_sde"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "refine",
+      "type": "UltimateSDUpscaleNoUpscaleGuider",
+      "settings": {
+        "seed": 0,
+        "control_after_generate": "fixed",
+        "mode_type": "Chess",
+        "tile_width": 864,
+        "tile_height": 960,
+        "mask_blur": 16,
+        "tile_padding": 64,
+        "seam_fix_mode": "None",
+        "seam_fix_denoise": 0.15,
+        "seam_fix_width": 32,
+        "seam_fix_mask_blur": 4,
+        "seam_fix_padding": 16,
+        "tile_overlap_mode": "Reprocess Overlap",
+        "tiled_decode": true,
+        "batch_size": 1,
+        "anchor_context": false
+      },
+      "inputs": {
+        "upscaled_image": [
+          "conditioning",
+          "images"
+        ],
+        "guider": [
+          "guider",
+          "GUIDER"
+        ],
+        "sampler": [
+          "sampler",
+          "SAMPLER"
+        ],
+        "sigmas": [
+          "schedule",
+          "SIGMAS"
+        ],
+        "vae": [
+          "video_vae",
+          "VAE"
+        ],
+        "seed": [
+          "current",
+          "seed"
+        ]
+      }
+    },
+    {
+      "key": "save",
+      "type": "MiniMaxH3ChainUpscaleSegmentSave",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "current",
+          "state"
+        ],
+        "images": [
+          "refine",
+          "IMAGE"
+        ]
+      }
+    },
+    {
+      "key": "end",
+      "type": "MiniMaxH3ChainUpscaleLoopEnd",
+      "settings": {},
+      "inputs": {
+        "flow": [
+          "adapter",
+          "flow"
+        ],
+        "state": [
+          "current",
+          "state"
+        ],
+        "images": [
+          "refine",
+          "IMAGE"
+        ],
+        "segment": [
+          "save",
+          "segment"
+        ]
+      }
+    },
+    {
+      "key": "assemble",
+      "type": "MiniMaxH3ChainAssemble",
+      "settings": {
+        "audio_source": "plan",
+        "filename": "h3_pixel_upscaled_%date:yyyy-MM-dd%",
+        "audio_bitrate": 256,
+        "copy_to_output": false,
+        "output_subfolder": "",
+        "blend_schedule": "plan",
+        "boundary_tone_match": "off",
+        "color_stabilization": "off"
+      },
+      "inputs": {
+        "manifest": [
+          "end",
+          "manifest"
+        ]
+      }
+    },
+    {
+      "key": "guide",
+      "type": "Note",
+      "settings": {
+        "text": "EXPERIMENTAL • PER-SCENE PIXEL UPSCALE\n\nAdapted from Illynir's H3_Pixel_Upscale_Loop.json and the Banodoco discussion:\nhttps://discord.com/channels/1076117621407223829/1537598841199792148/1545925352377815130\nRequirements and actual-image sizing:\nhttps://discord.com/channels/1076117621407223829/1537598841199792148/1545926662288449637\n\nSelect a saved generated lineage in Checkpoint Manager (no Plan is needed). Choose a new child profile in Upscale Adapter, backend=pixel, save_latent=false. start_clip=1/end_clip=0 processes all selected generated scenes, one at a time; it does not upscale the full movie at once.\n\nPixel Current Scene decodes the original clean video checkpoint at its RAW frame count. DLSS5 upscales it. Pixel Upscale Conditioning measures those actual images, restores cached or overridden references at the target canvas, and synchronizes remaining eligible video/keyframe conditioning exactly once. Its positive output feeds Basic Guider; its unchanged images output feeds USDU H3. Do not insert another resize between conditioning and refinement. Both dimensions must be multiples of 32: if using a fractional upscaler, align its output before feeding this node.\n\nPicture policy is preserved: match references are rebuilt from their cached RGB masters using the target canvas; max references deliberately retain their capped geometry. The source reference aspect ratio is preserved, so a match reference need not have the identical pixel rectangle as the movie. No fake latent or full-video VAE encode is used merely to determine size. The default motion policy drops reference video but keeps paired audio conditioning.\n\nUSDU performs its own tile encoding and low-denoise H3 refinement. The example retains the contributed 2x DLSS settings, Turbo v4 strength 0.75, beta schedule, 3 steps and denoise 0.2; these are experimental starting points, not a quality guarantee. The current upstream anchor_context field is BOOLEAN, not the stale 'H3 Visual Conditioning' string in the contributed file. H3 handling is selected by the H3 model in that fork. Extra memory-cleanup/attention patches from the original graph are not required for wiring; add your preferred memory controls only after a small test.\n\nSave and Loop End both receive the final RAW images. They trim the repeated prefix once and retain each source checkpoint's delivered audio unchanged. Do not wire Pixel Current source_audio into recovered_audio (which expects RAW audio), or into Assemble source_audio (which expects the whole-run source track). The image reader's source_audio output is delivered-only and optional, intended for inspection/preview, not for a RAW-image mux. No audio VAE is required to preserve saved delivered sound.\n\nNo Pass-2 AV Prepare, latent Conditioning Sync, or upscaled_latent connection is needed. With backend=pixel, a parent Drift-Control boundary no longer demands an HQ latent; pixel refinement does not freeze/splice latent prefixes. This changes the refinement continuity strategy, not the original generation or its checkpoints. Inspect transitions before accepting a final.\n\nEach completed scene is saved under output/h3_chains/<run>/upscaled/<profile>/. To resume, retain the same selection/profile/settings and set start_clip to the first unfinished scene. A changed source branch or recorded recipe refuses reuse of the prior HQ prefix. recipe_json documents the recipe but does not automatically track every external node edit: choose a new profile when changing upscaler/model/settings to avoid mixing passes. Final assembly is under that child profile's final/ directory. A selected generated branch can stop before ungenerated Plan scenes.\n\nDEPENDENCIES\n\n- DLSS5 image upscaler: https://github.com/Blueforcer/ComfyUI-DLSS5-Enhancer\n  Its NVIDIA runtime is a separate platform-specific requirement; this file does not install it. Select/configure runtime_dir according to that pack. Any frame-preserving IMAGE upscaler can replace DLSS5 if its output drives both conditioning and refinement.\n- H3-aware USDU fork: https://github.com/lisitskyaa/ComfyUI_UltimateSDUpscaleGuider_H3\n  Use this H3-capable Guider fork, not just the unrelated standard Ultimate SD Upscale pack.\n- MiniMax H3 Ref2VA model, Qwen3-VL encoder, video VAE, and Turbo v4 LoRA. Select the installed filenames. Removing the Turbo LoRA requires retuning the schedule, not merely bypassing it at three steps.\n\nVALIDATION\n\nThe H3 adapter, scene reader, target-size reference rebuild, RAW trim, preserved audio, per-scene save, resume and final assembly have CPU integration coverage with synthetic checkpoints and fake VAE/CLIP. The external DLSS5 + USDU GPU refinement and visual quality still need testing on a machine with those packs and models. Start with one short scene before a long run."
+      },
+      "inputs": {}
+    }
+  ]
+}

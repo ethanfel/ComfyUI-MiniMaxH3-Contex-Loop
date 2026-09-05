@@ -68,7 +68,7 @@ def main():
         pass
     else:
         raise AssertionError("Shifted Tagged Ref2VA widget regression was not caught")
-    print("H3 0.6 schemas: all 18 workflows; local H3 + external contracts, widget types/choices/ranges, required sockets and converted inputs pass")
+    print(f"H3 0.6 schemas: all {len(paths)} workflows; local H3 + external contracts, widget types/choices/ranges, required sockets and converted inputs pass")
 
 
 if __name__ == "__main__":

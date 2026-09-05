@@ -32,6 +32,9 @@ SIZES = {
     'LoadImage': (400,420), 'LoadImageMask': (400,420), 'LoadVideo': (400,380),
     'VHS_LoadVideo': (400,580), 'PreviewImage': (420,380), 'PreviewAny': (420,180), 'SaveVideo': (480,440),
     'SeedVR2VideoPathUpscaler': (520,580), 'Note': (1000,330),
+    'MiniMaxH3ChainUpscalePixelConditioning': (600,520),
+    'MiniMaxH3ChainUpscalePixelCurrent': (500,300),
+    'UltimateSDUpscaleNoUpscaleGuider': (500,720),
 }
 LABELS = {
     'MiniMaxH3ChainPlanModern':'Production Plan', 'MiniMaxH3ChainPlanStudio':'Plan Studio',
@@ -47,6 +50,9 @@ LABELS = {
     'CLIPLoader':'H3 Text Encoder', 'RandomNoise':'Scene Seed', 'SamplerCustomAdvanced':'Sample Video + Audio',
     'BasicScheduler':'Sampling Schedule', 'KSamplerSelect':'Sampler',
     'MinimaxH3LatentUpscaler3D':'LBH 3D Latent Upscaler', 'SeedVR2VideoPathUpscaler':'SeedVR2 Video Path Upscaler',
+    'MiniMaxH3ChainUpscalePixelCurrent':'Pixel Current Scene • Experimental',
+    'MiniMaxH3ChainUpscalePixelConditioning':'Pixel Conditioning • Actual Image Size',
+    'UltimateSDUpscaleNoUpscaleGuider':'USDU H3 • Refine Upscaled Images',
 }
 
 
@@ -211,7 +217,8 @@ def build(recipe,filename,schemas):
     workflow=dict(id=identity,revision=0,last_node_id=len(nodes),last_link_id=len(links),nodes=nodes,links=links,
         groups=layout(nodes,links),config={},extra={'ds':{'scale':0.65,'offset':[30,0]},
         'comfyui_mcp':{'workflow_uuid':identity}},version=0.4)
-    guide='# '+filename.removesuffix('.json')+'\n\nBuilt for the **0.6 branch**, not nightly.\n\n'
+    compatibility_note=recipe.get('compatibility_note','Built for the **0.6 branch**, not nightly.')
+    guide='# '+filename.removesuffix('.json')+'\n\n'+compatibility_note+'\n\n'
     guide+=('Setup controls come first, followed by numbered generation columns. '+recovery_note).rstrip()+'\n\n'
     guide+='\n\n---\n\n'.join(guides)+'\n'
     return workflow,guide

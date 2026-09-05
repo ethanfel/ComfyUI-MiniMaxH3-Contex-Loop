@@ -14,6 +14,7 @@ ARCHIVE_05 = EXAMPLES / "Archive" / "0.5"
 WORKFLOWS = {
     "Deferred Upscale + De-Rope - H3 LBH 3D - MiniMax H3 0.6.json",
     "Deferred Upscale - H3 LBH 3D - MiniMax H3 0.6.json",
+    "Deferred Upscale - Pixel DLSS5 + USDU - EXPERIMENTAL - MiniMax H3 0.6.json",
     "Deferred Upscale - SeedVR2 Full Chain - MiniMax H3 0.6.json",
     "FL2V Normal - MiniMax H3 0.6.json",
     "I2V Normal - MiniMax H3 0.6.json",
@@ -350,15 +351,16 @@ def main() -> None:
         validate_studio(workflow, path)
         validate_execution_regressions(workflow, path)
         uuids.add(workflow["id"])
+        pixel = bool(nodes(workflow, "MiniMaxH3ChainUpscalePixelConditioning"))
         for node in workflow["nodes"]:
             if node["type"] in {"UNETLoader", "CLIPLoader", "VAELoader"}:
                 values = node.get("widgets_values") or []
                 if values and values[0] in CANONICAL_H3_MODELS:
                     assert "/" not in values[0] and "\\" not in values[0]
             if node["type"] == "KSamplerSelect":
-                assert node["widgets_values"] == ["res_multistep"]
+                assert node["widgets_values"] == (["er_sde"] if pixel else ["res_multistep"])
             elif node["type"] == "BasicScheduler":
-                assert node["widgets_values"][:2] == ["simple", 20]
+                assert node["widgets_values"][:2] == (["beta", 3] if pixel else ["simple", 20])
             elif node["type"] == "H3InjectSchedule":
                 assert node["widgets_values"][:2] == ["simple", 20]
     assert len(uuids) == len(paths)
@@ -387,7 +389,7 @@ def main() -> None:
                and "@courier_motion_audio" in shot["prompt"]
                for shot in sequential_plan["shots"])
     validate_assets()
-    print("H3 0.6 workflow catalog: 18 clean UI documents, current Plan/Profile "
+    print(f"H3 0.6 workflow catalog: {len(paths)} clean UI documents, current Plan/Profile "
           "authoring, Studio Carousel + Checkpoint Manager, fresh prompts and "
           "references, valid links, collision-free layouts, and legacy archive pass")
 
