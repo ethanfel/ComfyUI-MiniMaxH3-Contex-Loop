@@ -25860,18 +25860,45 @@ def _saved_checkpoint_listing(
     checkpoints = []
     active_segments: dict[int, dict[str, Any]] = {}
     alternates: dict[int, list[dict[str, Any]]] = {}
+    # Reuse the metadata reads below to prove which editorial placeholders
+    # have never been rendered. An active-only list alone is insufficient:
+    # retained revisions and orphaned artifacts must remain protected too.
+    checkpoint_filenames = (sorted(os.listdir(checkpoint_dir))
+                            if os.path.isdir(checkpoint_dir) else [])
+    checkpoint_scene_numbers = {
+        int(match.group(1)) for filename in checkpoint_filenames
+        if (match := re.match(r"clip_(\d{4})(?:\.|$)", filename))
+    }
+    for artifact_kind in ("segments", "blend_segments", "generated_audio"):
+        artifact_dir = os.path.join(
+            _output_root(), "h3_chains", run_name, artifact_kind)
+        if os.path.isdir(artifact_dir):
+            checkpoint_scene_numbers.update(
+                int(match.group(1)) for filename in os.listdir(artifact_dir)
+                if (match := re.match(r"clip_(\d{4})(?:\.|$)", filename)))
+    checkpoint_scene_ids: set[str] = set()
+    inventory_complete = all(
+        not re.match(r"clip_\d{4}.*\.json$", filename) or
+        re.fullmatch(r"clip_\d{4}(?:\.[0-9a-f]{32})?\.json", filename)
+        for filename in checkpoint_filenames)
     if os.path.isdir(checkpoint_dir):
-        for filename in sorted(os.listdir(checkpoint_dir)):
+        for filename in checkpoint_filenames:
             match = re.fullmatch(r"clip_(\d{4})\.json", filename)
             if match is None:
                 continue
             try:
                 metadata = _read_json(os.path.join(checkpoint_dir, filename))
-                segment = metadata.get("segment")
+                segment = metadata.get("segment") if isinstance(metadata, dict) else None
                 if not isinstance(segment, dict):
+                    inventory_complete = False
                     continue
+                if segment.get("id"):
+                    checkpoint_scene_ids.add(str(segment["id"]))
+                else:
+                    inventory_complete = False
                 index = int(segment.get("index", int(match.group(1))))
                 if index != int(match.group(1)):
+                    inventory_complete = False
                     continue
                 segment_path = _absolute_output_path(segment["segment"])
                 checkpoint_path = _absolute_output_path(segment["checkpoint"])
@@ -25904,17 +25931,23 @@ def _saved_checkpoint_listing(
                 active_segments[index] = segment
             except (OSError, TypeError, ValueError, json.JSONDecodeError,
                     KeyError):
+                inventory_complete = False
                 continue
-        for filename in sorted(os.listdir(checkpoint_dir)):
+        for filename in checkpoint_filenames:
             match = re.fullmatch(
                 r"clip_(\d{4})\.([0-9a-f]{32})\.json", filename)
             if match is None:
                 continue
             try:
                 metadata = _read_json(os.path.join(checkpoint_dir, filename))
-                segment = metadata.get("segment")
+                segment = metadata.get("segment") if isinstance(metadata, dict) else None
                 scene = int(match.group(1))
                 revision = str(match.group(2))
+                # Include ordinary retained revisions, not only alternates.
+                if isinstance(segment, dict) and segment.get("id"):
+                    checkpoint_scene_ids.add(str(segment["id"]))
+                else:
+                    inventory_complete = False
                 if (not isinstance(segment, dict) or
                         str(segment.get("take_kind") or "") !=
                         "editorial_alternate" or
@@ -25942,6 +25975,7 @@ def _saved_checkpoint_listing(
                 alternates.setdefault(scene, []).append(item)
             except (OSError, TypeError, ValueError, json.JSONDecodeError,
                     KeyError):
+                inventory_complete = False
                 continue
     editorial = _load_run_editorial(run_name)
     editorial, cleared_editorial = _editorial_for_base_segments(
@@ -26012,6 +26046,14 @@ def _saved_checkpoint_listing(
         "run_name": run_name,
         "checkpoints": checkpoints,
         "editorial": editorial,
+        # Read-only evidence; never persisted in editorial.json. Frontend
+        # also checks chapters, placements, trims, locks and alternate edits.
+        "editorial_unused_scene_ids": [
+            row["scene_id"] for row in editorial.get("scene_order", [])
+            if inventory_complete
+            and int(row["scene"]) not in checkpoint_scene_numbers
+            and row["scene_id"] not in checkpoint_scene_ids
+        ],
     }
     if not include_graph:
         return payload

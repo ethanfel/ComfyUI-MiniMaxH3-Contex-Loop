@@ -143,4 +143,54 @@ const incoming = {
         "a GET started before the edit must not clobber it after POST completes");
 }
 assert.doesNotMatch(handler(studio, "loadPlan"), /scheduleEditorialSave\(/);
+
+// A removed/renamed empty placeholder is not evidence of a different Run.
+// Only a fresh backend inventory may establish that it has no saved renders.
+const placeholderEditorial = {
+    ...incoming, chapters:[], placements:[], trims:[], locked_scene_ids:[],
+    scene_order:[{scene:1, scene_id:"scene_a"}, {scene:2, scene_id:"old_empty"}],
+};
+{
+    const fixture = studioContext();
+    fixture.context.state.plan.shots.push({id:"new_empty", prompt:[], length:306});
+    fixture.context.applyEditorialPayload(placeholderEditorial, 0, ["old_empty"]);
+    assert.equal(fixture.context.state.editorialBindingError, "");
+    fixture.context.scheduleEditorialSave(); await fixture.flush();
+    assert.equal(fixture.writes.length, 0, "hydration/seed edits must not reconcile on disk");
+    fixture.context.state.editorial.placements.push({scene_id:"new_empty", start_frame:400});
+    fixture.context.scheduleEditorialSave(); await fixture.flush();
+    assert.equal(fixture.writes.length, 1);
+    assert.deepEqual(fixture.writes[0].scene_order, [
+        {scene:1, scene_id:"scene_a"}, {scene:2, scene_id:"new_empty"},
+    ], "an explicit edit reconciles only verified unused entries");
+    assert.deepEqual(placeholderEditorial.scene_order[1], {scene:2, scene_id:"old_empty"},
+        "the fetched document is never mutated");
+}
+for (const proof of [undefined, []]) {
+    const fixture = studioContext();
+    fixture.context.applyEditorialPayload(placeholderEditorial, 0, proof);
+    assert.match(fixture.context.state.editorialBindingError, /old_empty/,
+        "missing proof or a rendered missing scene remains protected");
+}
+for (const protectedField of [
+    {chapters:[{id:"chapter", start_scene:2, start_scene_id:"old_empty"}]},
+    {placements:[{scene:2, scene_id:"old_empty", start_frame:400}]},
+    {trims:[{scene:2, scene_id:"old_empty", out_frame:90}]},
+    {locked_scene_ids:["old_empty"]},
+    {replacements:[{scene:2, scene_id:"old_empty"}]},
+    {alternate_draft:{scene:2, scene_id:"old_empty"}},
+]) {
+    const fixture = studioContext();
+    fixture.context.applyEditorialPayload({...placeholderEditorial, ...protectedField}, 0, ["old_empty"]);
+    assert.match(fixture.context.state.editorialBindingError, /old_empty/);
+    fixture.context.scheduleEditorialSave(); await fixture.flush();
+    assert.equal(fixture.writes.length, 0, "saved edits are never considered an unused placeholder");
+}
+{
+    const fixture = studioContext();
+    fixture.context.applyEditorialPayload(placeholderEditorial, 0, ["old_empty"]);
+    fixture.context.applyEditorialPayload(placeholderEditorial, 0, []);
+    assert.match(fixture.context.state.editorialBindingError, /old_empty/,
+        "a later checkpoint inventory must revoke the unused-scene allowance");
+}
 console.log("Run-switch safety: hydration, explicit saves, stale mutations, ABA, batches and disposal passed");
