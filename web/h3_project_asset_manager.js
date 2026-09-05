@@ -14,7 +14,7 @@ import {
 import {
     projectMutationOptions,
     registerProjectOwnership,
-} from "./h3_project_ownership.mjs?v=0.7.3";
+} from "./h3_project_ownership.mjs?v=0.7.4";
 
 const NODE_NAME = "MiniMaxH3ProjectAssetManager";
 const SEMANTIC_SETTING_WIDGETS = [
@@ -490,21 +490,50 @@ function mount(node) {
         try {
             await ownership.force();
             setStatus(`This workflow now owns ${project()}.`);
-        } catch (error) { setStatus(error.message, true); }
+        } catch (error) { if (!error.staleProject) setStatus(error.message, true); }
     };
     releaseOwnership.onclick = async () => {
         try {
             await ownership.release();
             setStatus(`Released ownership of ${project()}.`);
-        } catch (error) { setStatus(error.message, true); }
+        } catch (error) { if (!error.staleProject) setStatus(error.message, true); }
     };
-    async function mutationRequest(route, options = {}, runName = project()) {
-        if (ownership.runName !== String(runName || "").trim()) {
-            await ownership.select(runName);
+    // Tokens distinguish A -> B -> A from an uninterrupted operation on A.
+    let projectEpoch = 0;
+    let projectDisposed = false;
+    function captureProjectOperation() {
+        return {run:project(), epoch:projectEpoch};
+    }
+    function isCurrentProjectOperation(operation) {
+        return !projectDisposed && operation.epoch === projectEpoch
+            && operation.run === project();
+    }
+    function requireCurrentProjectOperation(operation) {
+        if (isCurrentProjectOperation(operation)) return;
+        const error = new Error("The Run changed; the old asset operation will not update this Carousel.");
+        error.staleProject = true;
+        throw error;
+    }
+    async function mutationRequest(route, options = {}, operation = captureProjectOperation()) {
+        requireCurrentProjectOperation(operation);
+        if (state.catalog?.project && state.catalog.project !== operation.run) {
+            throw new Error("Wait for the selected Run's assets to finish loading.");
         }
-        return await jsonRequest(
-            route, await projectMutationOptions(node, runName, options),
-        );
+        if (ownership.runName !== operation.run) {
+            await ownership.select(operation.run);
+            requireCurrentProjectOperation(operation);
+        }
+        options = await projectMutationOptions(node, operation.run, options);
+        requireCurrentProjectOperation(operation);
+        let result;
+        try {
+            result = await jsonRequest(route, options);
+        } catch (error) {
+            requireCurrentProjectOperation(operation);
+            throw error;
+        }
+        requireCurrentProjectOperation(operation);
+        return result;
     }
     let refreshSequence = 0;
     const graphSyncTimers = new Set();
@@ -545,6 +574,7 @@ function mount(node) {
         }
     }
     function persistCatalog(catalog) {
+        if (projectDisposed || (catalog?.project && catalog.project !== project())) return false;
         state.catalog = catalog ?? {assets: [], reference_slots: [], folders: []};
         state.catalog.folders ??= [];
         const canonicalProject = String(state.catalog.project || project());
@@ -614,7 +644,7 @@ function mount(node) {
                 });
             persistCatalog(result.catalog); render(); setStatus(success);
             return result;
-        } catch (error) { setStatus(error.message, true); return null; }
+        } catch (error) { if (!error.staleProject) setStatus(error.message, true); return null; }
     }
     function renderFolders() {
         const assetList = state.catalog.assets ?? [];
@@ -689,6 +719,7 @@ function mount(node) {
         tabs.append(tools);
     }
     function renderPreview(asset) {
+        const operation = captureProjectOperation();
         stopMedia();
         if (!asset) {
             preview.append(el("div", "h3pa-empty", "Upload or import a project asset."));
@@ -742,7 +773,7 @@ function mount(node) {
                 if (nextLyrics === savedLyrics) return;
                 const result = await updateAsset(
                     asset, {lyrics: nextLyrics}, {
-                        renderAfter: false,
+                        operation, renderAfter: false,
                         success: `Saved lyrics for ${promptTag(asset)}.`,
                     },
                 );
@@ -791,18 +822,20 @@ function mount(node) {
         }
     }
     async function updateAsset(asset, changes, options = {}) {
+        const operation = options.operation ?? captureProjectOperation();
         try {
+            requireCurrentProjectOperation(operation);
             setStatus(`Updating ${promptTag(asset)}…`);
             const result = await mutationRequest(
                 "/minimax_h3_context_loop/project-assets/update", {
                     method: "POST", headers: {"Content-Type": "application/json"},
-                    body: JSON.stringify({project: project(), asset_id: asset.id, changes}),
-                });
+                    body: JSON.stringify({project: operation.run, asset_id: asset.id, changes}),
+                }, operation);
             persistCatalog(result.catalog);
             if (options.renderAfter !== false) render();
             setStatus(options.success || `Updated ${promptTag(result.asset)}.`);
             return result;
-        } catch (error) { setStatus(error.message, true); return null; }
+        } catch (error) { if (!error.staleProject) setStatus(error.message, true); return null; }
     }
     async function reorderAssets(assetIds) {
         try {
@@ -814,7 +847,7 @@ function mount(node) {
                 });
             persistCatalog(result.catalog); render();
             setStatus("Asset order saved.");
-        } catch (error) { setStatus(error.message, true); }
+        } catch (error) { if (!error.staleProject) setStatus(error.message, true); }
     }
     function moveAsset(asset, offset) {
         const assetIds = (state.catalog.assets ?? []).map((item) => item.id);
@@ -848,7 +881,7 @@ function mount(node) {
             ]?.id ?? "";
             render();
             setStatus(`Deleted ${promptTag(result.asset)}.`);
-        } catch (error) { setStatus(error.message, true); }
+        } catch (error) { if (!error.staleProject) setStatus(error.message, true); }
     }
     async function duplicateAsset(asset) {
         try {
@@ -860,7 +893,7 @@ function mount(node) {
                 });
             persistCatalog(result.catalog); state.selected = result.asset.id; render();
             setStatus(`Duplicated ${promptTag(asset)} as ${promptTag(result.asset)} without copying media bytes.`);
-        } catch (error) { setStatus(error.message, true); }
+        } catch (error) { if (!error.staleProject) setStatus(error.message, true); }
     }
     async function duplicateAssetProject() {
         const sourceProject = project();
@@ -900,12 +933,13 @@ function mount(node) {
             );
             await refreshProjectSuggestions();
         } catch (error) {
-            setStatus(error.message, true);
+            if (!error.staleProject) setStatus(error.message, true);
         } finally {
             state.duplicatingProject = false;
         }
     }
     function openImageEditor(asset) {
+        const operation = captureProjectOperation();
         const modal = el("div", "h3pa-modal h3pa-crop-modal");
         const heading = el("div", "h3pa-row");
         heading.append(
@@ -1028,7 +1062,7 @@ function mount(node) {
                     "/minimax_h3_context_loop/project-assets/derive", {
                         method: "POST", headers: {"Content-Type": "application/json"},
                         body: JSON.stringify({...payload, resample: resample.value}),
-                    });
+                    }, operation);
                 persistCatalog(result.catalog); state.selected = result.asset.id;
                 modal.remove(); render();
                 setStatus(`Created ${promptTag(result.asset)} from the full stored image.`);
@@ -1070,6 +1104,10 @@ function mount(node) {
         actions.append(startCrop, reset, resetAll, save, modelButton); controls.append(actions);
 
         function operationPayload(mode) {
+            if (!isCurrentProjectOperation(operation)) {
+                cropStatus.textContent = "Run changed. Reopen the editor from the selected Run.";
+                return null;
+            }
             applyNumericInputs();
             const targetWidth = Math.round(Number(cropInputs.targetWidth.value));
             const targetHeight = Math.round(Number(cropInputs.targetHeight.value));
@@ -1850,6 +1888,7 @@ function mount(node) {
         return {configuredProject, changed};
     }
     function hydrateSerializedCatalog({fromConfiguration = false} = {}) {
+        if (fromConfiguration) projectEpoch += 1;
         const restored = fromConfiguration
             ? restoreConfiguredProjectIdentity()
             : {configuredProject: project(), changed: false};
@@ -1908,7 +1947,7 @@ function mount(node) {
             persistCatalog(catalog); render();
             void refreshProjectSuggestions();
             setStatus(`${catalog.assets.length} project assets · ${(catalog.reference_slots ?? []).length} unassigned · revision ${(catalog.revision || "empty").slice(0, 12)}`);
-        } catch (error) { setStatus(error.message, true); }
+        } catch (error) { if (!error.staleProject) setStatus(error.message, true); }
     }
     function adoptConnectedRunName() {
         const current = project();
@@ -1963,16 +2002,18 @@ function mount(node) {
             setStatus("Project assets are already being added. Wait for that batch to finish.", true);
             return;
         }
+        const operation = captureProjectOperation();
         state.uploading = true;
         let completed = 0;
         let lastResult = null;
         const failures = [];
         try {
             for (let index = 0; index < files.length; index += 1) {
+                if (!isCurrentProjectOperation(operation)) break;
                 const file = files[index];
                 const targetSlot = index === 0 ? slot : null;
                 const data = new FormData();
-                data.append("project", project());
+                data.append("project", operation.run);
                 if (targetSlot?.id) data.append("slot_id", targetSlot.id);
                 data.append("file", file, file.name);
                 setStatus(
@@ -1982,12 +2023,18 @@ function mount(node) {
                 try {
                     lastResult = await mutationRequest(
                         "/minimax_h3_context_loop/project-assets/upload",
-                        {method: "POST", body: data},
+                        {method: "POST", body: data}, operation,
                     );
                     completed += 1;
                 } catch (error) {
                     failures.push(`${file.name}: ${error.message}`);
                 }
+            }
+            if (!isCurrentProjectOperation(operation)) {
+                if (!projectDisposed) setStatus(
+                    `Upload batch stopped because the Run changed. Check ${operation.run} for files already submitted; no further files were submitted.`,
+                );
+                return;
             }
             if (lastResult) {
                 persistCatalog(lastResult.catalog);
@@ -2014,6 +2061,7 @@ function mount(node) {
         }
     }
     async function browseSource(slot = null, forcedSource = "") {
+        const operation = captureProjectOperation();
         let source = forcedSource || sourceSelect.value;
         const modal = el("div", "h3pa-modal");
         const row = el("div", "h3pa-row");
@@ -2051,6 +2099,7 @@ function mount(node) {
                     rowItem.append(el("span", "", sourceLabel),
                     el("span", "", item.kind ?? ""), button(slot ? "Bind" : "Import", async () => {
                         try {
+                            requireCurrentProjectOperation(operation);
                             if (source === "chains") await importAsset({
                                 source, run_name: item.run_name, asset_id: item.id,
                                 slot_id: slot?.id ?? "",
@@ -2063,7 +2112,7 @@ function mount(node) {
                                 source, path: item.path, slot_id: slot?.id ?? "",
                             });
                             modal.remove();
-                        } catch (error) { setStatus(error.message, true); }
+                        } catch (error) { if (!error.staleProject) setStatus(error.message, true); }
                     }));
                     list.append(rowItem);
                 }
@@ -2160,6 +2209,7 @@ function mount(node) {
                 return false;
             }
         }
+        projectEpoch += 1;
         refreshSequence += 1;
         state.selected = "";
         state.folder = "";
@@ -2222,6 +2272,8 @@ function mount(node) {
     };
     const removed = node.onRemoved;
     node.onRemoved = function () {
+        projectDisposed = true;
+        projectEpoch += 1;
         for (const timer of graphSyncTimers) clearTimeout(timer);
         graphSyncTimers.clear();
         dropController.abort();

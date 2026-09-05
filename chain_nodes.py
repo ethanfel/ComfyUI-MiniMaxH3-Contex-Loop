@@ -22107,12 +22107,16 @@ def _chapter_delivery_root(manifest: dict[str, Any]) -> str:
 def _chapter_scoped_editorial(
         run_name: str, segments: list[dict[str, Any]],
         editorial: dict[str, Any], chapter: dict[str, Any],
-        natural_start_frame: int = 0
+        natural_start_frame: int = 0,
+        timeline_segments: list[dict[str, Any]] | None = None
 ) -> tuple[dict[str, Any], int]:
     """Freeze chapter-local placement, trims, alternates, and subtitle origin."""
     _resolved, records, _total = _editorial_timeline_records(
-        run_name, segments, editorial, natural_start_frame)
-    scene_records = [item for item in records if item.get("kind") == "scene"]
+        run_name, timeline_segments if timeline_segments is not None else segments,
+        editorial, natural_start_frame)
+    selected_scenes = {int(segment["index"]) for segment in segments}
+    scene_records = [item for item in records if item.get("kind") == "scene"
+                     and int(item["scene"]) in selected_scenes]
     if len(scene_records) != len(segments):
         raise ValueError(
             "H3 chapter editorial scope did not resolve every selected scene.")
@@ -22183,6 +22187,19 @@ def _chapter_manifest_storage_path(
 
 
 def _persist_chapter_manifest(manifest: dict[str, Any]) -> tuple[
+        dict[str, Any], str]:
+    # Sealing and checkpoint deletion must be mutually exclusive. Revalidate
+    # inside the lock, so a deletion between selection and sealing cannot
+    # publish a chapter snapshot whose recovery inputs are already gone.
+    with checkpoint_run_lock(_output_root(), manifest.get("run_name")):
+        _validate_manifest(manifest)
+        _editorial_presentation_segments(
+            manifest.get("run_name"), manifest["segments"],
+            _manifest_editorial(manifest))
+        return _persist_chapter_manifest_locked(manifest)
+
+
+def _persist_chapter_manifest_locked(manifest: dict[str, Any]) -> tuple[
         dict[str, Any], str]:
     snapshot = _json_document(manifest)
     if not isinstance(snapshot, dict):
@@ -22283,7 +22300,7 @@ def _chapter_manifest_from_manifest(
         if int(item.get("index", 0)) < chapter_start)
     scoped_editorial, editorial_origin = _chapter_scoped_editorial(
         _strict_run_name(manifest.get("run_name")), selected, editorial,
-        chapter, source_start)
+        chapter, timeline_segments=segments)
     total_frames = sum(int(item.get("delivered_frames", 0))
                        for item in selected)
     chapter_record = dict(chapter)

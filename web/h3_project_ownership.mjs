@@ -4,6 +4,7 @@ import {api} from "/scripts/api.js";
 const ROUTE = "/minimax_h3_context_loop/project-ownership";
 const HEARTBEAT_MS = 25000;
 const controllers = new Set();
+const subscribers = new Set();
 const graphIds = new WeakMap();
 let graphSerial = 0;
 
@@ -79,6 +80,26 @@ function controllerFor(node, runName) {
     return null;
 }
 
+export function subscribeProjectOwnership(node, onChange) {
+    const subscriber = {node, onChange};
+    subscribers.add(subscriber);
+    return () => subscribers.delete(subscriber);
+}
+
+export function isProjectReadOnlyError(error, runName) {
+    const message = String(error?.message ?? error ?? "");
+    return message.startsWith(`Project ${runName} is read-only here;`)
+        || message.startsWith(`Project ${runName} is protected by workflow ownership.`);
+}
+
+function notifyOwnershipSubscribers(controller, payload) {
+    for (const subscriber of subscribers) {
+        if (rootGraph(subscriber.node) !== controller.graph) continue;
+        try { subscriber.onChange(payload); }
+        catch (error) { console.warn("H3 ownership UI refresh failed:", error); }
+    }
+}
+
 export function registerProjectOwnership(node, onChange = null) {
     const identity = sessionOwnerId(node);
     const controller = {
@@ -106,6 +127,7 @@ export function registerProjectOwnership(node, onChange = null) {
                 ? Number(payload.epoch) : null;
             this.schedule();
             onChange?.(payload);
+            notifyOwnershipSubscribers(this, payload);
             return payload;
         },
         async select(runName) {

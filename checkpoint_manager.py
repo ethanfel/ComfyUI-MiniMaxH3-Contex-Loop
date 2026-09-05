@@ -1241,6 +1241,77 @@ class CheckpointGraphManager:
                      parent_token[:8])),
             }
 
+    def _chapter_references(self, scan: dict[str, Any], revision: str,
+                            artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sealed delivery snapshots pin their recovery inputs, not just MP4s.
+
+        Called under the same Run lock used to publish chapter manifests.
+        Inspect small JSON documents only; never follow chapter symlinks.
+        Unreadable snapshots block cleanup rather than risk losing recovery.
+        """
+        root = os.path.join(scan["run_dir"], "chapters")
+        paths = {os.path.realpath(item["_path"]) for item in artifacts
+                 if item.get("owned")}
+
+        def mentions(value: Any) -> bool:
+            if isinstance(value, dict):
+                return any(mentions(item) for item in value.values())
+            if isinstance(value, list):
+                return any(mentions(item) for item in value)
+            if not isinstance(value, str):
+                return False
+            if value.lower() == revision:
+                return True
+            relative = value.replace("\\", "/")
+            if not (relative.startswith("h3_chains/") or os.path.isabs(relative)):
+                return False
+            return os.path.realpath(os.path.join(self.output_root, relative)) in paths
+
+        references = []
+        if not os.path.lexists(root):
+            return references
+        try:
+            if os.path.islink(root):
+                raise ValueError("chapter directory is a symlink")
+            with os.scandir(root) as entries:
+                chapters = sorted(entries, key=lambda entry: entry.name)
+            for directory in chapters:
+                if directory.is_symlink():
+                    raise ValueError("chapter directory is a symlink: " + directory.name)
+                if not directory.is_dir(follow_symlinks=False):
+                    continue
+                manifest_dir = os.path.join(directory.path, "manifests")
+                if not os.path.lexists(manifest_dir):
+                    continue
+                if os.path.islink(manifest_dir):
+                    raise ValueError("chapter manifests directory is a symlink")
+                with os.scandir(manifest_dir) as entries:
+                    snapshots = sorted(entries, key=lambda entry: entry.name)
+                for entry in snapshots:
+                    if not re.fullmatch(r"[0-9a-f]{32}\.json", entry.name):
+                        continue
+                    if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                        raise ValueError("chapter snapshot is not a regular file")
+                    document = self._read_json(entry.path)
+                    if (not isinstance(document, dict)
+                            or document.get("format") != "h3_chain_chapter_manifest_v1"
+                            or document.get("run_name") != scan["run_name"]
+                            or not isinstance(document.get("segments"), list)
+                            or not document["segments"]
+                            or not isinstance(document.get("chapter"), dict)):
+                        raise ValueError("invalid chapter snapshot: " + entry.name)
+                    if mentions(document):
+                        chapter = document["chapter"]
+                        references.append({
+                            "number": chapter.get("number"),
+                            "title": str(chapter.get("title") or directory.name),
+                            "snapshot": entry.name[:-5],
+                            "path": os.path.relpath(entry.path, self.output_root),
+                        })
+        except (OSError, ValueError, TypeError, RecursionError) as error:
+            references.append({"error": "Cannot verify sealed chapter recovery: " + str(error)})
+        return references
+
     def deletion_preview(self, run_name: Any, scene: Any,
                          revision: Any) -> dict[str, Any]:
         run_dir, run = self._run_dir(run_name)
@@ -1278,7 +1349,13 @@ class CheckpointGraphManager:
                 })
             dependents.sort(key=lambda item: (
                 not item["leaf"], -int(item["scene"]), item["revision"]))
-            blockers = []
+            chapter_references = self._chapter_references(scan, token, artifacts)
+            blockers = [
+                item.get("error") or (
+                    "Sealed Chapter %s (%s), snapshot %s, requires this revision "
+                    "or its recovery artifacts. Keep it to preserve chapter recovery." %
+                    (item["number"], item["title"], item["snapshot"][:8]))
+                for item in chapter_references]
             try:
                 editorial = self._read_json(os.path.join(
                     scan["run_dir"], "editorial.json"))
@@ -1345,6 +1422,7 @@ class CheckpointGraphManager:
                 "revision": token,
                 "active": record["active"],
                 "rollback": rollback,
+                "chapter_references": chapter_references,
                 "dependents": [(item["scene"], item["revision"])
                                for item in dependents],
                 "files": [(item["path"], item["exists"], item["size_bytes"],
@@ -1366,6 +1444,7 @@ class CheckpointGraphManager:
                 "allowed": not blockers,
                 "blockers": blockers,
                 "dependents": dependents,
+                "chapter_references": chapter_references,
                 "files": public_files,
                 "owned_file_count": sum(item["exists"] for item in owned),
                 "reclaimed_bytes": sum(item["size_bytes"] for item in owned),

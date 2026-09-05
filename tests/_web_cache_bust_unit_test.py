@@ -21,7 +21,7 @@ MINIMUM_CACHE_VERSION = {
     "h3_checkpoint_manager_core.mjs": "0.7.2",
     "h3_prompt_companion_sync.mjs": "0.7.2",
     "h3_project_asset_sync_core.mjs": "0.7.2",
-    "h3_project_ownership.mjs": "0.7.3",
+    "h3_project_ownership.mjs": "0.7.4",
     "h3_reference_preview_core.mjs": "0.7.3",
 }
 
