@@ -4,6 +4,17 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added nightly chapter resolution controls to Plan Studio: inherit the Plan
+  default or set chapter-local width/height. Existing locked saved scenes pin
+  their chapter's original geometry, including legacy checkpoints, without
+  bypassing generation-identity or artifact-integrity checks. Conflicting
+  explicit sizes and late lock changes stop before checkpoint replacement.
+- Current Shot, conditioning checks, reference caches, and chapter recovery
+  now use the resolved scene size. Chapter exports retain their saved size;
+  mixed-size whole-run assembly and native AV/latent cross-size continuation
+  are rejected. Automatic review previews use the current chapter when sizes
+  differ. No existing media is resized or rewritten.
+
 - Fixed Plan Studio dropping and disabling Source Timeline audio after scene
   frame-count edits. The source track stays available as scene windows resize,
   with updated waveform coverage and seek positions; the underlying audio and

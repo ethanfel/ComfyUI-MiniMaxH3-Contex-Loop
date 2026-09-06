@@ -127,6 +127,15 @@ reference nodes, recovery tools, masking nodes, and advanced groups.
 
 ## Important behavior
 
+- **Nightly: chapter resolution.** Click a chapter marker in Plan Studio, then
+  choose **Inherit from Plan** or set its **Width / Height** (multiples of 32).
+  Connect **Current Shot** width/height to the H3 conditioning node. A locked
+  saved scene pins its entire chapter to its original size; changing the Plan
+  default can then affect Chapter 2 without changing Chapter 1. Unlock the saved
+  scenes before explicitly changing their chapter's size. Existing media is not
+  resized. Native AV/latent video context cannot cross different sizes: use zero
+  video context at that boundary. Export different-sized chapters separately
+  through **Chapter Delivery**; mixed-resolution whole-run assembly is rejected.
 - `run_name` identifies a production and its checkpoint history. Use a new name
   for a new production; keep it unchanged to resume.
 - Preflight rejects incompatible resume state instead of mixing checkpoints

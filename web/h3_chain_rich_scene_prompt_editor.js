@@ -9,11 +9,11 @@ import {
     promptTextToLines,
     promptValueToText,
     sharedPrompt,
-} from "./h3_chain_plan_core.mjs?v=0.7.0";
+} from "./h3_chain_plan_core.mjs?v=0.7.7";
 import {
     buildPromptAssistantContext,
     makePromptAssistRequest,
-} from "./h3_prompt_assistant_core.mjs?v=0.7.0";
+} from "./h3_prompt_assistant_core.mjs?v=0.7.7";
 import {PromptAssistantClient} from "./h3_prompt_assistant_client.mjs?v=0.7.0";
 import {
     directOptimizerConfigurationError,

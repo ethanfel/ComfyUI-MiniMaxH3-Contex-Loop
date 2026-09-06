@@ -122,7 +122,8 @@ def _verified_source_manifest(value: dict[str, Any]) -> dict[str, Any]:
         raise ValueError(
             "Checkpoint Upscale Adapter requires a selected lineage manifest "
             "from Checkpoint Manager.")
-    chain._validate_manifest(manifest)
+    segments = chain._validate_manifest(manifest)
+    chain.common_saved_resolution(segments, "Deferred upscale source")
     if isinstance(manifest.get("prelude"), dict):
         raise ValueError(
             "Deferred upscale does not yet support an existing-video prelude. "
@@ -646,8 +647,9 @@ def _conditioning_from_tagged_upscale_override(
     scene = int(state["index"])
     scene_count = len(manifest["segments"])
     length = int(source.get("raw_frames", 0))
-    width = int(compatibility.get("width", 0))
-    height = int(compatibility.get("height", 0))
+    geometry = chain.saved_resolution(source) or compatibility
+    width = int(geometry.get("width", 0))
+    height = int(geometry.get("height", 0))
     if target_video_latent is not None:
         _video, width, height = _target_video_geometry(target_video_latent)
     elif target_size is not None:
@@ -1108,8 +1110,9 @@ class MiniMaxH3ChainUpscaleCurrent:
         delivered = int(source["delivered_frames"])
         trim = raw - delivered
         compatibility = state["source_manifest"].get("compatibility") or {}
-        width = int(compatibility.get("width", 0))
-        height = int(compatibility.get("height", 0))
+        geometry = chain.saved_resolution(source) or compatibility
+        width = int(geometry.get("width", 0))
+        height = int(geometry.get("height", 0))
         if width < 1 or height < 1:
             raise ValueError("Source H3 manifest has no valid canvas dimensions.")
         seed = int(source.get("seed", 0))
@@ -1648,8 +1651,9 @@ class MiniMaxH3ChainUpscaleReferenceConditioning:
         if motion_ref_mode not in MOTION_REFERENCE_MODES:
             raise ValueError(
                 "Unknown H3 motion reference mode %r." % motion_ref_mode)
-        width = int(compatibility.get("width", 0))
-        height = int(compatibility.get("height", 0))
+        geometry = chain.saved_resolution(source) or compatibility
+        width = int(geometry.get("width", 0))
+        height = int(geometry.get("height", 0))
         length = int(source.get("raw_frames", 0))
         descriptor = source.get("reference_cache")
         if tagged_references is not None:

@@ -17,6 +17,7 @@ import {
     makeShot,
     moveShot,
     nativeContextWindowStarts,
+    normalizeChapterResolution,
     nearestNativeContextWindowStart,
     parsePlanJson,
     planToJson,
@@ -49,7 +50,7 @@ import {
     visualContextDefaultPartition,
     visualContextMaximumBlocks,
     visualContextPartitionFromBoundaries,
-} from "./h3_chain_plan_core.mjs?v=0.7.0";
+} from "./h3_chain_plan_core.mjs?v=0.7.7";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
@@ -1125,6 +1126,7 @@ function mount(node) {
                 start_scene_id:chapter.start_scene_id,
                 start_scene:sceneById.get(chapter.start_scene_id),
                 text:chapter.text ?? "",
+                ...(chapter.resolution ? {resolution:{...chapter.resolution}} : {}),
             })),
             scene_order:sceneOrder,
             placements:state.editorial.placements.map((placement) => ({
@@ -2446,8 +2448,8 @@ function mount(node) {
             const lockHandle = button(
                 "",
                 locked
-                ? "Unlock scene movement and duration editing"
-                : "Lock scene movement and duration editing",
+                ? "Unlock scene movement, duration editing, and the saved chapter resolution pin"
+                : "Lock scene movement and duration; saved scenes also pin their chapter resolution",
                 (event) => {
                     event.preventDefault(); event.stopPropagation();
                     setSceneLocked(index, !locked);
@@ -3283,8 +3285,8 @@ function mount(node) {
         const sceneLockControl = button(
             timelineLocked ? "Unlock scene" : "Lock scene",
             timelineLocked
-                ? "Allow this scene to be moved, resized, or reordered"
-                : "Protect this scene from timeline movement, resizing, and reordering",
+                ? "Allow this scene to be moved, resized, or reordered; release its saved chapter resolution pin"
+                : "Protect timeline movement, resizing, and reordering; pin this chapter to the scene's saved resolution",
             () => setSceneLocked(state.active, !timelineLocked),
         );
         const form = element("div", "h3studio-form");
@@ -3572,7 +3574,7 @@ function mount(node) {
             element("strong", "", chapter.title),
             element(
                 "span", "h3studio-scene-label",
-                `starts before scene ${chapterIndex + 1} · zero-duration editorial note`,
+                `starts before scene ${chapterIndex + 1} · chapter settings and notes`,
             ),
         );
         const title = element("input");
@@ -3606,6 +3608,55 @@ function mount(node) {
         });
         const form = element("div", "h3studio-defaults");
         form.append(field("Chapter title", title), field("Timeline marker", boundary));
+        const resolutionMode = element("select");
+        for (const [value, text] of [["inherit", "Inherit from Plan"], ["custom", "Chapter resolution"]]) {
+            const option = element("option", "", text); option.value = value;
+            resolutionMode.append(option);
+        }
+        resolutionMode.value = chapter.resolution ? "custom" : "inherit";
+        const resolutionFields = {};
+        const resolutionStatus = element("span", "h3studio-message");
+        for (const key of ["width", "height"]) {
+            const input = element("input"); input.type = "number";
+            input.min = "32"; input.max = "16384"; input.step = "32";
+            input.value = String(chapter.resolution?.[key]
+                ?? widget(state.planOwner ?? node, key)?.value ?? (key === "width" ? 960 : 544));
+            input.disabled = resolutionMode.value === "inherit";
+            resolutionFields[key] = input;
+            input.addEventListener("change", () => {
+                try {
+                    chapter.resolution = normalizeChapterResolution({
+                        width:Number(resolutionFields.width.value), height:Number(resolutionFields.height.value),
+                    });
+                    resolutionStatus.textContent = "Chapter resolution saved.";
+                    writePlan();
+                } catch (error) { resolutionStatus.textContent = error.message; }
+            });
+        }
+        resolutionMode.addEventListener("change", () => {
+            if (resolutionMode.value === "inherit") delete chapter.resolution;
+            else {
+                try {
+                    chapter.resolution = normalizeChapterResolution({
+                        width:Number(resolutionFields.width.value), height:Number(resolutionFields.height.value),
+                    });
+                } catch (error) {
+                    resolutionStatus.textContent = error.message;
+                    resolutionMode.value = "inherit";
+                    return;
+                }
+            }
+            for (const input of Object.values(resolutionFields)) input.disabled = resolutionMode.value === "inherit";
+            resolutionStatus.textContent = "Chapter resolution saved.";
+            writePlan();
+        });
+        form.append(field("Resolution", resolutionMode), field("Width", resolutionFields.width),
+            field("Height", resolutionFields.height));
+        const resolutionHelp = element("div", "h3studio-hint",
+            "One size per chapter. Locked saved scenes pin their chapter's original size, even when the Plan default changes. " +
+            "Unlock them before changing that chapter's size. Native AV/latent context cannot cross different sizes. " +
+            "Current Tagged Ref2VA Scene handles sizing automatically; with separate nodes, connect Current Shot width/height to conditioning. " +
+            "Export different-sized chapters separately.");
         const textarea = element("textarea", "h3studio-prompt");
         textarea.value = chapter.text ?? "";
         textarea.placeholder = "Editorial context, lyrics, LLM notes, story intent…";
@@ -3618,7 +3669,7 @@ function mount(node) {
         actions.append(
             element(
                 "span", "h3studio-hint",
-                "Notes organize the editor and Checkpoint Manager only. They do not affect playback, generation, resume checks, or branch identity.",
+                "Chapter notes remain editorial only. Resolution applies to generation and resume validation.",
             ),
             button("Delete chapter", "Remove this editorial marker and its notes", () => {
                 if (!confirm(`Delete ${chapter.title}?`)) return;
@@ -3630,7 +3681,7 @@ function mount(node) {
                 writePlan(); renderShell();
             }),
         );
-        panel.append(head, form, textarea, actions);
+        panel.append(head, form, resolutionHelp, resolutionStatus, textarea, actions);
         return panel;
     }
 

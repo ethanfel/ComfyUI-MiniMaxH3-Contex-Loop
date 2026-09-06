@@ -24,6 +24,38 @@ The [complete format guide](../H3_CHAIN_FORMAT_GUIDE.md) documents every Plan
 and per-scene field, raw versus delivered length, prompt structure, seeds, and
 timing.
 
+## Chapter resolution (nightly)
+
+Click the chapter marker in **Plan Studio** to choose **Inherit from Plan** or
+**Chapter resolution**, with Width and Height in multiples of 32. Each chapter
+has one size; the next chapter inherits the Plan default, not the previous
+chapter's override. Wire **Current Shot** width/height to conditioning so its
+latent and reference preparation match the active chapter. The combined
+**Current Tagged Ref2VA Scene** node already handles this internally.
+
+The existing scene lock also pins a chapter to its locked saved scenes' size.
+For example, lock Chapter 1's saved scenes, then change the Plan default or set
+Chapter 2's resolution. Chapter 1 stays at its saved size. A conflicting explicit
+size for Chapter 1 is rejected until its saved scenes are unlocked. Locking an
+ungenerated slot cannot pin a size. Locks do not bypass prompt/model identity,
+artifact-integrity, or native latent compatibility checks.
+
+Different-sized chapters need an independent video boundary: set the new
+chapter's first scene's video context to zero for AV masking or latent Guide.
+Export each chapter separately with **Chapter Delivery**. Whole-run assembly and
+joint boundary-anchor prepasses cannot combine different sizes automatically.
+Saved media is never resized; recovery snapshots retain the resolved chapter size.
+
+In Plan JSON the optional field is, for example:
+
+```json
+{"id":"chapter_2","title":"Chapter 2","start_scene_id":"scene_08",
+ "resolution":{"width":1344,"height":768},"text":""}
+```
+
+Omit `resolution` (or set it to `null`) to inherit. Chapter titles and notes
+remain editorial only and do not change generation identity.
+
 ## Per-scene LoRA routes
 
 Each scene has a **Scene LoRA route** selector: Base or LoRA A-D. Connect

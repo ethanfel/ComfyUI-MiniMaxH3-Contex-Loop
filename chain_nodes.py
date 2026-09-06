@@ -89,6 +89,10 @@ from .nodes import (
     _streams_from_latent,
 )
 from .motion_context_upstream import apply_motion_context
+from .chapter_resolution import (
+    normalize_resolution, scene_resolution, saved_resolution,
+    apply_chapter_resolutions, common_saved_resolution,
+)
 from .prompt_history import PromptHistoryStore
 from .prompt_optimizer import optimize_prompt_payload
 from .run_manager import RunArchiveManager, archive_policy_inputs
@@ -5666,6 +5670,8 @@ def _legacy_history_contract(
         # scene and the continuation history after it.
         if "continuation_mode" in shot:
             contract["continuation_mode"] = shot["continuation_mode"]
+        if "resolution" in shot:
+            contract["resolution"] = dict(shot["resolution"])
         if "context_length" in shot:
             contract["context_length"] = shot["context_length"]
         if "visual_context_source" in shot:
@@ -5889,8 +5895,8 @@ def _scene_dependency_record(
     scopes = {
         "global_generation": {
             "plan_version": int(plan.get("version", PLAN_VERSION)),
-            "width": int(compatibility.get("width", 0)),
-            "height": int(compatibility.get("height", 0)),
+            "width": int(shot.get("resolution", compatibility).get("width", 0)),
+            "height": int(shot.get("resolution", compatibility).get("height", 0)),
             "encode_mode": str(compatibility.get("encode_mode", "video")),
             "crop": str(compatibility.get("crop", "disabled")),
             "generation_fingerprint": str(
@@ -7641,6 +7647,15 @@ def _normalize_plan(
         "segment_crf": segment_crf,
         "total_delivered_frames": stitched_frames,
     }
+    if raw.get("chapters"):
+        editorial = _normalize_run_editorial({
+            "chapters": raw["chapters"],
+            "scene_order": [{"scene": shot["index"], "scene_id": shot["id"]}
+                            for shot in shots],
+        }, normalized_run_name)
+        plan["chapters"] = editorial["chapters"]
+        apply_chapter_resolutions(
+            plan, plan["chapters"], _locked_saved_resolutions(plan))
     plan_shot_contracts = []
     for shot in shots:
         contract = {
@@ -7668,6 +7683,66 @@ def _normalize_plan(
          _audio_policy_summary(compatibility),
          _transition_policy_summary(compatibility), plan["run_name"]))
     return plan
+
+
+def _locked_saved_resolutions(plan: dict[str, Any]) -> dict[str, Any]:
+    """Read old scene locks without rewriting or adopting checkpoint metadata."""
+    locked = set(_load_run_editorial(plan["run_name"]).get("locked_scene_ids", []))
+    result = {}
+    for shot in plan["shots"]:
+        if shot["id"] not in locked:
+            continue
+        path = _artifact_paths(plan, int(shot["index"]))["metadata"]
+        if not os.path.isfile(path):
+            continue  # Locking an ungenerated timeline slot cannot pin pixels.
+        metadata = _read_json(path)
+        segment = metadata.get("segment") or {}
+        if (segment.get("id") != shot["id"]
+                or int(segment.get("index", 0)) != int(shot["index"])):
+            raise ValueError("Locked scene %s no longer matches its saved checkpoint. "
+                             "Refresh the matching Plan before continuing." % shot["id"])
+        resolution = saved_resolution(segment, metadata)
+        if resolution is None:
+            raise ValueError("Cannot verify the saved resolution of locked scene %s. "
+                             "Restore its checkpoint metadata before continuing." % shot["id"])
+        result[shot["id"]] = resolution
+    return result
+
+
+def _scene_compatibility(plan: dict[str, Any], index: int) -> dict[str, Any]:
+    return {**plan["compatibility"], **scene_resolution(plan, index)}
+
+
+def _require_chapter_resolution_locks(plan: dict[str, Any]) -> None:
+    """Fence a lock/branch change made after the execution Plan was resolved."""
+    if not plan.get("chapters"):
+        return
+    locked = _locked_saved_resolutions(plan)
+    for shot in plan["shots"]:
+        saved = locked.get(shot["id"])
+        if saved and saved != scene_resolution(plan, shot["index"]):
+            raise ValueError(
+                "Locked scene %s now pins its chapter to %dx%d, which differs "
+                "from the queued Plan. Requeue with the current chapter settings "
+                "or unlock the saved scene first. Its checkpoint was not replaced."
+                % (shot["id"], saved["width"], saved["height"]))
+
+
+def _validate_scene_resolution_boundary(plan: dict[str, Any], index: int) -> None:
+    shot = plan["shots"][index - 1]
+    mode = shot.get("continuation_mode", plan["compatibility"].get("continuation_mode", "guide"))
+    if mode not in (*MASKED_CONTINUATION_MODES, "latent_guide"):
+        return
+    sources = _resume_context_predecessors(plan, index)
+    visual = {sources.get("visual"), sources.get("visual_lead"),
+              *sources.get("visual_blocks", [])} - {None}
+    for source in visual:
+        if scene_resolution(plan, source) != scene_resolution(plan, index):
+            raise ValueError(
+                "Scene %d cannot carry native video latent context from scene %d "
+                "across different chapter resolutions. Use zero video context "
+                "at this chapter boundary or keep the same resolution. Scene "
+                "locks do not resize saved latents." % (index, source))
 
 
 def _output_root() -> str:
@@ -8284,6 +8359,8 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
             "start_scene": int(scene_by_id.get(
                 start_id, item.get("start_scene", offset + 1))),
             "text": text,
+            **({"resolution": normalize_resolution(item["resolution"])}
+               if item.get("resolution") is not None else {}),
         })
     chapters.sort(key=lambda item: int(item["start_scene"]))
 
@@ -9288,13 +9365,16 @@ def _effective_editor_plan(plan: dict[str, Any]) -> dict[str, Any]:
             for shot in plan["shots"]],
     }
     editorial = _load_run_editorial(plan.get("run_name"))
-    if editorial["chapters"]:
+    chapters = plan.get("chapters", editorial["chapters"])
+    if chapters:
         result["chapters"] = [{
             "id": chapter["id"],
             "title": chapter["title"],
             "start_scene_id": chapter["start_scene_id"],
             "text": chapter["text"],
-        } for chapter in editorial["chapters"]]
+            **({"resolution": dict(chapter["resolution"])}
+               if chapter.get("resolution") else {}),
+        } for chapter in chapters]
     return result
 
 
@@ -10904,6 +10984,8 @@ def _load_resume_state(
             "chapter branch. Activate a matching branch or attribute the independent "
             "saved take in Checkpoint Manager first. No saved files were changed."
             % min(stale_prefix))
+    if start_clip <= len(plan["shots"]):
+        _validate_scene_resolution_boundary(plan, start_clip)
     consumed_predecessors = set(context_sources["scenes"])
     editorial = _load_run_editorial(plan.get("run_name"))
     segments = []
@@ -13750,6 +13832,11 @@ class MiniMaxH3BoundaryAnchorPrepass:
         if GraphBuilder is None:
             raise RuntimeError(
                 "Boundary Anchor Prepass requires ComfyUI GraphBuilder.")
+        geometry = scene_resolution(plan, 1)
+        if any(scene_resolution(plan, index) != geometry
+               for index in range(2, len(plan["shots"]) + 1)):
+            raise ValueError("Boundary Anchor Prepass needs one resolution for its "
+                             "joint reel. Use separate Plans for different-sized chapters.")
         layout = _make_boundary_anchor_prepass(plan, source_timeline)
         reel = _decode_boundary_anchor_reel(
             layout, source_timeline, reference_short_edge)
@@ -13777,8 +13864,8 @@ class MiniMaxH3BoundaryAnchorPrepass:
                 ("clip", clip), ("vae", vae), ("audio_vae", audio_vae),
                 ("references", prepared_references), ("clip_index", 1),
                 ("clip_count", 1), ("prompt", str(prompt)),
-                ("width", int(plan["compatibility"]["width"])),
-                ("height", int(plan["compatibility"]["height"])),
+                ("width", geometry["width"]),
+                ("height", geometry["height"]),
                 ("length", int(layout["output_length"])),
                 ("ref_image_size", str(ref_image_size)),
                 ("reference_policy", str(reference_policy)),
@@ -14870,7 +14957,7 @@ class MiniMaxH3ChainExternalVideo:
                 "H3 existing-video source_frames must be "
                 "[frames,height,width,channels]; got %r." %
                 (getattr(source_frames, "shape", None),))
-        cfg = plan["compatibility"]
+        cfg = _scene_compatibility(plan, 1)
         context_length = _shot_context_length(
             plan["shots"][0], int(cfg["context_length"]))
         indices = _external_video_frame_indices(
@@ -15775,6 +15862,9 @@ class MiniMaxH3ChainPlan:
                 and str(shot.get("prompt_seed_mode") or "").strip().lower()
                     == "randomize"
                 for shot in shots):
+            return float("NaN")
+        if isinstance(raw, dict) and raw.get("chapters"):
+            # Locks are external to Plan JSON. Resolve their saved size at queue time.
             return float("NaN")
         return False
 
@@ -16727,6 +16817,10 @@ def _preflight_validation_recovery(
             "Reconnect the automatic generation fingerprint source.",
             ("Rebuild the Plan if its compatibility metadata was edited "
              "manually.",)),
+        "chapter_resolution": (
+            "incompatible_chapter_resolution",
+            "Use zero video context at the chapter boundary, or match the chapter resolutions.",
+            ("Keep native AV/latent continuation within a single resolution.",)),
         "runtime": (
             "runtime_compatibility_validation_failed",
             "Update ComfyUI and this node pack together, then restart.",
@@ -16764,6 +16858,9 @@ def _preflight_chain(
         start, end = _parse_scene_range(
             scene_range, len(plan["shots"]), start_clip)
         report["selection"] = {"start": start, "end": end}
+        stage = "chapter_resolution"
+        for scene in range(start, end + 1):
+            _validate_scene_resolution_boundary(plan, scene)
         stage = "source"
         prepared, runtime_timeline = _preflight_bind_source(
             plan, report, source_timeline, source_audio)
@@ -16796,6 +16893,7 @@ def _preflight_chain(
             record = {
                 "index": int(shot["index"]), "id": str(shot["id"]),
                 "selected": start <= int(shot["index"]) <= end,
+                "resolution": scene_resolution(prepared, int(shot["index"])),
                 "raw_frames": int(shot["raw_frames"]),
                 "delivered_frames": int(shot["delivered_frames"]),
                 "overlap_trim_frames": context,
@@ -17730,8 +17828,11 @@ class MiniMaxH3ChainPlanStudio:
                 "queued_alternate": queued_alternate,
             })
         run_name = str(_kwargs.get("run_name") or "")
+        plan_change = MiniMaxH3ChainPlan.IS_CHANGED(plan_json)
+        if isinstance(plan_change, float) and math.isnan(plan_change):
+            return plan_change
         return _fingerprint({
-            "plan": MiniMaxH3ChainPlan.IS_CHANGED(plan_json),
+            "plan": plan_change,
             "alternate_draft": _load_run_editorial(
                 run_name).get("alternate_draft"),
             "queued_alternate": queued_alternate,
@@ -18905,8 +19006,8 @@ class MiniMaxH3ChainCurrent:
         "H3-valid RAW frame count, including the repeated head overlap on "
         "continuations. Connect to the stock H3 conditioning node's length.",
         "Resolved sampler steps for this scene.",
-        "Plan generation width.",
-        "Plan generation height.",
+        "Resolved chapter generation width; connect to H3 conditioning.",
+        "Resolved chapter generation height; connect to H3 conditioning.",
         "Start time in seconds of this scene's extension-track window. For an "
         "imported-video scene 1, its separate context lead precedes this time.",
         "Raw conditioning-audio duration in seconds, including any imported "
@@ -18931,6 +19032,7 @@ class MiniMaxH3ChainCurrent:
         # occurred after Loop Start therefore stops before prompt-history or
         # model work for the next scene can begin.
         _require_plan_write(plan, "begin scene generation")
+        _require_chapter_resolution_locks(plan)
         index = int(state["index"])
         shot = plan["shots"][index - 1]
         source_timeline = state.get("source_timeline")
@@ -19067,7 +19169,8 @@ class MiniMaxH3ChainCurrent:
             audio_status = "song %.3f..%.3fs" % (
                 shot["audio_start_seconds"],
                 shot["audio_start_seconds"] + shot["audio_duration_seconds"])
-        cfg = plan["compatibility"]
+        cfg = _scene_compatibility(plan, index)
+        _validate_scene_resolution_boundary(plan, index)
         context_length = _shot_context_length(
             shot, int(cfg.get("context_length", 0)))
         repeated_frames = max(
@@ -19409,8 +19512,18 @@ class MiniMaxH3ChainContext:
               future_end_anchor=False, lip_sync_voice=None):
         index = int(state["index"])
         plan = state["plan"]
-        cfg = plan["compatibility"]
+        cfg = _scene_compatibility(plan, index)
         shot = plan["shots"][index - 1]
+        _validate_scene_resolution_boundary(plan, index)
+        if shot.get("resolution"):
+            video = _streams_from_latent(latent)[0]
+            if (int(video.shape[-1]) * 16, int(video.shape[-2]) * 16) != (
+                    cfg["width"], cfg["height"]):
+                raise ValueError(
+                    "Scene %d conditioning does not match its chapter resolution "
+                    "%dx%d. Wire Current Shot width/height to the conditioning "
+                    "node, not the Plan-wide outputs." %
+                    (index, cfg["width"], cfg["height"]))
         context_length = _shot_context_length(
             shot, int(cfg["context_length"]))
         audio_context_length = _shot_audio_context_length(
@@ -19860,6 +19973,7 @@ class MiniMaxH3ChainSegmentSave:
             raise RuntimeError("safetensors is required for H3 chain checkpoints.")
         plan = state["plan"]
         _require_plan_write(plan, "publish a scene checkpoint")
+        _require_chapter_resolution_locks(plan)
         index = int(state["index"])
         shot = plan["shots"][index - 1]
         compatibility = plan["compatibility"]
@@ -19870,6 +19984,12 @@ class MiniMaxH3ChainSegmentSave:
             effective_context_length)
         actual_frames = int(images.shape[0])
         expected_frames = int(shot["delivered_frames"])
+        if shot.get("resolution") and (
+                int(images.shape[2]), int(images.shape[1])) != tuple(
+                    scene_resolution(plan, index)[key] for key in ("width", "height")):
+            raise ValueError("Scene %d decoded dimensions do not match its chapter "
+                             "resolution. Connect Current Shot width/height to conditioning."
+                             % index)
         if actual_frames != expected_frames:
             raise ValueError(
                 "H3 chain clip %d produced %d delivered frames; expected %d. "
@@ -20214,6 +20334,8 @@ class MiniMaxH3ChainSegmentSave:
                 "delivered_frames": shot["delivered_frames"],
                 "history_hash": _history_hash(plan, index),
                 "scene_dependency": scene_dependency,
+                **({"resolution": scene_resolution(plan, index)}
+                   if shot.get("resolution") else {}),
                 **_prompt_fields(plan, index),
                 "archives": archives,
                 "seed": shot["seed"],
@@ -20388,8 +20510,8 @@ class MiniMaxH3ChainSegmentSave:
                 str(plan["compatibility"].get(
                     "generation_fingerprint") or ""),
                 index, len(plan["shots"]), str(shot["prompt"]),
-                int(plan["compatibility"]["width"]),
-                int(plan["compatibility"]["height"]),
+                scene_resolution(plan, index)["width"],
+                scene_resolution(plan, index)["height"],
                 int(shot["raw_frames"]))
             try:
                 if cache_metadata is not None:
@@ -20482,7 +20604,7 @@ class MiniMaxH3ChainSegmentSave:
                 "plan_hash": plan["plan_hash"],
                 "history_hash": segment["history_hash"],
                 "scene_dependency": scene_dependency,
-                "compatibility": plan["compatibility"],
+                "compatibility": _scene_compatibility(plan, index),
                 "archives": archives,
                 "segment": segment,
             }
@@ -20501,6 +20623,7 @@ class MiniMaxH3ChainSegmentSave:
                 # pointer commit; the finally block removes this stale job's
                 # immutable candidate artifacts if the proof was superseded.
                 _require_plan_write(plan, "publish a scene checkpoint")
+                _require_chapter_resolution_locks(plan)
                 _atomic_json(published_metadata, metadata)
                 if alternate_take is None:
                     _atomic_json(paths["metadata"], metadata)
@@ -22325,6 +22448,9 @@ def _chapter_manifest_from_manifest(
         "source_start_frame": source_start,
         "source_editorial_revision": str(editorial.get("revision") or ""),
     })
+    resolution = common_saved_resolution(selected, "Chapter export")
+    if resolution:
+        chapter_record["resolution"] = resolution
     scoped = {
         "format": CHAPTER_MANIFEST_FORMAT,
         "run_name": _strict_run_name(manifest.get("run_name")),
@@ -22344,6 +22470,8 @@ def _chapter_manifest_from_manifest(
         "source_manifest_hash": _fingerprint(manifest),
         "archives": _json_document(manifest.get("archives")) or {},
     }
+    if resolution:
+        scoped["compatibility"].update(resolution)
     if chapter_start == 1 and isinstance(manifest.get("prelude"), dict):
         scoped["prelude"] = _json_document(manifest["prelude"])
     if isinstance(manifest.get("source_timeline"), dict):
@@ -26275,6 +26403,10 @@ class MiniMaxH3ChainLatentVideoAdapter:
                 "H3 Full-Chain Latent Video requires a generated or sealed "
                 "chapter lineage.")
         segments = _checkpoint_export_segments(manifest)
+        geometry = common_saved_resolution(segments, "H3 Full-Chain Latent Video")
+        if geometry:
+            manifest = {**manifest, "compatibility": {
+                **(manifest.get("compatibility") or {}), **geometry}}
         prelude = _validate_prelude(manifest)
         editorial = _manifest_editorial(manifest)
         editorial_segments = [
@@ -26665,6 +26797,10 @@ class MiniMaxH3ChainAssemble:
             manifest = upscale_support._assembly_manifest(
                 upscale_manifest, upscale_segments)
         segments = _validate_manifest(manifest)
+        geometry = common_saved_resolution(segments, "H3 Chain Assemble")
+        if geometry:
+            manifest = {**manifest, "compatibility": {
+                **(manifest.get("compatibility") or {}), **geometry}}
         prelude = _validate_prelude(manifest)
         run_name = _strict_run_name(manifest.get("run_name"))
         editorial = _manifest_editorial(manifest)
@@ -27072,6 +27208,13 @@ def _assemble_review_partial(
     source_audio: dict[str, Any] | None,
 ) -> tuple[str, str]:
     manifest = _partial_manifest(state, segment)
+    sizes = {(size["width"], size["height"])
+             for item in manifest["segments"]
+             if (size := saved_resolution(item)) is not None}
+    if len(sizes) > 1:
+        # Review the current chapter without combining incompatible pictures.
+        # The execution state's full history remains untouched.
+        manifest, _chapter_path = _chapter_manifest_from_manifest(manifest, 0)
     index = int(segment["index"])
     partial_dir = os.path.join(_run_dir(state["plan"]), "partial")
     manifest_path = os.path.join(

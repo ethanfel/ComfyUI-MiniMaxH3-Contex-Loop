@@ -16,8 +16,8 @@ import {
     parsePlanJson,
     planToJson,
     promptValueToText,
-} from "./h3_chain_plan_core.mjs?v=0.7.0";
-import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.7.0";
+} from "./h3_chain_plan_core.mjs?v=0.7.7";
+import {applyCheckpointRevisionSet} from "./h3_chain_review_core.mjs?v=0.7.7";
 import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.2";
 import {
     refreshRestoredPlanEditors,
