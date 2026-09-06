@@ -517,6 +517,18 @@ Segment Save adopts each verified cache object into
 descriptor. Copying or backing up the parent run therefore preserves everything
 required to rebuild pass-2 Ref2VA conditioning.
 
+New V3 scene caches are small JSON manifests pointing into
+`reference_cache/objects/<tensor-content-hash>.safetensors`. Identical reference
+originals, previews, and encoded latents are stored once across scenes/revisions
+within the project. Shared staging objects are hard-linked into the project
+where supported, otherwise copied once. V1/V2 scene-sized bundles remain readable
+and unchanged until explicitly converted. Updating the nodes does not compact
+or delete existing bundles. The [reference-cache converter](SCHEDULED_REFERENCES.md#converting-existing-bundles)
+can split them losslessly, then retire each old bundle after a verified render
+using the conversion successfully commits through an H3 saver. Small legacy JSON
+addresses and conversion/retirement receipts remain for checkpoint compatibility.
+Objects must not be deleted individually while any scene still references them.
+
 Legacy checkpoints that still point into `output/h3_reference_cache/` migrate
 without a rerender. Selecting their complete branch in Checkpoint Manager
 hard-links the verified cache into the corresponding run (or copies it when a
@@ -524,6 +536,8 @@ hard link is unavailable) and returns a run-local descriptor. Migration never
 deletes the global object or rewrites immutable revision metadata. Later branch
 loads resolve the verified run-local equivalent first, so the old staging copy
 can be archived or removed after a successful selection and upscale check.
+Read-only workflow-local/chapter-only selections do not perform this migration;
+checkpoints without an exact cache descriptor still use shared-cache discovery.
 
 Send the backend's decoded **raw** frame batch to both Segment Save and Loop
 End. They remove the parent scene's repeated context head exactly once, persist
@@ -636,6 +650,8 @@ output/h3_chains/<run_name>/
 ├── checkpoints/clip_0001.<revision>.safetensors
 ├── generated_audio/
 ├── reference_cache/
+│   ├── scene_0001.<scene-contract>.json
+│   └── objects/<tensor-content-hash>.safetensors
 ├── chapters/<number>_<chapter_id>/
 │   ├── manifests/<snapshot_id>.json
 │   ├── final/

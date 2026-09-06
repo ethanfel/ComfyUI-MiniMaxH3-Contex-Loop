@@ -7,7 +7,8 @@ import tempfile
 from unittest.mock import patch
 
 from _upscale_chain_unit_test import (
-    load_package, folder_paths, torch, av_latent, audio_for_frames)
+    load_package, folder_paths, torch, av_latent, audio_for_frames,
+    legacy_cache_fixture)
 
 
 class VideoVAE:
@@ -142,8 +143,7 @@ def main():
         save_cache(base)
         exact = chain._find_reference_cache(*args)
         assert exact["reference_fingerprint"] == base
-        exact["format"] = "h3_reference_cache_v1"
-        chain._atomic_json(chain._absolute_output_path(exact["metadata"]), exact)
+        exact = legacy_cache_fixture(chain, exact, "h3_reference_cache_v1")
         assert chain._find_reference_cache(*args)["format"] == "h3_reference_cache_v1"
 
         # Future Segment Save must discover and pin the wrapped cache too.

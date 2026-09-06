@@ -97,6 +97,11 @@ from .prompt_history import PromptHistoryStore
 from .prompt_optimizer import optimize_prompt_payload
 from .run_manager import RunArchiveManager, archive_policy_inputs
 from .asset_store import MAX_DIRECT_ASSET_BINDINGS, RunAssetStore
+from .reference_cache_store import (
+    FORMAT as REFERENCE_CACHE_FORMAT, ReferenceTensorStore, objects_digest,
+)
+from .reference_cache_migration import ReferenceCacheMigrator, matches_legacy
+from .reference_cache_usage import note_converted_use, confirm_saved_use
 from .project_assets import (
     PROJECT_ASSET_FORMAT,
     ProjectAssetConflictError,
@@ -4265,8 +4270,8 @@ def _replace_conditioning_presentation(
     return merged, status
 
 
-REFERENCE_CACHE_FORMAT = "h3_reference_cache_v2"
-REFERENCE_CACHE_LEGACY_FORMATS = frozenset(("h3_reference_cache_v1",))
+REFERENCE_CACHE_LEGACY_FORMATS = frozenset((
+    "h3_reference_cache_v1", "h3_reference_cache_v2"))
 
 
 def _is_reference_cache_format(value: Any) -> bool:
@@ -4327,17 +4332,16 @@ def _reference_cache_presentation_contract(presentation: Any) -> Any:
 
 def _reference_cache_existing(paths: dict[str, str],
                               signature: str) -> bool:
-    if not (os.path.isfile(paths["metadata"])
-            and os.path.isfile(paths["tensors"])):
+    if not os.path.isfile(paths["metadata"]):
         return False
     try:
         metadata = _read_json(paths["metadata"])
-        return (
-            metadata.get("format") == REFERENCE_CACHE_FORMAT
-            and metadata.get("signature") == signature
-            and metadata.get("tensors_sha256") == _file_sha256(
-                paths["tensors"]))
-    except (OSError, ValueError, json.JSONDecodeError):
+        if (metadata.get("format") != REFERENCE_CACHE_FORMAT
+                or metadata.get("signature") != signature):
+            return False
+        _load_reference_cache_descriptor(_reference_cache_descriptor(metadata))
+        return True
+    except (OSError, TypeError, ValueError, json.JSONDecodeError):
         return False
 
 
@@ -4467,13 +4471,16 @@ def _cache_reference_scene(
     signature = _reference_cache_signature(
         fingerprint, scene, scene_count, prompt, compiled_prompt, width,
         height, length, ref_image_size, presentation_contract)
-    paths = _reference_cache_paths(fingerprint, scene, signature)
-    if _reference_cache_existing(paths, signature):
-        return "reference cache reused %s" % signature[:12]
     presentation, blocks, source_images = _h3_reference_cache_payload(
         vae, audio_vae, pictures, videos, audios, width, height, length,
         ref_image_size, semantic_presentation)
-    tensors: dict[str, Any] = {}
+    # Store references independently of prompt, scene index, ordering and run.
+    # Hash actual encoded bytes rather than guessing encoder/model identity.
+    # Identical masters can also be shared by different resolution variants.
+    store = ReferenceTensorStore(
+        _output_root(), os.path.join(_output_root(), "h3_reference_cache", "objects"),
+        _file_sha256)
+    tensor_objects: dict[str, Any] = {}
     public_presentation = []
     for index, item in enumerate(presentation):
         record = {"type": str(item["type"])}
@@ -4484,17 +4491,17 @@ def _cache_reference_scene(
         data = item.get("data")
         if data is not None:
             key = "presentation_%03d" % index
-            tensors[key] = torch.clamp(
+            tensor_objects[key] = store.put(torch.clamp(
                 data.detach().cpu().float(), 0.0, 1.0).mul(255).round().to(
-                    torch.uint8).contiguous()
+                    torch.uint8).contiguous())
             record["data_tensor"] = key
         public_presentation.append(record)
     public_source_images = []
     for index, image in enumerate(source_images):
         key = "source_image_%03d" % index
-        tensors[key] = torch.clamp(
+        tensor_objects[key] = store.put(torch.clamp(
             image.detach().cpu().float(), 0.0, 1.0).mul(255).round().to(
-                torch.uint8).contiguous()
+                torch.uint8).contiguous())
         public_source_images.append({"data_tensor": key})
     public_blocks = []
     for index, block in enumerate(blocks):
@@ -4505,19 +4512,16 @@ def _cache_reference_scene(
             if value is None:
                 continue
             key = "block_%03d_%s" % (index, field)
-            tensors[key] = value.detach().cpu().contiguous()
+            tensor_objects[key] = store.put(value)
             record[field + "_tensor"] = key
         public_blocks.append(record)
+    payload_digest = objects_digest(tensor_objects)
+    signature = _fingerprint({"scene_contract": signature,
+                              "tensors_sha256": payload_digest})
+    paths = _reference_cache_paths(fingerprint, scene, signature)
+    if _reference_cache_existing(paths, signature):
+        return "reference cache reused %s" % signature[:12]
     os.makedirs(paths["root"], exist_ok=True)
-    temporary = "%s.%s.tmp" % (paths["tensors"], uuid.uuid4().hex)
-    try:
-        _st_save(tensors, temporary, metadata={
-            "format": REFERENCE_CACHE_FORMAT,
-            "signature": signature,
-        })
-        os.replace(temporary, paths["tensors"])
-    finally:
-        _safe_unlink(temporary)
     metadata = {
         "format": REFERENCE_CACHE_FORMAT,
         "signature": signature,
@@ -4535,8 +4539,9 @@ def _cache_reference_scene(
         "source_images": public_source_images,
         "reference_blocks": public_blocks,
         "metadata": _relative_output_path(paths["metadata"]),
-        "tensors": _relative_output_path(paths["tensors"]),
-        "tensors_sha256": _file_sha256(paths["tensors"]),
+        "tensor_objects": tensor_objects,
+        # V3 pins the ordered-key/object digest map, independent of location.
+        "tensors_sha256": payload_digest,
         "created_at": datetime.now(timezone.utc).isoformat(
             timespec="seconds").replace("+00:00", "Z"),
     }
@@ -4548,14 +4553,66 @@ def _reference_cache_descriptor(metadata: Any) -> dict[str, Any] | None:
     if not isinstance(metadata, dict) or not _is_reference_cache_format(
             metadata.get("format")):
         return None
-    required = ("signature", "reference_fingerprint", "metadata", "tensors",
-                "tensors_sha256")
+    required = ("signature", "reference_fingerprint", "metadata", "tensors_sha256")
+    if metadata["format"] != REFERENCE_CACHE_FORMAT:
+        required += ("tensors",)
     if not all(isinstance(metadata.get(key), str) and metadata.get(key)
                for key in required):
         return None
-    return {key: metadata[key] for key in (
-        "format", "signature", "reference_fingerprint", "metadata",
-        "tensors", "tensors_sha256")}
+    return {key: metadata[key] for key in ("format",) + required}
+
+
+def _reference_cache_object_store(metadata: dict[str, Any]) -> ReferenceTensorStore:
+    metadata_path = _absolute_output_path(metadata["metadata"])
+    parent = os.path.dirname(metadata_path)
+    shared = _absolute_output_path("h3_reference_cache")
+    # Shared scene manifests live one fingerprint directory below the store;
+    # run-local manifests and their objects are siblings within reference_cache.
+    root = shared if os.path.dirname(parent) == shared else parent
+    return ReferenceTensorStore(
+        _output_root(), os.path.join(root, "objects"), _file_sha256)
+
+
+def _verify_reference_cache_objects(metadata: dict[str, Any]) -> ReferenceTensorStore:
+    objects = metadata.get("tensor_objects")
+    if objects_digest(objects) != metadata.get("tensors_sha256"):
+        raise ValueError("H3 reference object manifest failed SHA-256 integrity checks.")
+    store = _reference_cache_object_store(metadata)
+    checked = set()
+    for record in objects.values():
+        identity = (record["tensors"], record["tensors_sha256"], record["tensor_sha256"])
+        if identity not in checked:
+            store.verify(record)
+            checked.add(identity)
+    return store
+
+
+def _reference_cache_tensors(metadata: dict[str, Any]) -> dict[str, Any]:
+    metadata = _resolve_converted_reference_cache(metadata)
+    if metadata.get("format") == REFERENCE_CACHE_FORMAT:
+        store = _verify_reference_cache_objects(metadata)
+        loaded = {}
+        tensors = {}
+        for key, record in metadata["tensor_objects"].items():
+            digest = record["tensor_sha256"]
+            if digest not in loaded:
+                loaded[digest] = store.load(record)
+            tensors[key] = loaded[digest]
+        return tensors
+    tensor_path = _absolute_output_path(metadata["tensors"])
+    expected = str(metadata.get("tensors_sha256") or "")
+    if (not os.path.isfile(tensor_path) or not expected
+            or _file_sha256(tensor_path) != expected):
+        raise ValueError("H3 reference cache failed its SHA-256 check.")
+    return _st_load(tensor_path)
+
+
+def _resolve_converted_reference_cache(metadata: dict[str, Any]) -> dict[str, Any]:
+    if metadata.get("format") in REFERENCE_CACHE_LEGACY_FORMATS:
+        converted = ReferenceCacheMigrator(_output_root()).resolve(metadata)
+        if converted is not None:
+            return converted
+    return metadata
 
 
 def _run_local_reference_cache(
@@ -4572,25 +4629,29 @@ def _run_local_reference_cache(
         _run_dir({"run_name": normalized_run}), "reference_cache"))
     signature = str(descriptor["signature"])
     stem = "scene_%04d.%s" % (int(scene), signature[:24])
-    metadata_path = os.path.join(root, stem + ".json")
     tensors_path = os.path.join(root, stem + ".safetensors")
-    if not (os.path.isfile(metadata_path) and os.path.isfile(tensors_path)):
-        return None
-    try:
-        metadata = _read_json(metadata_path)
-        local = _reference_cache_descriptor(metadata)
-        if local is None:
-            return None
-        identity = ("format", "signature", "reference_fingerprint",
-                    "tensors_sha256")
-        if any(local[key] != descriptor[key] for key in identity):
-            return None
-        if (_absolute_output_path(local["metadata"]) != metadata_path
-                or _absolute_output_path(local["tensors"]) != tensors_path):
-            return None
-        return _load_reference_cache_descriptor(local)
-    except (OSError, TypeError, ValueError, json.JSONDecodeError):
-        return None
+    for suffix in (".json", ".converted.json"):
+        metadata_path = os.path.join(root, stem + suffix)
+        if not os.path.isfile(metadata_path):
+            continue
+        try:
+            metadata = _read_json(metadata_path)
+            local = _reference_cache_descriptor(metadata)
+            if local is None:
+                continue
+            identity = ("format", "signature", "reference_fingerprint", "tensors_sha256")
+            if (any(local[key] != descriptor[key] for key in identity)
+                    and not matches_legacy(metadata, descriptor)):
+                continue
+            if _absolute_output_path(local["metadata"]) != metadata_path:
+                continue
+            if (local["format"] != REFERENCE_CACHE_FORMAT
+                    and _absolute_output_path(local["tensors"]) != tensors_path):
+                continue
+            return _load_reference_cache_descriptor(local)
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
+            continue
+    return None
 
 
 def _adopt_reference_cache_for_run(
@@ -4607,13 +4668,6 @@ def _adopt_reference_cache_for_run(
         plan["run_name"], scene, descriptor)
     if existing is not None:
         return existing
-    source_tensors = _absolute_output_path(descriptor["tensors"])
-    expected_hash = descriptor["tensors_sha256"]
-    if (not os.path.isfile(source_tensors)
-            or _file_sha256(source_tensors) != expected_hash):
-        raise ValueError(
-            "H3 reference cache cannot be adopted: source tensors failed "
-            "integrity checks.")
     root = os.path.abspath(os.path.join(_run_dir(plan), "reference_cache"))
     run_root = os.path.abspath(_run_dir(plan))
     if os.path.commonpath([run_root, root]) != run_root:
@@ -4621,8 +4675,28 @@ def _adopt_reference_cache_for_run(
     signature = str(descriptor["signature"])
     stem = "scene_%04d.%s" % (scene, signature[:24])
     tensors_path = os.path.join(root, stem + ".safetensors")
-    metadata_path = os.path.join(root, stem + ".json")
+    suffix = ".converted.json" if metadata.get("legacy_conversion") else ".json"
+    metadata_path = os.path.join(root, stem + suffix)
     os.makedirs(root, exist_ok=True)
+    if descriptor["format"] == REFERENCE_CACHE_FORMAT:
+        source_store = _verify_reference_cache_objects(metadata)
+        local_store = ReferenceTensorStore(
+            _output_root(), os.path.join(root, "objects"), _file_sha256)
+        adopted = _json_document(metadata)
+        adopted.update({"run_name": str(plan["run_name"]),
+                        "metadata": _relative_output_path(metadata_path),
+                        "tensor_objects": {
+                            key: local_store.adopt(source_store, record)
+                            for key, record in metadata["tensor_objects"].items()}})
+        _atomic_json(metadata_path, adopted)
+        return _load_reference_cache_descriptor(_reference_cache_descriptor(adopted))
+    source_tensors = _absolute_output_path(descriptor["tensors"])
+    expected_hash = descriptor["tensors_sha256"]
+    if (not os.path.isfile(source_tensors)
+            or _file_sha256(source_tensors) != expected_hash):
+        raise ValueError(
+            "H3 reference cache cannot be adopted: source tensors failed "
+            "integrity checks.")
     if (not os.path.isfile(tensors_path)
             or _file_sha256(tensors_path) != expected_hash):
         temporary = "%s.%s.tmp" % (tensors_path, uuid.uuid4().hex)
@@ -4673,11 +4747,18 @@ def _load_reference_cache_descriptor(value: Any) -> dict[str, Any]:
     if expected is None or expected != descriptor:
         raise ValueError(
             "H3 checkpoint reference-cache descriptor does not match disk.")
-    tensor_path = _absolute_output_path(descriptor["tensors"])
-    if (not os.path.isfile(tensor_path) or _file_sha256(tensor_path) !=
-            descriptor["tensors_sha256"]):
-        raise ValueError(
-            "H3 checkpoint reference-cache tensors failed integrity checks.")
+    converted = _resolve_converted_reference_cache(metadata)
+    if converted is not metadata:
+        _verify_reference_cache_objects(converted)
+        return converted
+    if descriptor["format"] == REFERENCE_CACHE_FORMAT:
+        _verify_reference_cache_objects(metadata)
+    else:
+        tensor_path = _absolute_output_path(descriptor["tensors"])
+        if (not os.path.isfile(tensor_path) or _file_sha256(tensor_path) !=
+                descriptor["tensors_sha256"]):
+            raise ValueError(
+                "H3 checkpoint reference-cache tensors failed integrity checks.")
     return metadata
 
 
@@ -4693,7 +4774,8 @@ def _reference_cache_candidates(
     candidates = []
     prefix = "scene_%04d." % int(scene)
     for filename in os.listdir(root):
-        if not (filename.startswith(prefix) and filename.endswith(".json")):
+        if not (filename.startswith(prefix) and filename.endswith(".json")) or filename.endswith(
+                (".converted.json", ".retired.json")):
             continue
         path = os.path.join(root, filename)
         try:
@@ -4729,7 +4811,7 @@ def _find_reference_cache(
     args = (scene, scene_count, prompt, width, height, length)
     candidates = _reference_cache_candidates(fingerprint, *args)
     if candidates:
-        return max(candidates, key=lambda item: item[0])[1]
+        return _resolve_converted_reference_cache(max(candidates, key=lambda item: item[0])[1])
 
     # Project Assets / Plan may retain the base Tagged registry fingerprint,
     # while Tagged Ref2VA wraps it with its semantic presentation settings.
@@ -4752,7 +4834,7 @@ def _find_reference_cache(
             "different semantic-anchor settings, but this checkpoint has "
             "no exact cache link. Connect explicit Tagged references to "
             "select the intended pass-2 conditioning." % int(scene))
-    return max(candidates, key=lambda item: item[0])[1]
+    return _resolve_converted_reference_cache(max(candidates, key=lambda item: item[0])[1])
 
 
 def _reference_payload_from_cache(
@@ -4761,12 +4843,8 @@ def _reference_payload_from_cache(
     if _st_load is None or torch is None:
         raise RuntimeError(
             "safetensors and torch are required to load H3 reference cache.")
-    tensor_path = _absolute_output_path(metadata["tensors"])
-    expected = str(metadata.get("tensors_sha256") or "")
-    if (not os.path.isfile(tensor_path) or not expected
-            or _file_sha256(tensor_path) != expected):
-        raise ValueError("H3 reference cache failed its SHA-256 check.")
-    tensors = _st_load(tensor_path)
+    metadata = _resolve_converted_reference_cache(metadata)
+    tensors = _reference_cache_tensors(metadata)
     presentation = []
     for record in metadata.get("presentation", ()):
         item = {
@@ -4872,6 +4950,7 @@ def _conditioning_from_reference_cache_target(
     if not callable(getattr(vae, "encode", None)):
         raise ValueError(
             "Pass-2 target conditioning requires the MiniMax H3 video VAE.")
+    metadata = _resolve_converted_reference_cache(metadata)
     presentation, blocks, source_images = _reference_payload_from_cache(
         metadata)
     presentation, blocks = _h3_motion_reference_policy(
@@ -4959,6 +5038,7 @@ def _conditioning_from_reference_cache_target(
                 "H3 reference cache conditioning requires ComfyUI node_helpers.") from exc
         conditioning = node_helpers.conditioning_set_values(
             conditioning, {"minimax_refs": blocks})
+    note_converted_use(metadata, _output_root())
     return conditioning, {
         "policy": policy,
         "target_width": target_width,
@@ -4975,6 +5055,7 @@ def _conditioning_from_reference_cache(clip: Any,
                                        prompt_override: str | None = None,
                                        motion_ref_mode: str = "resize_video"
                                        ) -> Any:
+    metadata = _resolve_converted_reference_cache(metadata)
     presentation, blocks, _source_images = _reference_payload_from_cache(
         metadata)
     presentation, blocks = _h3_motion_reference_policy(
@@ -4999,6 +5080,7 @@ def _conditioning_from_reference_cache(clip: Any,
                 "H3 reference cache conditioning requires ComfyUI node_helpers.") from exc
         conditioning = node_helpers.conditioning_set_values(
             conditioning, {"minimax_refs": blocks})
+    note_converted_use(metadata, _output_root())
     return conditioning
 
 
@@ -21012,6 +21094,8 @@ class MiniMaxH3ChainSegmentSave:
                 if archive_snapshot_created:
                     _remove_run_archive_snapshot(plan, transaction)
 
+        cache_cleanup = confirm_saved_use(
+            dynprompt, unique_id, published_metadata, _output_root(), _LOG)
         retained = (
             "; original generation checkpoint retained"
             if alternate_take is not None else
@@ -21027,6 +21111,8 @@ class MiniMaxH3ChainSegmentSave:
                   (save_kind, index, len(plan["shots"]), transaction,
                    published_segment, published_checkpoint, audio_status,
                    blend_status, retained))
+        if cache_cleanup:
+            status += "; retired %d verified legacy reference bundle(s)" % len(cache_cleanup)
         _LOG.info("H3 Chain %s", status)
         ui = {"text": [status]}
         if not _has_downstream_review_gate(dynprompt, unique_id):
@@ -28403,6 +28489,12 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 if local_descriptor is None:
                     raise ValueError(
                         "adopted H3 reference cache has no valid descriptor")
+                if matches_legacy(local_cache, descriptor):
+                    # Conversion changes storage, not the selected generation.
+                    # Preserve its descriptor and hence the full source-manifest
+                    # hash used to resume previously saved upscale profiles.
+                    local_descriptor = descriptor
+                    adopted = False
                 metadata = dict(metadata)
                 metadata["segment"] = dict(segment)
                 metadata["segment"]["reference_cache"] = local_descriptor

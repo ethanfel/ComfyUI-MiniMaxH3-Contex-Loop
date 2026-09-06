@@ -51,6 +51,29 @@ def audio_for_frames(frames, sample_rate=8000):
     }
 
 
+def legacy_cache_fixture(chain, metadata, version="h3_reference_cache_v2"):
+    """Materialize a real old bundle so legacy reader tests stay meaningful."""
+    tensors = chain._reference_cache_tensors(metadata)
+    legacy = dict(metadata)
+    legacy.pop("tensor_objects", None)
+    legacy["format"] = version
+    legacy["signature"] = chain._fingerprint({
+        "format": version, "reference_fingerprint": legacy["reference_fingerprint"],
+        **{key: legacy[key] for key in ("scene", "scene_count", "prompt", "compiled_prompt",
+                                       "width", "height", "length", "ref_image_size")},
+        "presentation": legacy.get("presentation_contract"),
+    })
+    metadata_path = pathlib.Path(chain._absolute_output_path(legacy["metadata"])).with_name(
+        "scene_%04d.%s.json" % (legacy["scene"], legacy["signature"][:24]))
+    legacy["metadata"] = chain._relative_output_path(str(metadata_path))
+    path = metadata_path.with_suffix(".safetensors")
+    chain._st_save({key: value.clone() for key, value in tensors.items()}, str(path))
+    legacy["tensors"] = chain._relative_output_path(str(path))
+    legacy["tensors_sha256"] = chain._file_sha256(str(path))
+    chain._atomic_json(chain._absolute_output_path(legacy["metadata"]), legacy)
+    return legacy
+
+
 def main():
     package, chain, upscale = load_package()
     required = {
@@ -238,6 +261,9 @@ def main():
         assert "reference cache saved" in cache_status
         cache_metadata = chain._find_reference_cache(
             "unit-test", 1, 2, source["prompt"], 32, 32, 5)
+        assert cache_metadata["format"] == "h3_reference_cache_v3"
+        # Exercise backward compatibility with an actual V2 tensor bundle.
+        cache_metadata = legacy_cache_fixture(chain, cache_metadata)
         cache_descriptor = chain._reference_cache_descriptor(cache_metadata)
         assert cache_descriptor is not None
         assert cache_metadata["format"] == "h3_reference_cache_v2"

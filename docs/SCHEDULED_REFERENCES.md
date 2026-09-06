@@ -191,39 +191,103 @@ source waveform at Loop Start.
 
 ## Automatic deferred-upscale cache
 
-Tagged and Scheduled Ref2VA enable `cache_for_upscale` by default. On the first
-execution of each scene, the wrapper stores the native H3 picture/video/audio
-reference blocks after VAE encoding, together with only the resized Qwen image
-or 2 fps video presentation needed to tokenize the same compiled prompt later.
-The cache is content-addressed by the registry fingerprint plus the scene's
-prompt, frame contract, canvas, and reference sizing mode. Ref2VA first writes
-to a reusable global staging store because it does not require a Plan or
-`run_name` input. Segment Save then hard-links (or copies when linking is not
-available) the verified tensors and publishes authoritative metadata inside
-the corresponding run:
+Tagged and Scheduled Ref2VA enable `cache_for_upscale` by default. The wrapper
+stores native H3 picture/video/audio reference latents, original picture masters
+for larger pass-2 canvases, and the resized Qwen image or 2 fps video presentation.
+
+New caches use **V3 per-reference tensor objects**, not one large safetensors
+bundle per scene. Each original, presentation tensor, and encoded latent is
+stored independently, addressed by its exact dtype, shape, and bytes. Different
+scenes, prompts, reference ordering, and projects reuse identical objects. An
+original picture can be shared even when its resized presentations and encoded
+variants differ. Different VAE results, resolutions, video slices, and audio
+payloads never share an object unless the resulting tensors are identical.
+
+Small scene JSON manifests retain the registry fingerprint, prompt, frame
+contract, canvas, reference sizing, roles, ordering, timestamps, and object links.
+Their signatures include the tensor-object map. This deduplicates **disk storage**;
+it does not skip VAE encoding based on guessed model identity, or spill the
+upscaler's working frames/model memory to disk.
+
+Ref2VA writes objects to `output/h3_reference_cache/objects/` and scene manifests
+to `output/h3_reference_cache/<fingerprint>/` because it does not require a Plan
+or `run_name` input. Segment Save then hard-links each unique object (or copies
+it once per project when linking is unavailable) and publishes local metadata:
 
 ```text
 output/h3_chains/<run-name>/reference_cache/
-  scene_0001.<scene-contract>.safetensors
   scene_0001.<scene-contract>.json
+  scene_0002.<scene-contract>.json
+  objects/<tensor-content-hash>.safetensors
 ```
 
 The standalone deferred-upscale workflow reads `generation_fingerprint` from
 the selected checkpoint branch and restores the matching scene automatically.
 It does not need the source Plan or any original reference-media connection.
 The checkpoint points only to the run-local descriptor, making the run folder
-self-contained for copying, backup, and later upscale. The safetensors file is
-SHA-256 verified before use. Disable
+self-contained for copying, backup, and later upscale. Object maps and tensor
+files are SHA-256 verified before use; relocated projects do not need the shared
+store. Do not delete individual objects: multiple scenes can reference them. Disable
 `cache_for_upscale` only when the extra reference encode and disk cache are not
 wanted. Existing checkpoints made before this feature have no cache; the
 upscale conditioning node can either fall back to text-only conditioning or
 raise an explicit error.
 
-Checkpoints made during the earlier global-cache-only implementation are
+V1/V2 bundled caches remain readable and are not automatically rewritten or
+deleted merely by installing the update. New writes use V3. Use the converter
+below to opt existing bundles into conversion and success-gated retirement.
+There is no automatic garbage collection of the new shared tensor objects.
+
+Checkpoints with exact cache links made during the earlier global-cache-only implementation are
 adopted automatically on their next complete-branch selection in Checkpoint
 Manager. The verified tensor is hard-linked or copied into the run-local cache;
 the original `output/h3_reference_cache/` object is deliberately left intact.
-No source render or manual file move is required.
+No source render or manual file move is required. Workflow-local and chapter-only
+selection are read-only and do not migrate caches. Older checkpoints without an
+exact cache link still use the fingerprint-based shared-cache lookup.
+
+### Converting existing bundles
+
+**Update every ComfyUI instance sharing the output directory before enabling
+conversion.** Old node versions cannot follow V3 redirects after retirement.
+Run this with a Python environment containing PyTorch and safetensors; no model
+load, VAE re-encoding, or generation is required to convert:
+
+```bash
+python tools/convert_reference_caches.py --output-root /path/to/ComfyUI/output --all --dry-run
+python tools/convert_reference_caches.py --output-root /path/to/ComfyUI/output --all --apply
+```
+
+For narrower scope, replace `--all` with `--run <run_name>` (project-local caches
+only), or `--metadata <relative/path/to/scene_cache.json>` (repeatable). Dry-run
+is the default and writes nothing. `--apply` is resumable: completed conversions
+are verified and reused, and incomplete conversions retain their old bundle.
+Conversion needs temporary headroom for unique objects until successful use.
+
+The converter retains the original `scene_….json` and large bundle, and writes
+a neighbouring `scene_….converted.json` with links to the per-tensor objects.
+Tensor values, dtypes, reference roles, prompt, order, and timestamps are
+preserved exactly; V1 caches do not gain original images they never contained.
+Immutable checkpoint JSON and source-manifest identities are not rewritten,
+so existing upscale profiles can still resume.
+
+**Automatic retirement happens after a successful scene save using converted
+conditioning**, not during conversion, cache discovery, preview, or conditioning
+encoding. The H3 generation/upscale saver requires a same-execution use receipt
+on the conditioning path of a supported sampler leading to its saved pixels.
+Built-in `SamplerCustom`, `SamplerCustomAdvanced`, `KSampler`/`KSamplerAdvanced`,
+H3 USDU `UltimateSDUpscale*`, and the CAT USDU video adapter are recognized.
+Unknown wrappers, cached conditioning from a previous execution, failed or
+cancelled renders, and unprovable branches keep the legacy bundle.
+
+After verifying the committed output, the complete converted tensors against
+the original bundle, and other cache JSON consumers of that pathname, the saver
+deletes **only that legacy safetensors file**. It retains the original JSON,
+converted manifest, tensor objects and a small `.retired.json` receipt so old
+checkpoint addresses continue to resolve. Other hard links are left intact;
+unlinking one path may not release physical space until its remaining links
+are also retired. The saver reports retirement in its status and log. Cleanup
+failure keeps the bundle and never invalidates a successfully saved render.
 
 ## Patch priority
 

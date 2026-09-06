@@ -2150,6 +2150,7 @@ class MiniMaxH3ChainUpscaleSegmentSave:
                                "the same repeated-head trim as video and "
                                "replaces the source checkpoint audio."}),
             },
+            "hidden": {"dynprompt": "DYNPROMPT", "unique_id": "UNIQUE_ID"},
         }
 
     RETURN_TYPES = (UPSCALE_SEGMENT_TYPE, "STRING")
@@ -2171,7 +2172,7 @@ class MiniMaxH3ChainUpscaleSegmentSave:
         return float("NaN")
 
     def save(self, state, images, upscaled_latent=None,
-             recovered_audio=None):
+             recovered_audio=None, dynprompt=None, unique_id=None):
         if chain._st_save is None or chain.torch is None:
             raise RuntimeError("safetensors and torch are required for H3 upscale saves.")
         index = int(state["index"])
@@ -2372,6 +2373,8 @@ class MiniMaxH3ChainUpscaleSegmentSave:
                     if value:
                         chain._safe_unlink(value)
 
+        cache_cleanup = chain.confirm_saved_use(
+            dynprompt, unique_id, metadata_path, chain._output_root(), chain._LOG)
         status = ("saved HQ scene %d/%d at %dx%d; latent %s -> %s" %
                   (index, _source_bounds(state["source_manifest"])[1], width,
                    height, "saved" if save_latent else "omitted", segment_path))
@@ -2379,6 +2382,8 @@ class MiniMaxH3ChainUpscaleSegmentSave:
             status += "; %s" % audio_route
         if context_steps:
             status += "; retained %d-step Drift-Control HQ tail" % context_steps
+        if cache_cleanup:
+            status += "; retired %d verified legacy reference bundle(s)" % len(cache_cleanup)
         return {
             "ui": {"text": [status],
                    "images": [chain._video_output_item(segment_path)],
