@@ -51,7 +51,7 @@ second prompt copy.
 - Typing `#` offers valid dedicated Semantic Picture Anchors (and legacy
   Tagged Picture compatibility anchors) only.
 - Typing `<` offers H3 subjects, dialogue tags, and available native reference
-  labels, plus `<scenetrans>` and `<cutoff>` dialogue-flow markers. Typing
+  labels, plus `<scenetrans>` and `<|cutoff|>` dialogue-flow markers. Typing
   `[` filters 12 shot markers, multilingual dialogue markers, and canonical
   summary-intent combinations; for example, `[re` lists the supported
   reference-generation combinations. Typing `(S` offers stable speaker IDs.
@@ -90,6 +90,34 @@ backported from the standalone
 [H3 Prompt IDE](https://github.com/ethanfel/ComfyUI-H3-Prompt-IDE), while these
 nodes retain Motion Context Plan synchronization, revisions, `@tags`,
 semantic anchors, and optimizer integration.
+
+### Nightly editor interactions
+
+Click a Subject, speaker, dialogue, lyrics, caption or flow token to replace
+or remove it. Pasted tokens become interactive immediately. Connected media
+references keep their existing reference/syntax/time popup and previews.
+Ctrl/Cmd-click an ordinary `[Shot N]`, language, task directive or retention
+marker to change it without replacing the surrounding sentence.
+
+Inside `retention_analysis:`, completion offers visual or audio retention
+values according to the reference kind, including known `@aliases` and
+`#picture` anchors. Inside `detailed_description:`, typing
+`[Shot N] At` offers `At 00:00.000, `, selecting the seconds/milliseconds
+for immediate editing. Ctrl/Cmd+Space also offers the timestamp after a plain
+`At` in that section.
+
+ComfyUI **Settings → MiniMax H3 Context Loop → Prompt editor** controls the
+default Rich/Plain presentation, automatic suggestions, optional trailing
+spaces, and the new marker replacement menus. Saved per-node presentation
+choices win. Trailing spaces are off by default to preserve existing typing
+behavior; semantic anchors never receive an inserted space before their time.
+Turning off automatic suggestions still allows Ctrl/Cmd+Space.
+
+Ctrl/Cmd+S saves the workflow while the editor is focused. Ctrl/Cmd+Z remains
+scene-local. Token diagnostics flag malformed lyrics/caption pairs, incorrect
+special-token case, and legacy `<cutoff>`; they do not rewrite saved prompts
+or change generation. No task-aware Edit templates or new node sockets are
+introduced by this port.
 
 ## Prompt revisions
 

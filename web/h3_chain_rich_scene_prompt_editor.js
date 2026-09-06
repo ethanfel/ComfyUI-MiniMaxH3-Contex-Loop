@@ -48,9 +48,12 @@ import {
     richGenerationMode,
     richGuideInstruction,
     tokenizeRichPrompt,
-} from "./h3_rich_prompt_editor_core.mjs?v=0.7.0";
-import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.7.0";
-import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.7.0";
+} from "./h3_rich_prompt_editor_core.mjs?v=0.7.5";
+import {createPromptCompletionController} from "./h3_prompt_completion_core.mjs?v=0.7.5";
+import {bindPromptMarkerInteractions} from "./h3_prompt_marker_ui.mjs?v=0.7.5";
+import {isWorkflowSaveShortcut, promptEditorRichText} from "./h3_prompt_editor_settings_core.mjs?v=0.7.5";
+import {promptEditorPreferences} from "./h3_prompt_editor_settings.js";
+import {createH3PromptSchemaController} from "./h3_prompt_schema_ui.mjs?v=0.7.5";
 import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.2";
 import {
     PROJECT_ASSET_CATALOG_CHANGED_EVENT,
@@ -417,7 +420,7 @@ function clamp(value, minimum, maximum, fallback) {
     return Number.isFinite(numeric) ? Math.max(minimum, Math.min(maximum, Math.round(numeric))) : fallback;
 }
 
-function editorPlainText(editor) {
+function editorPlainText(editor, {trimFinalNewline = true} = {}) {
     function read(node, root) {
         if (node.nodeType === Node.TEXT_NODE) return node.textContent ?? "";
         if (node.nodeType === Node.DOCUMENT_FRAGMENT_NODE) {
@@ -433,7 +436,8 @@ function editorPlainText(editor) {
         if (["DIV", "P"].includes(node.tagName) && node !== root && !text.endsWith("\n")) text += "\n";
         return text;
     }
-    return read(editor, editor).replace(/\n$/, "");
+    const text = read(editor, editor);
+    return trimFinalNewline ? text.replace(/\n$/, "") : text;
 }
 
 function selectedEditorPlainText(editor) {
@@ -617,7 +621,15 @@ function mount(node) {
     // widget. stopPropagation deliberately preserves the browser's default
     // contenteditable action; preventDefault here would break paste.
     for (const eventName of ["keydown", "keyup", "keypress", "copy", "cut", "paste"]) {
-        root.addEventListener(eventName, (event) => event.stopPropagation());
+        root.addEventListener(eventName, (event) => {
+            // Saving the workflow must remain available while typing; all
+            // editing/undo shortcuts keep their existing scene-local routing.
+            if (isWorkflowSaveShortcut(event)) {
+                if (event.type === "keydown") flushPlanEffects();
+                return;
+            }
+            event.stopPropagation();
+        });
     }
     root.addEventListener("wheel", (event) => event.stopPropagation());
 
@@ -626,7 +638,7 @@ function mount(node) {
         active:Math.max(0, Number(node.properties[ACTIVE_PROPERTY]) || 0),
         fontSize:clamp(node.properties[FONT_PROPERTY], MIN_FONT, MAX_FONT, DEFAULT_FONT),
         guide:normalizeRichGuide(node.properties[GUIDE_PROPERTY]),
-        decorated:node.properties[PRESENTATION_PROPERTY] !== false,
+        decorated:promptEditorRichText(node.properties, PRESENTATION_PROPERTY, promptEditorPreferences()),
         records:[], referenceMode:null, editor:null, refs:null, status:null, optimizerStatus:null,
         referenceSyntax:new Map(),
         promptSelection:null,
@@ -1280,6 +1292,17 @@ function mount(node) {
         const token = element("span", `h3rp-token h3rp-token-${kind}`);
         token.contentEditable = "false";
         token.dataset.token = part.text;
+        if (["subject", "speaker", "dialogue", "flow"].includes(part.type)) {
+            token.dataset.h3PromptMarker = "";
+            token.tabIndex = 0;
+            token.setAttribute("role", "button");
+            token.addEventListener("keydown", (event) => {
+                if (event.key !== "Enter" && event.key !== " ") return;
+                event.preventDefault();
+                event.stopPropagation();
+                token.click();
+            });
+        }
         if (part.unresolved) token.classList.add("h3rp-token-unknown");
         if (part.record && !part.record.active) token.classList.add("h3rp-token-inactive");
         if (part.type === "section") {
@@ -1309,7 +1332,8 @@ function mount(node) {
         } else {
             token.title = part.type === "reference"
                 ? "Unresolved reference in this scene · click to replace"
-                : part.text;
+                : token.dataset.h3PromptMarker !== undefined
+                  ? "Click to replace or remove this prompt token" : part.text;
         }
         if (part.type === "reference") {
             token.tabIndex = 0;
@@ -2101,6 +2125,10 @@ function mount(node) {
         });
         editor.addEventListener("paste", (event) => {
             event.preventDefault(); insertPlainText(editor, event.clipboardData?.getData("text/plain") ?? "");
+            // Decorate pasted tokens now, retaining the existing text-level
+            // undo transaction and routing the save through the input handler.
+            renderEditorText(editorPlainText(editor, {trimFinalNewline:false}), selectionTextOffset(editor));
+            state.completion?.refresh();
         });
         editor.addEventListener("copy", (event) => copyEditorSelection(editor, event));
         editor.addEventListener("cut", (event) => copyEditorSelection(editor, event, true));
@@ -2195,7 +2223,20 @@ function mount(node) {
             getRecords:() => state.records,
             getReferenceMode:() => state.referenceMode,
             getMode:() => state.schema?.getMode() ?? "auto",
+            getAutomaticSuggestions:() => promptEditorPreferences().automaticSuggestions,
+            getAppendCompletionSpace:() => promptEditorPreferences().appendCompletionSpace,
+            getMarkerReplacement:() => promptEditorPreferences().markerReplacement,
             replaceText:(result) => replacePromptText(result, "Completion saved to Plan"),
+        });
+        bindPromptMarkerInteractions({
+            input:editor, completion:state.completion,
+            getText:() => editorPlainText(state.editor),
+            getCaret:() => selectionTextOffset(editor),
+            readFragment:(fragment) => editorPlainText(fragment, {trimFinalNewline:false}),
+            restoreCaret:(position) => restoreCaret(editor, position),
+            getEnabled:() => promptEditorPreferences().markerReplacement,
+            getRecords:() => state.records,
+            beforeOpen:() => hidePopover(true),
         });
 
         const footer = element("div", "h3rp-footer");

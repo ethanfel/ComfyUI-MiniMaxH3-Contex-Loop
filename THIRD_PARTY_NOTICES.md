@@ -4,6 +4,21 @@ For a user-facing map from features to upstream sources and local
 implementation files, see [Feature traceability](docs/FEATURE_TRACEABILITY.md).
 This file remains the authoritative attribution, revision, and license record.
 
+## ComfyUI-H3-Prompt-IDE
+
+The nightly prompt-editor completion, marker-interaction, tokenizer diagnostic
+and preference improvements are selectively adapted from
+[ComfyUI-H3-Prompt-IDE](https://github.com/ethanfel/ComfyUI-H3-Prompt-IDE)
+at revision `8d3bccf11291096da4e0150e2e6fc23b014967d1`, GPL-3.0.
+That standalone editor originally derives from this repository's rich editor.
+
+The adaptations live in `web/h3_prompt_completion_core.mjs`,
+`web/h3_prompt_schema_core.mjs`, `web/h3_prompt_marker_ui.mjs`,
+`web/h3_prompt_editor_settings_core.mjs`, and both embedded editor surfaces.
+Chain-specific tagged/semantic reference mapping, per-scene undo, Plan
+synchronization and ownership protection remain local. The standalone
+task-aware Edit templates and native-undo replacement are not incorporated.
+
 ## ComfyUI-LegacyWidgetWidthFix
 
 The canvas-wide LiteGraph widget-width compatibility layer is adapted with

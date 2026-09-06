@@ -1,4 +1,4 @@
-import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.7.0";
+import {H3_ALL_SECTIONS} from "./h3_prompt_schema_core.mjs?v=0.7.5";
 
 export const RICH_PROMPT_GUIDES = Object.freeze([
     {id: "auto", label: "Auto · H3 mode"},
@@ -81,7 +81,7 @@ const RICH_TOKEN_PATTERN = new RegExp(
     `^(${RICH_SECTION_ALTERNATION}):|`
     + "((?<![A-Za-z0-9_])#[A-Za-z][A-Za-z0-9_-]{0,63}(?:\\[[0-9]+(?:\\.[0-9]+)?s?\\]|(?!\\[))(?![A-Za-z0-9_-])"
     + "|(?<![A-Za-z0-9_])@[A-Za-z][A-Za-z0-9_-]{0,63}(?![A-Za-z0-9_-])"
-    + "|<(?:Picture|Video|Audio|Subject)\\s+\\d+>|<\\/?d>|<scenetrans>|<cutoff>"
+    + "|<(?:Picture|Video|Audio|Subject)\\s+\\d+>|<\\/?d>|<scenetrans>|<cutoff>|<\\|(?:cutoff|lyrics_start|lyrics_end|caption_start|caption_end)\\|>"
     + "|(?<![A-Za-z0-9_])\\(S\\d+(?:,S\\d+)*\\))",
     "gim",
 );
@@ -122,8 +122,10 @@ export function tokenizeRichPrompt(text, records = []) {
             });
         } else if (lower.startsWith("<subject")) {
             parts.push({type: "subject", text: token});
-        } else if (lower === "<scenetrans>" || lower === "<cutoff>") {
+        } else if (lower === "<scenetrans>" || lower === "<cutoff>" || lower === "<|cutoff|>") {
             parts.push({type:"flow", kind:"flow", text:token, unresolved:false});
+        } else if (/^<\|(?:lyrics|caption)_/.test(lower)) {
+            parts.push({type:"dialogue", text:token});
         } else if (lower.startsWith("(s")) {
             parts.push({type:"speaker", kind:"speaker", text:token, unresolved:false});
         } else {

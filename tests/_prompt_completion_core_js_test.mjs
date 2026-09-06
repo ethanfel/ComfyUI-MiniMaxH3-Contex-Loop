@@ -85,7 +85,7 @@ assert.ok(promptCompletionItems(
 ).some((item) => item.label === "<scenetrans>"));
 assert.ok(promptCompletionItems(
     promptCompletionQuery("<cut", 4), records, {referenceMode:"tagged"},
-).some((item) => item.label === "<cutoff>"));
+).some((item) => item.label === "<|cutoff|>"));
 assert.equal(promptCompletionItems(
     promptCompletionQuery("(S2", 3), records, {referenceMode:"tagged"},
 )[0].label, "(S2)");

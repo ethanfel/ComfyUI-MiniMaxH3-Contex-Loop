@@ -111,7 +111,8 @@ for (const relative of [
 ]) {
     const source = fs.readFileSync(new URL(relative, import.meta.url), "utf8");
     assert.match(source, /import \* as promptCompanionSync/);
-    assert.match(source, /h3_prompt_companion_sync\.mjs\?v=0\.7\.0/);
+    // Cache freshness is enforced by _web_cache_bust_unit_test.py.
+    assert.match(source, /h3_prompt_companion_sync\.mjs\?v=\d+\.\d+\.\d+/);
     assert.match(source, /promptCompanionSync\.publishCompanionPrompt\?\./);
     assert.match(source, /typeof promptCompanionSync\.planHasNonPromptChanges === "function"/);
     assert.match(source, /planHasNonPromptChanges\(state\.plan, livePlan\)/);
@@ -123,7 +124,7 @@ for (const relative of [
     "../web/h3_chain_checkpoint_manager.js",
 ]) {
     const source = fs.readFileSync(new URL(relative, import.meta.url), "utf8");
-    assert.match(source, /h3_prompt_companion_sync\.mjs\?v=0\.7\.0/,
+    assert.match(source, /h3_prompt_companion_sync\.mjs\?v=\d+\.\d+\.\d+/,
         "every companion publisher loads the same cache-busted helper revision");
 }
 
