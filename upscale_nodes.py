@@ -459,7 +459,8 @@ def _derope_drift_continuation_video(video: Any, state: Any
     return output, prefix_steps, route
 
 
-def _load_source_tensors(source: dict[str, Any]) -> dict[str, Any]:
+def _load_source_tensors(source: dict[str, Any],
+                         keys: tuple[str, ...] | None = None) -> dict[str, Any]:
     if chain._st_load is None:
         raise RuntimeError("safetensors is required for deferred H3 upscaling.")
     checkpoint = chain._absolute_output_path(source["checkpoint"])
@@ -468,7 +469,12 @@ def _load_source_tensors(source: dict[str, Any]) -> dict[str, Any]:
         raise FileNotFoundError("Source H3 checkpoint is missing: %s" % checkpoint)
     if not expected or chain._file_sha256(checkpoint) != expected:
         raise ValueError("Source H3 checkpoint failed its SHA-256 integrity check.")
-    return chain._st_load(checkpoint)
+    if keys is None:
+        return chain._st_load(checkpoint)
+    from safetensors import safe_open
+    with safe_open(checkpoint, framework="pt", device="cpu") as saved:
+        available = set(saved.keys())
+        return {key: saved.get_tensor(key) for key in keys if key in available}
 
 
 def _source_latent(tensors: dict[str, Any]) -> tuple[dict[str, Any], str]:
@@ -2202,7 +2208,9 @@ class MiniMaxH3ChainUpscaleSegmentSave:
                 "Upscale scene %d precedes a Drift-Control AV scene and must "
                 "receive the final HQ latent so its %d-step context tail can "
                 "be resumed." % (index, context_steps))
-        source_tensors = _load_source_tensors(source)
+        # Only audio is needed here; do not reload the full source AV latents
+        # while the complete HQ pixel clip is still being encoded to disk.
+        source_tensors = _load_source_tensors(source, ("delivered_audio",))
         tensors = {"upscale_marker": chain.torch.tensor([index])}
         sample_rate = int(source.get("sample_rate", 0))
         audio_route = "none"
@@ -2386,17 +2394,22 @@ class MiniMaxH3ChainUpscaleLoopEnd:
             "required": {
                 "flow": (UPSCALE_FLOW_TYPE, {
                     "rawLink": True,
+                    "lazy": True,
                     "tooltip": "Connect directly from Upscale Adapter; this raw "
                                "link defines the recursive child-loop body."}),
                 "state": (UPSCALE_STATE_TYPE, {
+                    "lazy": True,
                     "tooltip": "Current child-run state from Upscale Current Scene."}),
                 "images": ("IMAGE", {
+                    "lazy": True,
                     "tooltip": "Same RAW HQ frames sent to Upscale Segment Save."}),
                 "segment": (UPSCALE_SEGMENT_TYPE, {
+                    "lazy": True,
                     "tooltip": "Persisted HQ scene record from Upscale Segment Save."}),
             },
             "optional": {
                 "upscaled_latent": ("LATENT", {
+                    "lazy": True,
                     "tooltip": "Optional transient HQ carry for the next scene. "
                                "It is independent of save_latent."}),
             },
@@ -2506,8 +2519,7 @@ class MiniMaxH3ChainUpscaleLoopEnd:
                                 for index in range(len(self.RETURN_TYPES))),
                 "expand": graph.finalize()}
 
-    def end(self, flow, state, images, segment, upscaled_latent=None,
-            dynprompt=None, unique_id=None):
+    def _prepare_next_state(self, state, images, segment, upscaled_latent=None):
         index = int(state["index"])
         if int(segment.get("index", -1)) != index:
             raise ValueError("Upscale Loop End received the wrong scene segment.")
@@ -2534,6 +2546,11 @@ class MiniMaxH3ChainUpscaleLoopEnd:
                 "live previous HQ latent" if upscaled_latent is not None
                 else "previous HQ latent unavailable"),
         })
+        return next_state
+
+    def _advance(self, flow, next_state, dynprompt=None, unique_id=None):
+        index = int(next_state["index"]) - 1
+        state = {**next_state, "index": index}
         if index < int(state["end_clip"]):
             return self._recurse(flow, next_state, dynprompt, unique_id)
         complete = index == _source_bounds(state["source_manifest"])[1]
@@ -2545,6 +2562,67 @@ class MiniMaxH3ChainUpscaleLoopEnd:
                                    sort_keys=True)
         return (manifest, manifest_json, next_state["previous_frames"],
                 next_state["previous_latent"])
+
+
+    def end(self, flow, state, images, segment, upscaled_latent=None,
+            dynprompt=None, unique_id=None):
+        if dynprompt is None or unique_id is None:
+            # Preserve direct Python callers; graph execution uses the lazy
+            # boundary below so the pending node never owns RGB/latent inputs.
+            return self._advance(flow, self._prepare_next_state(
+                state, images, segment, upscaled_latent), dynprompt, unique_id)
+        graph = chain.GraphBuilder()
+        inputs = dynprompt.get_node(str(unique_id))["inputs"]
+        prepare = graph.node("MiniMaxH3ChainUpscaleHandoff", "Handoff")
+        for name in ("state", "images", "segment", "upscaled_latent"):
+            if name in inputs:
+                prepare.set_input(name, inputs[name])
+        advance = graph.node("MiniMaxH3ChainUpscaleAdvance", "Advance",
+                             next_state=prepare.out(0),
+                             loop_id=str(unique_id))
+        return {"result": tuple(advance.out(i) for i in range(len(self.RETURN_TYPES))),
+                "expand": graph.finalize()}
+
+
+class MiniMaxH3ChainUpscaleHandoff:
+    """Finish the tensor-consuming step BEFORE starting the next subgraph."""
+    @classmethod
+    def INPUT_TYPES(cls):
+        schema = MiniMaxH3ChainUpscaleLoopEnd.INPUT_TYPES()
+        schema.pop("hidden")
+        schema["required"].pop("flow")
+        for group in schema.values():
+            for _kind, options in group.values():
+                options.pop("lazy", None)
+        return schema
+
+    RETURN_TYPES = (UPSCALE_STATE_TYPE,)
+    FUNCTION = "prepare"
+    CATEGORY = "_internal/minimax/upscale"
+    DESCRIPTION = "Internal tensor-to-context handoff for Upscale Loop End."
+
+    def prepare(self, state, images, segment, upscaled_latent=None):
+        return (MiniMaxH3ChainUpscaleLoopEnd()._prepare_next_state(
+            state, images, segment, upscaled_latent),)
+
+
+class MiniMaxH3ChainUpscaleAdvance:
+    """Only the small handoff remains an input while recursion is pending."""
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {"next_state": (UPSCALE_STATE_TYPE,),
+                             "loop_id": ("STRING",)},
+                "hidden": {"dynprompt": "DYNPROMPT"}}
+
+    RETURN_TYPES = MiniMaxH3ChainUpscaleLoopEnd.RETURN_TYPES
+    FUNCTION = "advance"
+    CATEGORY = "_internal/minimax/upscale"
+    DESCRIPTION = "Internal continuation for Upscale Loop End; no full pixel input."
+
+    def advance(self, next_state, loop_id, dynprompt):
+        flow = dynprompt.get_node(loop_id)["inputs"]["flow"]
+        return MiniMaxH3ChainUpscaleLoopEnd()._advance(
+            flow, next_state, dynprompt, loop_id)
 
 
 def _validate_upscale_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
@@ -2722,6 +2800,8 @@ UPSCALE_NODE_CLASS_MAPPINGS = {
     "MiniMaxH3ChainPass2Prepare": MiniMaxH3ChainPass2Prepare,
     "MiniMaxH3ChainUpscaleSegmentSave": MiniMaxH3ChainUpscaleSegmentSave,
     "MiniMaxH3ChainUpscaleLoopEnd": MiniMaxH3ChainUpscaleLoopEnd,
+    "MiniMaxH3ChainUpscaleHandoff": MiniMaxH3ChainUpscaleHandoff,
+    "MiniMaxH3ChainUpscaleAdvance": MiniMaxH3ChainUpscaleAdvance,
     "MiniMaxH3ChainUpscaleMerge": MiniMaxH3ChainUpscaleMerge,
 }
 
