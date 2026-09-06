@@ -1,3 +1,28 @@
+export const AUDIO_TRACK_ROLES = Object.freeze([
+    ["full_mix", "Full mix · final soundtrack"],
+    ["vocals", "Vocals · lip-sync driver"],
+    ["instrumental", "Instrumental · optional backing"],
+]);
+
+export function projectAudioTrackBindings(asset) {
+    const saved = asset?.options?.audio_tracks;
+    return Object.fromEntries(AUDIO_TRACK_ROLES.map(([role]) => [role,
+        String(saved ? saved[role] ?? "" : role === "full_mix" ? asset?.id ?? "" : ""),
+    ]));
+}
+
+export function setProjectAudioTrack(asset, role, assetId) {
+    if (!AUDIO_TRACK_ROLES.some(([key]) => key === role)) throw new Error("Unknown audio track role.");
+    const bindings = projectAudioTrackBindings(asset);
+    const id = String(assetId ?? "");
+    for (const key of Object.keys(bindings)) {
+        if (key !== role && id && bindings[key] === id) bindings[key] = "";
+    }
+    bindings[role] = id;
+    if (!Object.values(bindings).some(Boolean)) throw new Error("Keep at least one audio track, or reset to single track.");
+    return bindings;
+}
+
 function positiveNumber(value, fallback = 0) {
     const number = Number(value);
     return Number.isFinite(number) && number > 0 ? number : fallback;

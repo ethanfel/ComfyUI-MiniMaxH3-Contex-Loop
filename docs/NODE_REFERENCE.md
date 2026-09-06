@@ -93,6 +93,7 @@ continuity](AUDIO_AND_CONTINUITY.md), and the [complete Plan format](../H3_CHAIN
 | **Scheduled Picture / Video / Audio Ref** | Media + scene selector/options → schedule | Assign media by scene number or range instead of prompt tags. |
 | **Scheduled Ref2VA** | Schedule + current scene + CLIP/VAEs → conditioning, latent, fingerprint | Compile the active scheduled references for one scene. |
 | **Source Timeline** | Source media/path and timing options → Source Timeline | Register the reusable video/audio timeline once. |
+| **Audio Tracks** | Optional full mix, vocals, instrumental AUDIO → Source Timeline | Use vocals for source-locked lip-sync while preserving the full mix for delivery; mix stems only when a full mix is absent. See [grouped audio](AUDIO_AND_CONTINUITY.md#grouped-songs-full-mix-vocals-and-instrumental). |
 | **Reference Video Prep** | Video + fit/timing controls → prepared reference | Prepare motion/reference video for H3 timing. |
 | **Frame Gate** | Opening image; optional last frame + scene index → first/last-frame outputs | Apply the opening image only to scene 1. Do not bypass it in I2V workflows. |
 | **Frame Index Switch** | Scene index + image inputs → selected image | Alternate last-frame targets across scenes. |

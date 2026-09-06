@@ -65,6 +65,11 @@ To initialize a Studio reference project:
    **Lip-sync to source audio**.
 4. Edit the example scenes and queue the workflow.
 
+For vocal-only lip-sync, import aligned full-length stems and assign them under
+the Source track's **Synchronized audio tracks**. The full mix remains the
+soundtrack; vocals guide generation. Use the scene **Lip-sync** selector in
+Plan Studio for instrumental/action-only scenes. See [grouped audio](../docs/AUDIO_AND_CONTINUITY.md#grouped-songs-full-mix-vocals-and-instrumental).
+
 The Carousel stores media as ordinary project assets rather than embedding
 image bytes or stale file bindings into workflow JSON.
 

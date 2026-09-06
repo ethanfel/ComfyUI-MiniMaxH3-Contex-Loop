@@ -25,7 +25,7 @@ import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.2";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.1";
+} from "./h3_plan_restore_core.mjs?v=0.6.6";
 
 const NODE_NAME = "MiniMaxH3ChainCheckpointManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";

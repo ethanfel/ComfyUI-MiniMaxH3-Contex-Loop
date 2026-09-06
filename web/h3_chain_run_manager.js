@@ -15,7 +15,7 @@ import {
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.6.1";
+} from "./h3_plan_restore_core.mjs?v=0.6.6";
 
 const NODE_NAME = "MiniMaxH3ChainRunManager";
 const PLAN_NAME = "MiniMaxH3ChainPlan";

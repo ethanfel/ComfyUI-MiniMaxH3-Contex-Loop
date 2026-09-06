@@ -2366,7 +2366,109 @@ def _validate_source_timeline(
         if len(value) != 64:
             raise ValueError(
                 "H3 Source Timeline %s fingerprint is invalid." % key)
+    tracks = timeline.get("audio_tracks")
+    if tracks is not None:
+        if (not isinstance(tracks, dict)
+                or tracks.get("version") != "h3_audio_tracks_v1"
+                or tracks.get("mix_mode") not in ("full_mix", "stems")
+                or not any(tracks.get(key) for key in ("vocals", "instrumental"))):
+            raise ValueError("H3 Audio Tracks has an invalid track group.")
+        for role in ("vocals", "instrumental"):
+            track = tracks.get(role)
+            if track is None:
+                continue
+            if not isinstance(track, dict) or "audio_tracks" in track:
+                raise ValueError("H3 Audio Tracks cannot contain nested groups.")
+            _validate_source_timeline(track, require_runtime=require_runtime)
+            if track.get("video") is not None or track["audio"]["kind"] == "none":
+                raise ValueError("H3 Audio Tracks %s must be audio-only." % role)
+            if int(track["extent"]["frame_count"]) != frame_count:
+                raise ValueError(
+                    "H3 Audio Tracks %s must have the same duration as the "
+                    "full mix, including leading silence and instrumental "
+                    "gaps. Tracks must share one timeline; they are not "
+                    "stretched or concatenated." % role)
     return timeline
+
+
+def _make_audio_tracks(full_mix=None, vocals=None, instrumental=None):
+    """Group aligned audio-only timelines; only vocals drive a locked target."""
+    supplied = {key: value for key, value in (
+        ("full_mix", full_mix), ("vocals", vocals),
+        ("instrumental", instrumental)) if value is not None}
+    if not supplied:
+        raise ValueError("H3 Audio Tracks needs a full mix, vocals, or instrumental.")
+    for role, track in supplied.items():
+        _validate_source_timeline(track, require_runtime=True)
+        if (track.get("video") is not None or "audio_tracks" in track
+                or track["audio"]["kind"] == "none"):
+            raise ValueError("H3 Audio Tracks %s must be a single audio track." % role)
+    frames = {int(track["extent"]["frame_count"]) for track in supplied.values()}
+    if len(frames) != 1:
+        raise ValueError(
+            "H3 Audio Tracks must have the same duration, including silence. "
+            "Export aligned full-length stems; do not trim vocal gaps.")
+    if full_mix is not None and len(supplied) == 1:
+        return full_mix  # Preserve the exact legacy descriptor and identity.
+    gain = 1.0
+    if full_mix is None:
+        # Decode once only when a mix must be synthesized. Cache a seekable mix
+        # so Carousel -> Plan remains recoverable without another source wire.
+        # Run Manager can archive it alongside the original stems.
+        values = [_source_timeline_source_audio(track)
+                  for track in supplied.values()]
+        sample_rate = max(int(value["sample_rate"]) for value in values)
+        channels = max(int(_audio_waveform_3d(value, "Audio stem")[0].shape[1])
+                       for value in values)
+        samples = sample_boundary_from_frames(next(iter(frames)), sample_rate)
+        parts = [_resample_audio_exact(value, sample_rate, samples, channels,
+                                     "H3 Audio Tracks stem")["waveform"]
+                 for value in values]
+        waveform = sum(parts[1:], parts[0].clone())
+        if not bool(torch.isfinite(waveform).all()):
+            raise ValueError("H3 Audio Tracks contains non-finite audio samples.")
+        peak = float(waveform.abs().max())
+        if peak > 1.0:
+            gain = 1.0 / peak
+            waveform *= gain
+        mixed_audio = {"waveform": waveform, "sample_rate": sample_rate}
+        mixed_path = os.path.join(
+            folder_paths.get_temp_directory(), "h3_audio_track_mixes",
+            "%s.wav" % _audio_fingerprint(mixed_audio))
+        if not os.path.isfile(mixed_path):
+            _atomic_float_wav(mixed_audio, mixed_path)
+        full_mix = _make_source_timeline(audio_path=mixed_path)
+        mix_mode = "stems"
+    else:
+        mix_mode = "full_mix"
+    result = dict(full_mix)
+    result["audio_tracks"] = {
+        "version": "h3_audio_tracks_v1", "mix_mode": mix_mode,
+        "mix_gain": gain, "vocals": vocals, "instrumental": instrumental,
+    }
+    result["fingerprints"] = dict(full_mix["fingerprints"])
+    result["fingerprints"]["timeline"] = _fingerprint({
+        "version": "h3_audio_tracks_v1",
+        "delivery": full_mix["fingerprints"]["timeline"],
+        "vocals": vocals["fingerprints"]["timeline"] if vocals else "",
+        "instrumental": (instrumental["fingerprints"]["timeline"]
+                         if instrumental else ""),
+        "mix_mode": mix_mode, "mix_gain": gain,
+    })
+    return _validate_source_timeline(result, require_runtime=True)
+
+
+def _source_timeline_generation_track(timeline, *, lip_sync=False):
+    source = _validate_source_timeline(timeline)
+    tracks = source.get("audio_tracks") or {}
+    if lip_sync and tracks:
+        if tracks.get("vocals") is None:
+            raise ValueError(
+                "Lip-sync is enabled, but this audio group has no vocal track. "
+                "Attach aligned vocals or turn Lip-sync off for this scene. "
+                "Instrumental audio is never substituted for missing vocals.")
+        return tracks["vocals"]
+    return source
 
 
 def _source_timeline_path_hash(
@@ -2588,6 +2690,13 @@ def _source_timeline_recovery_record(timeline: Any) -> dict[str, Any]:
     }
     if record["audio"].get("kind") == "deferred_tensor":
         record["audio"]["requires_materialization"] = True
+    if source.get("audio_tracks") is not None:
+        record["audio_tracks"] = {
+            **source["audio_tracks"],
+            **{role: _source_timeline_recovery_record(track)
+               for role in ("vocals", "instrumental")
+               if (track := source["audio_tracks"].get(role)) is not None},
+        }
     # Fail here, close to persistence, rather than writing an unusable run.
     _canonical_json(record)
     return record
@@ -2607,7 +2716,8 @@ def _source_timeline_verify_recovery_file(
 
 def _source_timeline_from_recovery(
         record: Any, *, video_path: Any = "", audio_path: Any = "",
-        deferred_audio: Any = None) -> dict[str, Any]:
+        deferred_audio: Any = None, track_paths=None, deferred_tracks=None
+        ) -> dict[str, Any]:
     """Restore or relink a persisted timeline without changing its identity."""
     try:
         restored = json.loads(_canonical_json(record))
@@ -2655,6 +2765,13 @@ def _source_timeline_from_recovery(
     if audio.get("kind") == "external_path":
         _source_timeline_verify_recovery_file(
             audio, "H3 Source Timeline audio recovery path")
+    if restored.get("audio_tracks") is not None:
+        tracks = restored["audio_tracks"]
+        for role in ("vocals", "instrumental"):
+            if tracks.get(role) is not None:
+                tracks[role] = _source_timeline_from_recovery(
+                    tracks[role], audio_path=(track_paths or {}).get(role, ""),
+                    deferred_audio=(deferred_tracks or {}).get(role))
     return _validate_source_timeline(restored)
 
 
@@ -2798,6 +2915,27 @@ def _source_timeline_available_audio_frames(timeline: Any) -> int:
 
 
 def _materialize_source_timeline_audio(
+        timeline: Any, plan: dict[str, Any]) -> dict[str, Any]:
+    timeline = _validate_source_timeline(timeline, require_runtime=True)
+    if (timeline.get("audio_tracks") and _audio_policy_requires_source(plan)
+            and _source_timeline_available_audio_frames(timeline) <
+            int(plan["total_delivered_frames"])):
+        raise ValueError(
+            "H3 Audio Tracks is too short for this Plan. Supply aligned "
+            "full-length tracks; grouped stems are never padded separately.")
+    source = _materialize_source_timeline_primary_audio(timeline, plan)
+    if source.get("audio_tracks") is not None:
+        source = dict(source)
+        source["audio_tracks"] = {
+            **source["audio_tracks"],
+            **{role: _materialize_source_timeline_primary_audio(track, plan)
+               for role in ("vocals", "instrumental")
+               if (track := source["audio_tracks"].get(role)) is not None},
+        }
+    return _validate_source_timeline(source, require_runtime=True)
+
+
+def _materialize_source_timeline_primary_audio(
         timeline: Any, plan: dict[str, Any]) -> dict[str, Any]:
     """Persist a deferred AUDIO once so recursive state remains path-backed."""
     source = _validate_source_timeline(timeline, require_runtime=True)
@@ -2951,6 +3089,14 @@ def _archive_source_timeline_media(
     if (audio["kind"] == "embedded" and bool(archive_audio)
             and not bool(archive_video)):
         prepared["recovery"]["audio_archive_requires_video"] = True
+    if source.get("audio_tracks") is not None:
+        prepared["audio_tracks"] = {
+            **source["audio_tracks"],
+            **{role: _archive_source_timeline_media(
+                track, plan, archive_audio=archive_audio, archive_video=False)
+               for role in ("vocals", "instrumental")
+               if (track := source["audio_tracks"].get(role)) is not None},
+        }
     return _validate_source_timeline(prepared, require_runtime=True)
 
 
@@ -5742,8 +5888,10 @@ def _canonical_source_reference_dependency(
         end_frame = min(maximum_frame, end_frame + lookahead_frames)
         frame_count = end_frame - start_frame
     if source_timeline is not None:
+        generation_source = _source_timeline_generation_track(
+            source_timeline, lip_sync=_audio_policy_locks_source_audio(plan, shot))
         audio = _source_timeline_scene_audio(
-            source_timeline, start_frame, end_frame)
+            generation_source, start_frame, end_frame)
         route = (
             "legacy_audio"
             if _source_timeline_recovers_legacy_audio(
@@ -5776,6 +5924,9 @@ def _canonical_source_reference_dependency(
             "target_end_frame": target_end_frame,
             "lip_sync_options": lip_sync_options,
         })
+    if (source_timeline is not None and generation_source is not source_timeline
+            and _audio_policy_locks_source_audio(plan, shot)):
+        dependency["audio_track"] = "vocals"
     return dependency
 
 
@@ -6632,6 +6783,9 @@ def _plan_with_recoverable_legacy_source_audio(
 def _plan_with_source_timeline(
         plan: dict[str, Any], timeline: Any) -> tuple[dict[str, Any], dict[str, Any]]:
     """Bind one typed source timeline to a prepared chain plan."""
+    _source_timeline_generation_track(timeline, lip_sync=any(
+        item["setting"] == "source_audio_target"
+        for item in _audio_source_requirements(plan)))
     source = _materialize_source_timeline_audio(timeline, plan)
     policy = _resolved_audio_policy(plan)
     audio_kind = str(source["audio"]["kind"])
@@ -12144,6 +12298,48 @@ class MiniMaxH3TaggedMotionReference:
         return references, _reference_fingerprint_output(references), status
 
 
+class MiniMaxH3AudioTracks:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {"required": {}, "optional": {
+            "full_mix": ("AUDIO", {"tooltip": "Final soundtrack, used unchanged. "
+                "If absent, the supplied stems are mixed once. Never added on top of stems."}),
+            "vocals": ("AUDIO", {"tooltip": "Isolated full-length vocals for lip-sync. "
+                "Keep leading silence and instrumental gaps; do not trim them."}),
+            "instrumental": ("AUDIO", {"tooltip": "Optional aligned backing track. "
+                "Used for automatic mixing only when full_mix is not connected."}),
+        }}
+
+    RETURN_TYPES = (SOURCE_TIMELINE_TYPE, "STRING")
+    RETURN_NAMES = ("source_timeline", "status")
+    OUTPUT_TOOLTIPS = (
+        "Grouped audio: vocals drive locked-source generation; the final mix "
+        "drives export. Connect to the existing Source Timeline inputs.",
+        "Track routing and automatic mix gain.",
+    )
+    FUNCTION = "build"
+    CATEGORY = "conditioning/minimax/context_loop/media"
+    DESCRIPTION = (
+        "One synchronized audio group for source-audio workflows. Use Lip-sync "
+        "to source audio on Generation Profile and per-scene Lip-sync controls "
+        "in Plan Studio. The final mix remains independent of lip-sync. All "
+        "tracks must share the same start and duration, including silence. "
+        "Automatic stem mixing lowers gain only if needed to avoid clipping.")
+
+    def build(self, full_mix=None, vocals=None, instrumental=None):
+        tracks = {key: _make_source_timeline(source_audio=value)
+                  if value is not None else None
+                  for key, value in (("full_mix", full_mix), ("vocals", vocals),
+                                     ("instrumental", instrumental))}
+        source = _make_audio_tracks(**tracks)
+        group = source.get("audio_tracks") or {}
+        return source, (
+            "final=%s; lip-sync=%s; mix gain=%.4f; %.3fs" % (
+                group.get("mix_mode", "full_mix"),
+                "vocals" if vocals is not None else "single source" if not group else "unavailable",
+                group.get("mix_gain", 1.0), source["extent"]["duration_seconds"]))
+
+
 class MiniMaxH3SourceTimeline:
     """Describe source media once; downstream nodes request scene windows."""
 
@@ -15615,6 +15811,25 @@ def _preflight_bind_source(
             paths.append(("video", str(source["video"].get("path") or "")))
         if source["audio"]["kind"] in ("embedded", "external_path"):
             paths.append(("audio", str(source["audio"].get("path") or "")))
+        tracks = source.get("audio_tracks") or {}
+        if tracks:
+            source_report["audio_tracks"] = {
+                "mix_mode": tracks["mix_mode"],
+                "lip_sync_driver": "vocals" if tracks.get("vocals") else "none",
+            }
+            locked = [item for item in source_requirements
+                      if item["setting"] == "source_audio_target"]
+            if locked and not tracks.get("vocals"):
+                _preflight_issue(
+                    report, "errors", "source_vocals_missing",
+                    "Lip-sync is enabled, but the audio group has no vocals.",
+                    "Attach aligned vocals or turn Lip-sync off for the "
+                    "reported scenes. Instruments are not a vocal substitute.",
+                    triggers=locked)
+            for role in ("vocals", "instrumental"):
+                track = tracks.get(role)
+                if track and track["audio"]["kind"] == "external_path":
+                    paths.append((role, str(track["audio"].get("path") or "")))
         source_report["paths"] = [
             {"kind": kind, "path": path,
              "available": bool(path and os.path.isfile(path))}
@@ -15666,7 +15881,8 @@ def _preflight_bind_source(
             })
             deferred = source["audio"].get("value")
             silent = False
-            if source["audio"]["kind"] == "deferred_tensor" and deferred is not None:
+            if (not tracks and source["audio"]["kind"] == "deferred_tensor"
+                    and deferred is not None):
                 waveform, _sample_rate = _validate_audio(
                     deferred, "Preflight Source Timeline audio")
                 silent = _audio_is_silent(waveform)
@@ -16637,6 +16853,17 @@ def _plan_studio_source_audio_media(
     if source is None:
         return None
     audio = source["audio"]
+    if (source.get("audio_tracks") and audio["kind"] == "deferred_tensor"
+            and audio.get("value") is not None):
+        # Studio needs a seekable full-mix preview even before Loop Start
+        # materializes the group. This is only a disposable preview cache,
+        # never a replacement for the run's archived source tracks.
+        preview_path = os.path.join(
+            folder_paths.get_temp_directory(), "h3_audio_track_previews",
+            "%s.wav" % _audio_fingerprint(audio["value"]))
+        if not os.path.isfile(preview_path):
+            _atomic_float_wav(audio["value"], preview_path)
+        audio = {**audio, "kind": "external_path", "path": preview_path}
     if str(audio.get("kind") or "none") not in (
             "embedded", "external_path"):
         return None
@@ -17528,9 +17755,21 @@ class MiniMaxH3ProjectAssetManager:
                     video_path=path, embedded_audio="auto",
                     source_route="H3 Project Asset Manager")
             elif source.get("kind") == "audio":
-                source_timeline = _make_source_timeline(
-                    audio_path=path, embedded_audio="ignore",
-                    source_route="H3 Project Asset Manager")
+                bindings = (source.get("options") or {}).get("audio_tracks")
+                if bindings is None:
+                    source_timeline = _make_source_timeline(
+                        audio_path=path, embedded_audio="ignore",
+                        source_route="H3 Project Asset Manager")
+                else:
+                    from .audio_track_contract import audio_track_bindings
+                    bindings = audio_track_bindings(bindings, catalog["assets"])
+                    tracks = {}
+                    for role, asset_id in bindings.items():
+                        if asset_id:
+                            _asset, track_path = store.asset(run_name, asset_id)
+                            tracks[role] = _make_source_timeline(
+                                audio_path=track_path, embedded_audio="ignore")
+                    source_timeline = _make_audio_tracks(**tracks)
             else:
                 raise ValueError("A Source track must be video or audio.")
 
@@ -18132,6 +18371,8 @@ class MiniMaxH3ChainCurrent:
                 _validate_source_timeline_hash(
                     plan["compatibility"], source_timeline,
                     "H3 Chain Current Shot")
+                generation_source = _source_timeline_generation_track(
+                    source_timeline, lip_sync=source_audio_locked)
                 if index == 1 and external_lead > 0:
                     delivered = int(shot["delivered_frames"])
                     lookahead_frames = (
@@ -18144,9 +18385,10 @@ class MiniMaxH3ChainCurrent:
                     extension_end = min(
                         extent, delivered + lookahead_frames)
                     extension_audio = _source_timeline_scene_audio(
-                        source_timeline, 0, extension_end)
+                        generation_source, 0, extension_end)
                     target_audio_slice = _slice_audio_after_external_context(
-                        extension_audio, state.get("previous_audio"),
+                        extension_audio, (None if generation_source is not source_timeline
+                                          else state.get("previous_audio")),
                         int(shot["raw_frames"]) + (
                             extension_end - delivered), external_lead,
                         pad_silence=False)
@@ -18169,7 +18411,7 @@ class MiniMaxH3ChainCurrent:
                         target_clip_start_seconds = (
                             source_start - context_start) / float(FPS)
                     target_audio_slice = _source_timeline_scene_audio(
-                        source_timeline, context_start, context_end)
+                        generation_source, context_start, context_end)
                 alignment_status = "Source Timeline frame-exact"
             else:
                 _validate_source_audio_hash(
@@ -28318,6 +28560,7 @@ CHAIN_NODE_CLASS_MAPPINGS = {
     "MiniMaxH3TaggedPictureReference": MiniMaxH3TaggedPictureReference,
     "MiniMaxH3TaggedVideoReference": MiniMaxH3TaggedVideoReference,
     "MiniMaxH3TaggedMotionReference": MiniMaxH3TaggedMotionReference,
+    "MiniMaxH3AudioTracks": MiniMaxH3AudioTracks,
     "MiniMaxH3SourceTimeline": MiniMaxH3SourceTimeline,
     "MiniMaxH3TaggedMotionReferenceTimeline": (
         MiniMaxH3TaggedMotionReferenceTimeline),
@@ -28382,6 +28625,7 @@ CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3TaggedPictureReference": "MiniMax H3 Tagged Picture Ref",
     "MiniMaxH3TaggedVideoReference": "MiniMax H3 Tagged Video Ref",
     "MiniMaxH3TaggedMotionReference": "MiniMax H3 Tagged Motion Ref",
+    "MiniMaxH3AudioTracks": "MiniMax H3 Audio Tracks",
     "MiniMaxH3SourceTimeline": "MiniMax H3 Source Timeline",
     "MiniMaxH3TaggedMotionReferenceTimeline": (
         "MiniMax H3 Tagged Motion Ref (Source Timeline)"),

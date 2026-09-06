@@ -15,6 +15,12 @@ result later—without keeping the whole production in memory.
 
 ## Changelog
 
+### Unreleased
+
+- **Grouped source audio.** Assign full mix, vocals and instrumental in the
+  Carousel or Audio Tracks node. Vocals drive lip-sync; the full mix stays the
+  soundtrack. Per-scene Lip-sync On/Off controls do not alter delivery.
+
 ### 0.6.1 — Latest updates
 
 - **Chapter output.** Export or recover a chosen chapter, including its already

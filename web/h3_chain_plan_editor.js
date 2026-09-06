@@ -35,18 +35,20 @@ import {
 import {availableReferenceRecords} from "./h3_reference_preview_core.mjs?v=0.6.2";
 import {
     applySceneAudioOverride,
+    applySceneLipSync,
+    sceneLipSyncMode,
     applySceneTransitionPreset,
     primaryTransitionOptions,
     sceneAudioOverride,
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.6.1";
+} from "./h3_policy_core.mjs?v=0.6.6";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.6.1";
+} from "./h3_socket_presentation_core.mjs?v=0.6.6";
 import {
     availableLoRARoutes,
     loraRouteLabel,
@@ -1492,6 +1494,26 @@ function mountEditor(node) {
         );
         const planAudioPolicy = resolvedPlanSettings.audioPolicy;
         const effectiveAudioPolicy = sceneAudioPolicy(shot, planAudioPolicy);
+        const lipSync = element("select");
+        for (const [value, label] of [
+            ["inherit", `Inherit · ${planAudioPolicy.sourceAudioTarget === "locked" ? "On" : "Off"}`],
+            ["on", "On · vocals drive this scene"],
+            ["off", "Off · no source-audio guidance"],
+            ["custom", "Custom · advanced audio controls"],
+        ]) {
+            const option = element("option", "", label);
+            option.value = value; option.disabled = value === "custom";
+            lipSync.append(option);
+        }
+        lipSync.value = sceneLipSyncMode(shot);
+        lipSync.title = "On locks grouped vocals (or a legacy single track). Off "
+            + "disables source locking, reference, and audio carry without changing "
+            + "the final soundtrack. Inherit resets these three audio overrides.";
+        lipSync.addEventListener("change", () => {
+            applySceneLipSync(shot, lipSync.value);
+            syncPlan();
+            render();
+        });
         function audioOverrideSelect(key, inherited, choices, title) {
             const select = element("select", "h3c-audio-override");
             const inheritedOption = element(
@@ -1508,6 +1530,7 @@ function mountEditor(node) {
             select.title = title;
             select.addEventListener("change", () => {
                 applySceneAudioOverride(shot, key, select.value);
+                lipSync.value = sceneLipSyncMode(shot);
                 syncPlan();
             });
             return select;
@@ -1543,6 +1566,7 @@ function mountEditor(node) {
         );
         const audioFields = element("div", "h3c-audio-fields");
         audioFields.append(
+            field("Lip-sync", lipSync),
             field("Source reference", sourceReference),
             field("Generated continuity", generatedContinuity),
             field("Lock source audio", lockSourceAudio),
