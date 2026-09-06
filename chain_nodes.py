@@ -9814,6 +9814,21 @@ def _checkpoint_run_archives(
     segment = metadata.get("segment")
     revision = (str(segment.get("revision") or "").strip().lower()
                 if isinstance(segment, dict) else "")
+    adoption = metadata.get("adoption")
+    if (isinstance(segment, dict) and isinstance(adoption, dict)
+            and adoption.get("version") == 1
+            and adoption.get("shared_artifacts") is True):
+        # Attribution creates a new lineage id, not a new generation. Its
+        # recovery snapshot remains owned by the original saved take, just
+        # like its shared video/checkpoint files. Resolve that recorded
+        # origin for every recovery reader without copying archives or
+        # requiring the original revision sidecar to remain undeleted.
+        origin = str(adoption.get("source_revision") or "").strip().lower()
+        if (re.fullmatch(r"[0-9a-f]{32}", origin) is None
+                or origin != str(segment.get("adopted_from_revision") or "").lower()
+                or adoption.get("source_scene") != segment.get("index")):
+            raise ValueError("Attributed checkpoint recovery origin is inconsistent.")
+        revision = origin
     validated, _token = _validated_run_archive_snapshot(
         plan, archives, revision)
     return {key: _relative_output_path(path)

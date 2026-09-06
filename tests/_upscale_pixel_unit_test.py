@@ -160,6 +160,70 @@ def assert_loop_releases_pixels(package, chain, upscale, manifest, ram_cache=Fal
     assert all(ref() is None for ref in old_frames)
 
 
+def assert_attributed_branch_upscales(chain, upscale):
+    """Real save -> attach -> select -> cached conditioning -> HQ save/resume."""
+    with tempfile.TemporaryDirectory() as temporary:
+        folder_paths.output_directory = temporary
+        plan = chain.MiniMaxH3ChainPlan().build(
+            json.dumps({"shots": [{"id": f"attached_{i}", "prompt": "A quiet room.",
+                                    "length": 5, "steps": 2, "seed": str(i),
+                                    "context_length": 0, "audio_context_length": 0}
+                                   for i in (1, 2)]}),
+            "attached_pixel", "attached-pixel-cache", 32, 32, 1,
+            "video", "head", "disabled", "generated_audio", 1,
+            5 / 24, 2, 7, 18, 0, "guide")[0]
+        plan = chain._plan_with_source_audio(chain._plan_with_external_context(plan, None), None)
+        latent = {"samples": [torch.full((1, 24, 2, 2, 2), 0.75),
+                               torch.full((1, 32, 2, 9), 0.75)]}
+        audio = {"waveform": torch.full((1, 2, round(5 / 24 * 8000)), 0.25),
+                 "sample_rate": 8000}
+        sources = []
+        # Save an original branch, then a new scene-1 tip to receive scene 2.
+        for index in (1, 2, 1):
+            sources.append(chain.MiniMaxH3ChainSegmentSave().save(
+                chain._initial_state(plan, index), torch.zeros(5, 32, 32, 3),
+                latent, audio, denoised_latent=latent)["result"][0])
+        candidate, parent = sources[1:]
+        for index, source in ((1, parent), (2, candidate)):
+            chain._cache_reference_scene(
+                fingerprint="attached-pixel-cache", scene=index, scene_count=2,
+                prompt=source["prompt"], compiled_prompt="<Picture 1> in a quiet room.",
+                width=32, height=32, length=5, ref_image_size="match",
+                vae=VideoVAE(), audio_vae=None, pictures=[torch.ones(1, 32, 32, 3)],
+                videos=[], audios=[])
+        attached = chain.CheckpointGraphManager(temporary).attribute(
+            plan["run_name"], 1, parent["revision"], 2, candidate["revision"])
+        assert attached["created"]
+        before = {p: p.read_bytes() for p in Path(temporary).rglob("*") if p.is_file()}
+        manifest = chain.MiniMaxH3ChainCheckpointManager().passthrough({
+            "run_name": plan["run_name"], "output_mode": "workflow_local",
+            "lineage": [{"scene": 1, "revision": parent["revision"]},
+                        {"scene": 2, "revision": attached["revision"]}]})[0]
+        assert candidate["revision"] in manifest["archives"]["plan"]
+        assert manifest["segments"][1]["checkpoint"] == candidate["checkpoint"]
+        adapter = upscale.MiniMaxH3ChainUpscaleAdapter()
+        for index in (1, 2):
+            # Resuming the second scene verifies the HQ prefix too.
+            flow, state, _, _ = adapter.adapt(
+                manifest, "attached", "pixel", "{}", index, index, False, 18)
+            assert len(state["segments"]) == index - 1
+            current = upscale.MiniMaxH3ChainUpscalePixelCurrent().current(state, VideoVAE())
+            target = current[1].repeat_interleave(2, 1).repeat_interleave(2, 2)
+            conditioned = upscale.MiniMaxH3ChainUpscalePixelConditioning().condition(
+                state, Clip(), target, VideoVAE(), missing_cache="error")
+            assert conditioned[5] is True, "attached take must retain its source reference cache"
+            saved = upscale.MiniMaxH3ChainUpscaleSegmentSave().save(state, target)["result"][0]
+            assert saved["source_revision"] == (parent["revision"] if index == 1 else attached["revision"])
+            result = upscale.MiniMaxH3ChainUpscaleLoopEnd().end(flow, state, target, saved)[0]
+        upscale._validate_upscale_manifest(result)
+        assert len(result["segments"]) == 2
+        assembled = chain.MiniMaxH3ChainAssemble().assemble(
+            result, "plan", "attached_final", 128, False, "")["result"][0]
+        assert Path(assembled).is_file()
+        assert all(p.read_bytes() == content for p, content in before.items()), \
+            "upscaling must not rewrite either branch, its recovery snapshots or caches"
+
+
 def main():
     spec = importlib.util.spec_from_file_location(
         "h3_pixel_test", ROOT / "__init__.py", submodule_search_locations=[str(ROOT)])
@@ -494,7 +558,8 @@ def main():
         assert int(video["nb_frames"]) == chapter_source["total_delivered_frames"]
         assert (video["width"], video["height"]) == (96, 64)
         assert all(path.read_bytes() == content for path, content in before_chapter.items())
-    print("Pixel upscale: exact/nonuniform target geometry, cache/override/max/keyframes/audio, RAW trim, Drift-Control isolation, save/resume/assembly and immutable source pass")
+    assert_attributed_branch_upscales(chain, upscale)
+    print("Pixel upscale: exact/nonuniform target geometry, cache/override/max/keyframes/audio, RAW trim, Drift-Control isolation, attributed branch save/resume/assembly and immutable source pass")
 
 
 if __name__ == "__main__":

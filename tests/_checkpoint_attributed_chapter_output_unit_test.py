@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Attach a legacy zero-context take, then output only its mixed-size chapter."""
+import copy
 import importlib.util
 import json
 from pathlib import Path
@@ -43,7 +44,8 @@ def main():
             run, 10, "b" * 32, 100, run_name=run.name, predecessor=previous,
             compatibility={**metadata[8]["compatibility"],
                            "generation_fingerprint":"older-catalog"},
-            context_length=0, audio_context_length=39, generated_continuity="on")
+            context_length=0, audio_context_length=39, generated_continuity="on",
+            recovery_archive=True)
         # Legacy AV saves retain a 39f audio default although the zero-video
         # early return consumed neither predecessor video nor audio.
         candidate["segment"].update({
@@ -53,6 +55,12 @@ def main():
         (root / candidate["segment"]["revision_metadata"]).write_text(json.dumps(candidate))
         (run / "plan.json").write_text(json.dumps({
             "run_name":run.name, "shots":[{"id":f"scene_{i}"} for i in range(1, 13)]}))
+        # Modern saves share their immutable recovery snapshot when attached.
+        # The alias must resolve this original snapshot, not demand a copy
+        # under its new lineage id or silently use today's Run-level Plan.
+        archived_plan = root / candidate["archives"]["plan"]
+        archived_plan.write_text((run / "plan.json").read_text())
+        (run / "plan.json").write_text('{"shots":[]}')
         (run / "editorial.json").write_text(json.dumps({
             "scene_order":[{"scene":i, "scene_id":f"scene_{i}"} for i in range(1, 13)],
             "chapters":[{"id":"one", "start_scene_id":"scene_1"},
@@ -83,6 +91,39 @@ def main():
         assert result["segments"][-1]["revision"] == attached["revision"]
         assert result["segments"][-1]["delivered_frames"] == 141
         assert result["compatibility"]["width"] == 960
+        assert result["archives"] == candidate["archives"]
+        assert h.snapshot(run) == after
+        # Ordinary saves still cannot claim another take's archive. An alias
+        # can share only the origin explicitly recorded by attribution.
+        def archives(value):
+            return chain._checkpoint_run_archives({"run_name":run.name}, value)
+
+        invalid = copy.deepcopy(alias)
+        invalid.pop("adoption")
+        h.rejected(lambda: archives(invalid), "different revision")
+        invalid = copy.deepcopy(alias)
+        invalid["adoption"]["source_revision"] = "c" * 32
+        h.rejected(lambda: archives(invalid), "origin is inconsistent")
+        invalid = copy.deepcopy(alias)
+        invalid["adoption"]["source_scene"] = 9
+        h.rejected(lambda: archives(invalid), "origin is inconsistent")
+        invalid = copy.deepcopy(alias)
+        invalid["archives"]["workflow"] = invalid["archives"]["workflow"].replace("b" * 32, "c" * 32)
+        h.rejected(lambda: archives(invalid), "outside revision")
+        h.rejected(lambda: chain._checkpoint_run_archives({"run_name":"another_run"}, alias),
+                   "outside revision")
+        workflow_archive = root / alias["archives"]["workflow"]
+        workflow_bytes = workflow_archive.read_bytes()
+        workflow_archive.unlink()
+        h.rejected(lambda: archives(alias), "workflow is missing")
+        workflow_archive.write_bytes(workflow_bytes)
+        # Deleting an inactive original sidecar must not strand surviving
+        # aliases: they already carry the origin and share its artifacts.
+        candidate_path = root / candidate["segment"]["revision_metadata"]
+        candidate_bytes = candidate_path.read_bytes()
+        candidate_path.unlink()
+        assert archives(alias) == candidate["archives"]
+        candidate_path.write_bytes(candidate_bytes)
         assert h.snapshot(run) == after
         h.rejected(lambda: chain._checkpoint_selection_manifest({
             **selection, "output_scope":"project"}), "compatibility")
