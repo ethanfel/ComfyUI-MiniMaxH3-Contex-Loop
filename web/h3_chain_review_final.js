@@ -181,8 +181,9 @@ function injectStyles() {
     style.id = "h3-chain-review-style";
     style.textContent = `
         .h3r-root { box-sizing:border-box; display:flex; flex-direction:column; gap:8px;
-            min-height:500px; padding:9px; overflow:auto; border:1px solid #56637e;
-            border-radius:8px; background:#181a20; color:#e8eaf0; font:12px/1.35 system-ui,sans-serif; }
+            min-height:500px; padding:9px; overflow:auto; position:relative;
+            border:1px solid #56637e; border-radius:8px; background:#181a20;
+            color:#e8eaf0; font:12px/1.35 system-ui,sans-serif; }
         .h3r-root * { box-sizing:border-box; }
         .h3r-root [hidden] { display:none !important; }
         .h3r-head { display:flex; align-items:center; justify-content:space-between; gap:8px; }
@@ -190,7 +191,7 @@ function injectStyles() {
         .h3r-badge { color:#d5d9e3; opacity:.75; }
         .h3r-video-panel { width:100%; height:300px; min-height:140px; max-height:1200px;
             flex:0 0 auto; display:flex; flex-direction:column; overflow:hidden;
-            position:relative; border:1px solid #343b4b; border-radius:6px; background:#08090c; }
+            border:1px solid #343b4b; border-radius:6px; background:#08090c; }
         .h3r-video { width:100%; height:calc(100% - 11px); min-height:0; display:block;
             flex:1 1 auto; background:#08090c; object-fit:contain; }
         .h3r-video-grip { height:11px; flex:0 0 11px; cursor:ns-resize;
@@ -207,11 +208,11 @@ function injectStyles() {
         .h3r-capture-button:disabled { opacity:.42; cursor:not-allowed; }
         .h3r-capture-status { color:#aeb5c5; opacity:.8; overflow:hidden;
             text-overflow:ellipsis; white-space:nowrap; }
-        .h3r-capture-dialog { position:absolute; inset:0; z-index:20; display:flex;
+        .h3r-capture-dialog { position:absolute; inset:0; z-index:30; display:flex;
             align-items:center; justify-content:center; background:rgba(6,7,10,.72); }
         .h3r-capture-card { display:flex; flex-direction:column; gap:9px; width:min(320px, 92%);
-            padding:12px; border:1px solid #56637e; border-radius:8px; background:#181c26;
-            box-shadow:0 8px 28px rgba(0,0,0,.5); }
+            max-height:90%; overflow-y:auto; padding:12px; border:1px solid #56637e;
+            border-radius:8px; background:#181c26; box-shadow:0 8px 28px rgba(0,0,0,.5); }
         .h3r-capture-preview { width:100%; max-height:180px; object-fit:contain;
             border:1px solid #343b4b; border-radius:6px; background:#08090c; }
         .h3r-capture-title { font-weight:700; color:#a9c2ff; }
@@ -896,7 +897,7 @@ function mount(node) {
     }
 
     function closeCaptureDialog() {
-        videoPanel.querySelector(".h3r-capture-dialog")?.remove();
+        root.querySelector(".h3r-capture-dialog")?.remove();
         video.pause();
     }
 
@@ -964,7 +965,7 @@ function mount(node) {
         actionsRow.append(cancelButton, saveButton);
         card.append(title, preview, tagField, hint, error, actionsRow);
         overlay.append(card);
-        videoPanel.append(overlay);
+        root.append(overlay);
         tagInput.focus();
 
         fetchExistingTags(project).then((tags) => {
