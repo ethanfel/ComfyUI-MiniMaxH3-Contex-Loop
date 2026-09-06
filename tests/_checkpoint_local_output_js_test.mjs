@@ -69,11 +69,13 @@ const source = fs.readFileSync(new URL("../web/h3_chain_checkpoint_manager.js", 
     .replace(/^import\s[\s\S]*?from\s+"[^"]+";\n/gm, "");
 let currentGraph = structuredClone(payload), runs = ["demo", "other"], failRequests = false;
 let confirms = true, mutations = 0, dirty = 0;
+let attachResponse = null;
+let extension;
 const requests = [];
 const context = vm.createContext({
     ...core, URLSearchParams, console,
     document:{head:new Element("head"), getElementById:() => null, createElement:tag => new Element(tag)},
-    app:{registerExtension(){}, graph:{setDirtyCanvas(){}}},
+    app:{registerExtension(value){ extension = value; }, graph:{setDirtyCanvas(){}}},
     api:{apiURL:path => path, fetchApi:async (path, options={}) => {
         requests.push({path, options});
         if (failRequests) throw new Error("offline");
@@ -81,14 +83,31 @@ const context = vm.createContext({
         if (path.endsWith("/runs")) data = {runs:runs.map(run_name => ({run_name, checkpoint_count:3}))};
         else if (path.includes("/checkpoints?")) data = structuredClone(currentGraph);
         else if (path.endsWith("/delete-preview")) data = {allowed:false, blockers:["test"]};
+        else if (path.endsWith("/attribute") && attachResponse) {
+            mutations++;
+            const request = JSON.parse(options.body);
+            assert.equal(request.parent_revision, b);
+            assert.equal(request.candidate_revision, d);
+            const alias = {...currentGraph.revisions.find(item => item.revision === d),
+                revision:attachResponse.revision, parent:{scene:2, revision:b}};
+            currentGraph.revisions.push(alias);
+            currentGraph.branches[0].path.push({scene:3, revision:alias.revision});
+            delete currentGraph.branches[0].attribution_slot;
+            data = attachResponse;
+        }
         else { mutations++; throw new Error(`Unexpected request ${path}`); }
         return {ok:true, json:async () => data};
     }},
     window:{setTimeout:callback => callback(), confirm:() => confirms},
-    projectMutationOptions:() => { mutations++; throw new Error("Local output attempted project mutation"); },
+    projectMutationOptions:(_node, _run, options) => {
+        if (attachResponse) return options;
+        mutations++; throw new Error("Local output attempted project mutation");
+    },
     promptCompanionSync:{},
 });
 vm.runInContext(source, context);
+class NodeType {}
+await extension.beforeRegisterNodeDef(NodeType, {name:"MiniMaxH3ChainCheckpointManager"});
 const settle = async () => { for (let i = 0; i < 12; i++) await new Promise(setImmediate); };
 function makeNode(saved="", properties={}) {
     const node = {properties:{h3_checkpoint_manager_run:"demo", ...properties},
@@ -201,3 +220,81 @@ assert.equal(JSON.parse(value(second)).lineage.at(-1).revision, d);
 assert.equal(mutations, 0, "local use, release, browsing and reload never call project mutation APIs");
 assert.ok(requests.every(({path, options}) => !options.method || path.endsWith("/delete-preview")));
 console.log("Checkpoint local output: real mounted UI, isolation, pin persistence, missing runs/takes, refresh and release pass");
+
+// ComfyUI mounts nodes before applying the saved widget values. Unpinned
+// chapter output must be restored too, not overwritten by the mounted default.
+const restoredScope = makeNode();
+await settle();
+restoredScope.widgets[0].value = core.checkpointSelectionJson(
+    payload, "demo", payload.revisions[2], {start:1, end:3}, "chapter");
+restoredScope.properties.h3_checkpoint_manager_scene = 2;
+restoredScope.properties.h3_checkpoint_manager_revision = c;
+NodeType.prototype.onConfigure.call(restoredScope);
+await settle();
+assert.equal(byClass(restoredScope, "h3cm-output-scope").value, "chapter",
+    "un-pinned saved chapter scope must hydrate the mounted selector");
+assert.equal(JSON.parse(value(restoredScope)).output_scope, "chapter");
+assert.equal(JSON.parse(value(restoredScope)).lineage.at(-1).revision, c);
+
+// A late widget restore must not queue whole-project output while the visible
+// selector still says chapter. Check both API and saved-workflow serialization.
+const staleScope = core.checkpointSelectionJson(payload, "demo", payload.revisions[2]);
+restoredScope.widgets[0].value = staleScope;
+assert.equal(byClass(restoredScope, "h3cm-output-scope").value, "chapter");
+assert.equal(JSON.parse(await restoredScope.widgets[0].serializeValue()).output_scope, "chapter");
+restoredScope.widgets[0].value = staleScope;
+const savedScope = {widgets_values:[staleScope], widgets_values_named:{selection_json:staleScope}, properties:{}};
+restoredScope.onSerialize(savedScope);
+assert.equal(JSON.parse(savedScope.widgets_values[0]).output_scope, "chapter");
+assert.equal(JSON.parse(savedScope.widgets_values_named.selection_json).output_scope, "chapter");
+assert.equal(savedScope.properties.h3_checkpoint_manager_output_scope, "chapter");
+const emptyScope = makeNode("", {h3_checkpoint_manager_output_scope:"chapter"});
+await settle();
+assert.equal(byClass(emptyScope, "h3cm-output-scope").value, "chapter",
+    "scope survives saving while no checkpoint lineage is available");
+// Replacing widgets during reconfiguration must not leave handlers writing
+// into the old closed-over widget instead of the one ComfyUI queues.
+const detachedWidget = restoredScope.widgets[0];
+restoredScope.widgets[0] = {name:"selection_json", value:staleScope};
+restoredScope.properties.h3_checkpoint_manager_output_scope = "project";
+NodeType.prototype.onConfigure.call(restoredScope);
+await settle();
+const reboundScope = byClass(restoredScope, "h3cm-output-scope");
+assert.equal(reboundScope.value, "project");
+reboundScope.value = "chapter";
+reboundScope.listeners.change();
+assert.equal(JSON.parse(await restoredScope.widgets[0].serializeValue()).output_scope, "chapter");
+assert.notEqual(restoredScope.widgets[0], detachedWidget);
+const malformed = '{"output_scope":"unknown","lineage":[]}';
+restoredScope.widgets[0].value = malformed;
+assert.equal(await restoredScope.widgets[0].serializeValue(), malformed, "do not hide invalid selection data");
+console.log("Checkpoint scope: configure, API serialization, workflow save and empty selection pass");
+
+// Follow the actual candidate card -> attach -> refreshed alias -> queued
+// output path. Earlier chapters remain timing-only when scope is chapter.
+currentGraph = structuredClone(payload);
+currentGraph.editorial = {chapters:[
+    {id:"one", title:"Chapter 1", start_scene:1},
+    {id:"two", title:"Chapter 2", start_scene:2},
+]};
+currentGraph.revisions[3].parent = {scene:2, revision:c};
+currentGraph.revisions[3].active = false;
+currentGraph.branches[0].path.pop();
+currentGraph.branches[0].attribution_slot = {
+    scene:3, parent_scene:2, parent_revision:b, candidates:[{scene:3, revision:d}],
+};
+currentGraph.branches[1].path.push({scene:3, revision:d});
+const attaching = makeNode(core.checkpointSelectionJson(
+    currentGraph, "demo", currentGraph.revisions[1], {start:2, end:3}, "chapter"));
+await settle();
+byText(attaching, "S3 · reuse saved clip").click();
+assert.equal(byClass(attaching, "h3cm-output-scope").value, "chapter");
+attachResponse = {scene:3, revision:"e".repeat(32), message:"Attached"};
+byText(attaching, "Attach selected candidate").click();
+await settle();
+const attachedOutput = JSON.parse(await attaching.widgets[0].serializeValue());
+assert.equal(attachedOutput.output_scope, "chapter");
+assert.equal(attachedOutput.scope_start_scene, 2);
+assert.equal(attachedOutput.lineage.at(-1).revision, attachResponse.revision);
+assert.equal(mutations, 1, "only explicit attachment writes; no automatic project activation");
+console.log("Checkpoint attachment: candidate -> alias -> chapter-only API output passes");

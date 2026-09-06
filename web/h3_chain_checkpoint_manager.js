@@ -35,6 +35,7 @@ const RUN_PROPERTY = "h3_checkpoint_manager_run";
 const SCENE_PROPERTY = "h3_checkpoint_manager_scene";
 const REVISION_PROPERTY = "h3_checkpoint_manager_revision";
 const CHAPTER_PROPERTY = "h3_checkpoint_manager_chapter";
+const OUTPUT_SCOPE_PROPERTY = "h3_checkpoint_manager_output_scope";
 const COLLAPSED_CHAPTERS_PROPERTY = "h3_checkpoint_manager_collapsed_chapters";
 const PREVIEW_HEIGHT_PROPERTY = "h3_checkpoint_manager_preview_height";
 const DEFAULT_PREVIEW_HEIGHT = 280;
@@ -286,12 +287,7 @@ function mount(node) {
     node._h3CheckpointManagerMounted = true;
     injectStyles();
     node.properties ??= {};
-    const selectionWidget = widget(node, "selection_json");
-    if (selectionWidget) {
-        selectionWidget.hidden = true;
-        selectionWidget.type = "hidden";
-        selectionWidget.computeSize = () => [0, -4];
-    }
+    let selectionWidget = widget(node, "selection_json");
     const state = {
         runs:[], runName:String(node.properties[RUN_PROPERTY] ?? ""), payload:null,
         scene:Number(node.properties[SCENE_PROPERTY]) || null,
@@ -332,9 +328,9 @@ function mount(node) {
         option.value = value;
         outputScope.append(option);
     }
-    try { outputScope.value = JSON.parse(selectionWidget?.value || "{}").output_scope || "project"; }
-    catch { outputScope.value = "project"; }
+    restoreOutputScope();
     outputScope.addEventListener("change", () => {
+        node.properties[OUTPUT_SCOPE_PROPERTY] = outputScope.value;
         const local = checkpointLocalSelection(selectionWidget?.value);
         if (local) {
             // Change only the scope of the existing pin, not its browsed tip.
@@ -457,19 +453,56 @@ function mount(node) {
         return String(widget(plan, "run_name")?.value ?? "").trim();
     }
 
+    function restoreOutputScope() {
+        let scope = node.properties[OUTPUT_SCOPE_PROPERTY];
+        try { scope = JSON.parse(selectionWidget?.value || "{}").output_scope ?? scope; }
+        catch { /* Preserve the saved scope even while selection is empty. */ }
+        outputScope.value = scope === "chapter" ? "chapter" : "project";
+    }
+
+    function outputSelectionForScope(value) {
+        // Scope is an explicit UI choice, not the range of the browsed branch.
+        // Keep the exact pinned lineage; only repair a stale/missing scope flag.
+        try {
+            const selection = JSON.parse(value);
+            if (!selection || typeof selection !== "object" || Array.isArray(selection)) return value;
+            if (selection.output_scope != null && !["project", "chapter"].includes(selection.output_scope)) return value;
+            if ((selection.output_scope ?? "project") === outputScope.value) return value;
+            return JSON.stringify({...selection, output_scope:outputScope.value});
+        } catch { return value; } // Invalid selections still fail backend validation.
+    }
+
+    function bindSelectionSerializer() {
+        selectionWidget = widget(node, "selection_json");
+        if (!selectionWidget) return;
+        selectionWidget.hidden = true;
+        selectionWidget.type = "hidden";
+        selectionWidget.computeSize = () => [0, -4];
+        if (selectionWidget._h3ScopeSerializer) return;
+        const previous = selectionWidget.serializeValue;
+        selectionWidget.serializeValue = function (...args) {
+            const value = previous ? previous.apply(this, args) : this.value;
+            const normalize = (saved) => outputSelectionForScope(saved ?? this.value);
+            return value?.then ? value.then(normalize) : normalize(value);
+        };
+        selectionWidget._h3ScopeSerializer = true;
+    }
+
     function persistSelection() {
         const previousRun = node.properties[RUN_PROPERTY];
         const previousScene = node.properties[SCENE_PROPERTY];
         const previousRevision = node.properties[REVISION_PROPERTY];
         const previousChapter = node.properties[CHAPTER_PROPERTY];
+        const previousScope = node.properties[OUTPUT_SCOPE_PROPERTY];
         node.properties[RUN_PROPERTY] = state.runName;
         node.properties[SCENE_PROPERTY] = state.scene;
         node.properties[REVISION_PROPERTY] = state.revision;
         node.properties[CHAPTER_PROPERTY] = state.chapterTab;
+        node.properties[OUTPUT_SCOPE_PROPERTY] = outputScope.value;
         let changed = previousRun !== state.runName ||
             previousScene !== state.scene ||
             previousRevision !== state.revision ||
-            previousChapter !== state.chapterTab;
+            previousChapter !== state.chapterTab || previousScope !== outputScope.value;
         if (selectionWidget) {
             const value = checkpointOutputSelectionJson(
                 selectionWidget.value, state.payload, state.runName, state.selected,
@@ -485,6 +518,7 @@ function mount(node) {
 
     function writeOutputSelection(value) {
         if (!selectionWidget) return;
+        node.properties[OUTPUT_SCOPE_PROPERTY] = outputScope.value;
         selectionWidget.value = value;
         selectionWidget.callback?.(value);
         node.graph?.setDirtyCanvas?.(true, true);
@@ -523,7 +557,7 @@ function mount(node) {
     function renderOutputSelection() {
         const local = checkpointLocalSelection(selectionWidget?.value);
         outputScope.disabled = state.busy;
-        if (local) outputScope.value = local.output_scope || "project";
+        if (local) restoreOutputScope();
         useLocal.disabled = state.busy || Boolean(state.attribution) || !selectionWidget || !canLoadSelected();
         followSelection.disabled = state.busy || !local;
         outputSummary.className = "h3cm-output-summary";
@@ -1624,6 +1658,32 @@ function mount(node) {
         return result;
     };
     node._h3CheckpointManagerRefresh = () => void refreshRuns();
+    node._h3CheckpointManagerConfigured = () => {
+        // Configuration can arrive after mount, including undo/redo and tab
+        // restores. Hydrate the scope before refresh can persist a selection.
+        bindSelectionSerializer();
+        restoreOutputScope();
+        state.runName = String(node.properties[RUN_PROPERTY] ?? "");
+        state.scene = Number(node.properties[SCENE_PROPERTY]) || null;
+        state.revision = String(node.properties[REVISION_PROPERTY] ?? "");
+        state.chapterTab = String(node.properties[CHAPTER_PROPERTY] ?? "all");
+        state.initialRefresh = !state.scene || !state.revision;
+    };
+    bindSelectionSerializer();
+    const serialized = node.onSerialize;
+    node.onSerialize = function (saved) {
+        if (selectionWidget) selectionWidget.value = outputSelectionForScope(selectionWidget.value);
+        node.properties[OUTPUT_SCOPE_PROPERTY] = outputScope.value;
+        const result = serialized?.apply(this, arguments);
+        if (saved) {
+            saved.properties ??= {};
+            saved.properties[OUTPUT_SCOPE_PROPERTY] = outputScope.value;
+            const index = node.widgets?.indexOf(selectionWidget) ?? -1;
+            if (index >= 0 && Array.isArray(saved.widgets_values)) saved.widgets_values[index] = selectionWidget.value;
+            if (selectionWidget && saved.widgets_values_named) saved.widgets_values_named.selection_json = selectionWidget.value;
+        }
+        return result;
+    };
     const removed = node.onRemoved;
     node.onRemoved = function () {
         return removed?.apply(this, arguments);
@@ -1644,6 +1704,7 @@ app.registerExtension({
         const configured = nodeTypeClass.prototype.onConfigure;
         nodeTypeClass.prototype.onConfigure = function () {
             const result = configured?.apply(this, arguments);
+            this._h3CheckpointManagerConfigured?.();
             window.setTimeout(() => this._h3CheckpointManagerRefresh?.(), 0);
             return result;
         };
