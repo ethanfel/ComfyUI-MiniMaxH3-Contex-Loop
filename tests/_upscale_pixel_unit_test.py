@@ -97,6 +97,22 @@ def main():
             "output_mode": "workflow_local"}))[0]
         assert pinned == manifest, "local pin must preserve the source recipe and manifests"
         manifest = pinned
+        # Chapter output can combine takes with different catalog histories.
+        # Cache lookup must use the current take, including an empty legacy
+        # fingerprint, not the first chapter scene's catalog.
+        for fingerprint in ("second-scene-catalog", ""):
+            mixed = copy.deepcopy(manifest)
+            mixed["segments"][1]["generation_fingerprint"] = fingerprint
+            mixed["segments"][1].pop("reference_cache", None)
+            with patch.object(chain, "_find_reference_cache", return_value=None) as lookup:
+                try:
+                    upscale.MiniMaxH3ChainUpscaleReferenceConditioning().condition(
+                        {"source_manifest":mixed, "index":2}, Clip(), missing_cache="error")
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise AssertionError("Expected a missing cache")
+                assert lookup.call_args.args[:2] == (fingerprint, 2)
         adapter = upscale.MiniMaxH3ChainUpscaleAdapter()
         flow, state, _, _ = adapter.adapt(manifest, "pixel", "pixel", "{}", 1, 0, False, 18)
         reader = upscale.MiniMaxH3ChainUpscalePixelCurrent()

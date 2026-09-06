@@ -40,6 +40,26 @@ _ARCHIVE_KEYS = {
 }
 
 
+def checkpoint_audio_context_length(
+        continuation: str, visual: int, audio: int,
+        generated_continuity: str = "", source_audio_target: str = "") -> int:
+    """Interpret saved predecessor audio using the generation contract.
+
+    Legacy saves recorded the configured audio span even when AV conditioning
+    returned early with no picture prefix. AV modes consume a joint prefix;
+    Guide modes can consume audio alone. Unknown modes/policies retain their
+    recorded dependency rather than treating missing evidence as independence.
+    This must never consult a mutable Plan to reinterpret an existing take.
+    """
+    if generated_continuity == "off" or source_audio_target == "locked":
+        return 0
+    if visual >= 0 and continuation in (
+            "masked_av", "tapered_av", "feathered_av", "audio_feathered_av",
+            "drift_control_av", "color_stable_drift_av"):
+        return visual if audio > 0 else audio
+    return audio
+
+
 class _RunMutationLock:
     """Re-entrant thread and process lock for one Run's mutable pointers."""
 
@@ -311,6 +331,10 @@ class CheckpointGraphManager:
                 audio_mode not in (
                     "generated_audio", "source_plus_timeline")):
             audio_context = 0
+        audio_context = checkpoint_audio_context_length(
+            continuation, context, audio_context,
+            str(segment.get("generated_continuity") or "").lower(),
+            str(segment.get("source_audio_target") or "").lower())
         return continuation, max(0, context), max(0, audio_context)
 
     def _adopt_legacy_active_revisions(
@@ -535,13 +559,18 @@ class CheckpointGraphManager:
         incoming = (scopes.get("incoming_boundary")
                     if isinstance(scopes, dict) else None)
         generated = str(
-            incoming.get("generated_continuity")
-            if isinstance(incoming, dict) else
-            segment.get("generated_continuity") or "off").lower()
+            segment.get("generated_continuity",
+                        incoming.get("generated_continuity")
+                        if isinstance(incoming, dict) else "off") or "off").lower()
         audio_frames = max(0, self._integer(
-            incoming.get("audio_context_length")
+            segment.get("resolved_audio_context_length",
+                        incoming.get("audio_context_length"))
             if isinstance(incoming, dict) else
             record.get("audio_context_length")))
+        audio_frames = checkpoint_audio_context_length(
+            str(record.get("continuation_mode") or ""), visual_frames,
+            audio_frames, generated,
+            str(segment.get("source_audio_target") or "").lower())
         if generated == "on" and audio_frames and parent_key in records:
             if parent_key not in found:
                 found.append(parent_key)
@@ -791,6 +820,17 @@ class CheckpointGraphManager:
             visual, audio = int(visual), int(audio)
         except (TypeError, ValueError):
             return False
+        if visual < 0 or audio < 0:
+            return False
+        compatibility = record["_metadata"].get("compatibility")
+        compatibility = compatibility if isinstance(compatibility, dict) else {}
+        continuation = str(segment.get("continuation_mode") or
+                           incoming.get("continuation_mode") or
+                           compatibility.get("continuation_mode") or
+                           record.get("continuation_mode") or "")
+        audio = checkpoint_audio_context_length(
+            continuation, visual, audio, generated,
+            str(segment.get("source_audio_target") or "").lower())
         # Unknown legacy audio policy must not silently mean 'off'.
         return visual == 0 and (audio == 0 or (audio > 0 and generated == "off"))
 

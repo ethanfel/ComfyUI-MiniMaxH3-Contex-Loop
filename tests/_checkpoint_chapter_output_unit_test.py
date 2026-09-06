@@ -74,6 +74,17 @@ def main():
                    "compatible takes within this chapter")
         selected_metadata.write_text(original_metadata)
 
+        # The reported Chapter 2 takes differ only in reference-catalog
+        # fingerprints. This is not a geometry or saved-lineage mismatch.
+        changed_catalog = json.loads(original_metadata)
+        changed_catalog["compatibility"].update({
+            "generation_fingerprint":"new-catalog",
+            "generation_fingerprint_lineage":{"current":"new-catalog"}})
+        selected_metadata.write_text(json.dumps(changed_catalog))
+        mixed = chain._checkpoint_selection_manifest(selection)
+        assert [s["generation_fingerprint"] for s in mixed["segments"]] == ["", "new-catalog"]
+        selected_metadata.write_text(original_metadata)
+
         # Appending empty planned scenes after this take was generated must
         # not prevent selecting it. Reference schedules retain the archived
         # Plan's count, while the editorial chapter may extend beyond it.
@@ -85,6 +96,36 @@ def main():
         assert older["source_scene_count"] == 4
         assert older["chapter"]["planned_end_scene"] == 5
         plan_path.write_text(plan_before)
+
+        # UI scope ends at the current scene order; immutable archived Plans
+        # can include more empty scenes (real regression: UI 12, archive 13).
+        for planned_count, ui_end in ((6, 5), (5, 4), (5, 7)):
+            plan_path.write_text(json.dumps({
+                "run_name":run.name,
+                "shots":[{"id":f"scene_{i}"} for i in range(1, planned_count + 1)]}))
+            pinned = chain._checkpoint_selection_manifest({
+                **selection, "scope_end_scene":ui_end})
+            assert [s["revision"] for s in pinned["segments"]] == ["3" * 32, "4" * 32]
+            assert pinned["chapter"]["start_scene"] == 3
+            assert pinned["chapter"]["planned_end_scene"] == max(5, planned_count)
+        plan_path.write_text(plan_before)
+
+        # A real boundary crossing within the pinned takes is not an empty
+        # tail difference: this must still require an explicit new selection.
+        (run / "editorial.json").write_text(json.dumps({
+            **editorial, "chapters":[*editorial["chapters"],
+                {"id":"three", "start_scene_id":"scene_4"}]}))
+        h.rejected(lambda: chain._checkpoint_selection_manifest(selection), "boundaries")
+        (run / "editorial.json").write_text(json.dumps(editorial))
+
+        # A one-scene selection without explicit chapter markers is Chapter 1
+        # even when its archived Plan includes more ungenerated shots.
+        (run / "editorial.json").write_text("{}")
+        implicit = chain._checkpoint_selection_manifest({
+            **selection, "lineage":lineage[:1],
+            "scope_start_scene":1, "scope_end_scene":1})
+        assert [s["index"] for s in implicit["segments"]] == [1]
+        (run / "editorial.json").write_text(json.dumps(editorial))
 
         # Earlier media is not an upscale input. Retain its immutable timing
         # metadata, but remove the fixture's video and latent artifacts.

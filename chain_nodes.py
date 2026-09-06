@@ -145,6 +145,7 @@ from .contracts_v05 import (
 from .checkpoint_manager import (
     CheckpointDeleteBlocked,
     CheckpointGraphManager,
+    checkpoint_audio_context_length,
     checkpoint_revision_token,
     checkpoint_run_lock,
 )
@@ -8932,7 +8933,7 @@ def _editorial_dependency_mismatches(
                                int(index) - 1
                                if resolved_visual > 0 else 0)))
     uses_immediate_audio = (
-        int(segment.get("resolved_audio_context_length", 0)) > 0
+        _saved_audio_dependency_length(segment) > 0
         and str(segment.get("generated_continuity", "on")) == "on"
         and not bool(segment.get("audio_context_unlocked", False)))
     if (predecessor is not None
@@ -8974,6 +8975,10 @@ def _editorial_dependency_mismatches(
             ("audio_context_lead_source_scene",
              "audio_context_lead_editorial_out_frames",
              "composed audio lead source")):
+        if (source_field.startswith("audio_")
+                and "resolved_audio_context_length" in segment
+                and _saved_audio_dependency_length(segment) <= 0):
+            continue
         source_index = int(segment.get(source_field, 0))
         source = editorial_segments.get(source_index)
         if source is None:
@@ -8986,6 +8991,15 @@ def _editorial_dependency_mismatches(
                 "%s scene %d endpoint changed from %df to %df" %
                 (label, source_index, actual, expected))
     return reasons
+
+
+def _saved_audio_dependency_length(segment: dict[str, Any]) -> int:
+    return checkpoint_audio_context_length(
+        str(segment.get("continuation_mode") or ""),
+        int(segment.get("resolved_context_length", segment.get("context_length", -1))),
+        int(segment.get("resolved_audio_context_length", 0)),
+        str(segment.get("generated_continuity") or "").lower(),
+        str(segment.get("source_audio_target") or "").lower())
 
 
 def _editorial_dependency_sources(
@@ -9006,7 +9020,7 @@ def _editorial_dependency_sources(
             int(index) - 1 if resolved_visual > 0 else 0))
         if visual_source_index > 0:
             sources.add(visual_source_index)
-    if (int(segment.get("resolved_audio_context_length", 0)) > 0
+    if (_saved_audio_dependency_length(segment) > 0
             and str(segment.get("generated_continuity", "on")) == "on"
             and int(index) > 1):
         sources.add(int(segment.get(
@@ -9017,7 +9031,9 @@ def _editorial_dependency_sources(
         sources.add(lead_source_index)
     audio_lead_source_index = int(segment.get(
         "audio_context_lead_source_scene", 0))
-    if audio_lead_source_index > 0:
+    if (audio_lead_source_index > 0
+            and ("resolved_audio_context_length" not in segment
+                 or _saved_audio_dependency_length(segment) > 0)):
         sources.add(audio_lead_source_index)
     return sources
 
@@ -10222,7 +10238,7 @@ def _public_segment(value: dict[str, Any]) -> dict[str, Any]:
         "created_at", "branch_id", "forked_from_branch_id",
         "generated_audio", "generated_audio_sha256",
         "raw_frames", "delivered_frames", "history_hash",
-        "scene_dependency", "reference_cache",
+        "scene_dependency", "reference_cache", "generation_fingerprint",
         "prompt_prefix", "scene_prompt", "scene_prompt_template", "prompt",
         "prompt_hash", "prompt_template_hash", "prompt_choice_seed", "archives",
         "seed", "steps", "continuation_mode", "context_length",
@@ -20043,6 +20059,12 @@ class MiniMaxH3ChainSegmentSave:
         continuation_mode = migrate_continuation_mode(shot.get(
             "continuation_mode",
             compatibility.get("continuation_mode", "guide")))
+        scene_audio_policy = _resolved_scene_audio_policy(plan, shot)
+        resolved_audio_context_length = checkpoint_audio_context_length(
+            continuation_mode, effective_context_length,
+            effective_audio_context_length,
+            str(scene_audio_policy["generated_continuity"]),
+            str(scene_audio_policy.get("source_audio_target", "off")))
         visual_state = (
             _selected_context_state(state)
             if index > 1 else state)
@@ -20074,7 +20096,7 @@ class MiniMaxH3ChainSegmentSave:
             visual_state.get("visual_context_lead_segment")
             if visual_lead_source_index is not None else None)
         audio_context_unlocked = (
-            index > 1 and effective_audio_context_length > 0
+            index > 1 and resolved_audio_context_length > 0
             and _shot_audio_context_unlocked(shot))
         audio_source_index = (
             _shot_audio_context_source(plan, index)
@@ -20554,7 +20576,7 @@ class MiniMaxH3ChainSegmentSave:
             segment["resolved_context_length"] = (
                 0 if index == 1 else effective_context_length)
             segment["resolved_audio_context_length"] = (
-                0 if index == 1 else effective_audio_context_length)
+                0 if index == 1 else resolved_audio_context_length)
             if published_blend is not None:
                 segment.update({
                     "blend_segment": _relative_output_path(published_blend),
@@ -27884,6 +27906,15 @@ def _load_checkpoint_revision(
     return metadata, metadata_path
 
 
+def _checkpoint_output_compatibility(value: dict[str, Any]) -> dict[str, Any]:
+    # Reference catalogs can grow between already-generated scenes. Their
+    # fingerprints protect generation/resume, not playback of an immutable
+    # lineage. Preserve each take's cache identity separately; all other
+    # compatibility checks (including geometry/audio) remain unchanged.
+    return {key:item for key, item in value.items() if key not in (
+        "generation_fingerprint", "generation_fingerprint_lineage")}
+
+
 def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
     """Build one immutable generated lineage directly from manager selection."""
     if value is None or (isinstance(value, str) and not value.strip()):
@@ -27942,19 +27973,25 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                      if isinstance(item, dict))])
     if (scope_start_scene < 1 or scope_start_scene > len(lineage) or
             scope_end_scene < scope_start_scene or
-            scope_end_scene > maximum_scene):
+            (not chapter_output and scope_end_scene > maximum_scene)):
         raise ValueError(
             "Checkpoint Manager selection has an invalid chapter scope.")
     selected_chapter = None
     if chapter_output:
         selected_chapter = next((chapter for chapter in
             _editorial_chapter_ranges(editorial, maximum_scene)
-            if int(chapter["start_scene"]) == scope_start_scene
-            and int(chapter["end_scene"]) == scope_end_scene), None)
-        if selected_chapter is None or len(lineage) > scope_end_scene:
+            if int(chapter["start_scene"]) == scope_start_scene), None)
+        if (selected_chapter is None or len(lineage) > scope_end_scene
+                or len(lineage) > int(selected_chapter["end_scene"])):
             raise ValueError(
                 "Checkpoint Manager chapter boundaries changed or do not "
                 "match this selection. Select the chapter branch again.")
+        # The UI knows current editorial/generated scenes, while this take's
+        # immutable Plan may have more (or fewer) ungenerated scenes. The
+        # planned end is not chapter identity. Preserve the pinned revisions
+        # and require their start/tip to stay inside the same chapter, without
+        # requiring identical empty tails or silently adding new takes.
+        scope_end_scene = int(selected_chapter["end_scene"])
     chapter_starts = {
         int(chapter.get("start_scene", 0))
         for chapter in editorial.get("chapters", [])
@@ -28017,8 +28054,9 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 % index)
         if compatibility is None:
             compatibility = current_compatibility
-        elif _canonical_json(current_compatibility) != _canonical_json(
-                compatibility):
+        elif _canonical_json(_checkpoint_output_compatibility(
+                current_compatibility)) != _canonical_json(
+                _checkpoint_output_compatibility(compatibility)):
             raise ValueError(
                 "Selected checkpoint revisions use different compatibility "
                 "settings." + (" Choose compatible takes within this chapter."
@@ -28085,6 +28123,12 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         loaded.append(metadata)
 
     segments = [_public_segment(item["segment"]) for item in loaded]
+    output_metadata = loaded[scope_start_scene - 1:] if chapter_output else loaded
+    if len({str(item["compatibility"].get("generation_fingerprint") or "")
+            for item in output_metadata}) > 1:
+        for segment, metadata in zip(segments, loaded):
+            segment["generation_fingerprint"] = str(
+                metadata.get("compatibility", {}).get("generation_fingerprint") or "")
     total_frames = sum(int(item["delivered_frames"]) for item in segments)
     manifest = {
         "format": "h3_chain_manifest_v3",
@@ -28111,7 +28155,6 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         manifest["archives"] = archives
     if isinstance(archived_plan.get("prelude"), dict):
         manifest["prelude"] = _json_document(archived_plan["prelude"])
-    output_metadata = loaded[scope_start_scene - 1:] if chapter_output else loaded
     timeline_records = [
         item.get("source_timeline") for item in output_metadata
         if isinstance(item.get("source_timeline"), dict)]

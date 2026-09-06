@@ -288,6 +288,22 @@ def main():
         assert scene_three_new["branch_id"] == scene_two_new["branch_id"]
         assert "forked_from_branch_id" not in scene_three_new
 
+        # AV with no picture prefix returns before consuming any generated
+        # audio, even when the inherited audio setting is nonzero.
+        plan["compatibility"]["audio_policy"] = chain._contract_audio_policy(
+            "generated", "off", "on")
+        plan["shots"][2].update({
+            "context_length":0, "audio_context_length":39,
+            "continuation_mode":"audio_feathered_av",
+            "raw_frames":5, "delivered_frames":5})
+        independent = saver.save(
+            {"plan":plan, "index":3, "segments":[second, scene_two_new]},
+            FakeImages(), object(), generated_audio)["result"][0]
+        assert independent["audio_context_length"] == 39, "retain the generation recipe"
+        assert independent["resolved_context_length"] == 0
+        assert independent["resolved_audio_context_length"] == 0
+        assert independent["generated_continuity"] == "on"
+
     print("H3 segment revisions: regeneration advances the active pointer and "
           "retains the previous take's video, checkpoint, prompt, and WAV")
 

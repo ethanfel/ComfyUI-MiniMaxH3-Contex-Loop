@@ -1664,7 +1664,8 @@ class MiniMaxH3ChainUpscaleReferenceConditioning:
         manifest = state["source_manifest"]
         compatibility = manifest.get("compatibility") or {}
         fingerprint = str(
-            compatibility.get("generation_fingerprint") or "")
+            source.get("generation_fingerprint",
+                       compatibility.get("generation_fingerprint")) or "")
         scene = int(state["index"])
         scene_count = _source_scene_count(manifest)
         prompt = str(source.get("prompt") or "")
