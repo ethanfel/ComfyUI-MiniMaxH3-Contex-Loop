@@ -352,6 +352,11 @@ function injectStyles() {
         .h3studio-error { color:#ffb3b3; white-space:pre-wrap; }
         .h3studio-shared { min-height:260px; font:15px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace !important; }
         .h3studio-defaults { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; max-width:390px; }
+        .h3studio-chapter-settings { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; margin-top:8px; }
+        .h3studio-chapter-settings > .h3studio-field { flex:1 1 180px; min-width:0; }
+        .h3studio-chapter-resolution { display:flex; flex:2 1 344px; flex-wrap:wrap; align-items:flex-end; gap:8px; min-width:0; }
+        .h3studio-chapter-resolution > .h3studio-field { flex:1 1 72px; min-width:0; }
+        .h3studio-chapter-resolution > .h3studio-field:first-child { flex:2 1 160px; }
         .h3studio-json { min-height:360px; font:13px/1.45 ui-monospace,SFMono-Regular,Consolas,monospace !important; }
         .h3studio-json-actions { margin-top:7px; }
         .h3studio-player { display:flex; flex-direction:column; gap:7px; height:100%; min-height:330px; }
@@ -3606,7 +3611,7 @@ function mount(node) {
             chapter.start_scene_id = boundary.value;
             writePlan(); renderTimeline();
         });
-        const form = element("div", "h3studio-defaults");
+        const form = element("div", "h3studio-chapter-settings");
         form.append(field("Chapter title", title), field("Timeline marker", boundary));
         const resolutionMode = element("select");
         for (const [value, text] of [["inherit", "Inherit from Plan"], ["custom", "Chapter resolution"]]) {
@@ -3650,8 +3655,10 @@ function mount(node) {
             resolutionStatus.textContent = "Chapter resolution saved.";
             writePlan();
         });
-        form.append(field("Resolution", resolutionMode), field("Width", resolutionFields.width),
+        const resolutionRow = element("div", "h3studio-chapter-resolution");
+        resolutionRow.append(field("Resolution", resolutionMode), field("Width", resolutionFields.width),
             field("Height", resolutionFields.height));
+        form.append(resolutionRow);
         const resolutionHelp = element("div", "h3studio-hint",
             "One size per chapter. Locked saved scenes pin their chapter's original size, even when the Plan default changes. " +
             "Unlock them before changing that chapter's size. Native AV/latent context cannot cross different sizes. " +

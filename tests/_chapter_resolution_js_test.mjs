@@ -42,6 +42,13 @@ const context = vm.createContext({
 });
 vm.runInContext(render, context);
 const panel = context.renderChapterPanel();
+const form = panel.children.find(child => child.className === "h3studio-chapter-settings");
+assert.ok(form, "chapter settings use the available panel width, not the two-column defaults grid");
+const resolutionRow = form.children.find(child => child.className === "h3studio-chapter-resolution");
+assert.deepEqual([...resolutionRow.children], [fields.Resolution, fields.Width, fields.Height],
+    "resolution mode and dimensions stay together in a compact row");
+assert.match(source, /\.h3studio-chapter-settings \{ display:flex; flex-wrap:wrap;/);
+assert.match(source, /\.h3studio-chapter-resolution \{ display:flex; flex:2 1 344px; flex-wrap:wrap;/);
 assert.equal(fields.Resolution.value, "custom");
 assert.equal(fields.Width.value, "128");
 assert.equal(fields.Height.value, "96");
