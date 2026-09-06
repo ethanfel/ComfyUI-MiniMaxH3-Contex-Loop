@@ -170,8 +170,19 @@ function injectStyles() {
             --hs-bg:color-mix(in srgb,var(--comfy-menu-bg,#202124) 92%,#101827);
             --hs-panel:color-mix(in srgb,var(--comfy-input-bg,#111827) 84%,#263552);
             --hs-border:color-mix(in srgb,var(--border-color,#555) 68%,#7891bf);
-            --hs-text:var(--input-text,#eef1f7); --hs-muted:color-mix(in srgb,var(--hs-text) 57%,transparent);
-            --hs-accent:#84aaff; box-sizing:border-box; width:100%; height:100%; min-height:540px;
+            --hs-text:var(--input-text,#eef1f7);
+            /* Follow the foreground palette for contrast in both themes,
+               including changes made while this Studio is already open. */
+            --hs-muted:color-mix(in srgb,var(--hs-text) 82%,var(--hs-panel));
+            --hs-accent:color-mix(in srgb,var(--hs-text) 70%,#3979da);
+            --hs-selected:color-mix(in srgb,var(--hs-accent) 18%,var(--hs-panel));
+            --hs-success:color-mix(in srgb,var(--hs-text) 70%,#219653);
+            --hs-warning:color-mix(in srgb,var(--hs-text) 75%,#c88a26);
+            --hs-danger:color-mix(in srgb,var(--hs-text) 70%,#e53935);
+            --hs-alternate:color-mix(in srgb,var(--hs-text) 75%,#8c54d8);
+            /* Video surfaces stay dark, regardless of the surrounding form. */
+            --hs-media-text:#eef1f7; --hs-media-muted:#dce5f7;
+            box-sizing:border-box; width:100%; height:100%; min-height:540px;
             display:flex; flex-direction:column; gap:8px; overflow:hidden; padding:10px;
             border:1px solid var(--hs-border); border-radius:8px; background:var(--hs-bg);
             color:var(--hs-text); font:12px/1.35 system-ui,sans-serif;
@@ -183,7 +194,7 @@ function injectStyles() {
         }
         .h3studio button { padding:5px 8px; cursor:pointer; white-space:nowrap; }
         .h3studio button:hover,.h3studio button.h3studio-active { border-color:var(--hs-accent); }
-        .h3studio button.h3studio-active { color:#fff; background:#20375d; }
+        .h3studio button.h3studio-active { color:var(--hs-text); background:var(--hs-selected); }
         .h3studio button:disabled { opacity:.4; cursor:not-allowed; }
         .h3studio input,.h3studio select,.h3studio textarea { width:100%; min-width:0; padding:6px 7px; }
         .h3studio textarea { resize:vertical; line-height:1.5; }
@@ -221,14 +232,14 @@ function injectStyles() {
         .h3studio-timeline { position:relative; display:flex; gap:0; width:100%; min-width:0; min-height:0; overflow:hidden; }
         .h3studio-generated-timeline { overflow:visible; }
         .h3studio-chapter-marker { position:absolute; z-index:8; top:-2px; bottom:0; width:0;
-            padding:0 !important; border:0 !important; border-left:2px solid #e8bd68 !important;
+            padding:0 !important; border:0 !important; border-left:2px solid var(--hs-warning) !important;
             border-radius:0 !important; background:transparent !important; overflow:visible; }
         .h3studio-chapter-marker span { position:absolute; top:3px; left:4px; max-width:112px;
             overflow:hidden; text-overflow:ellipsis; white-space:nowrap; padding:2px 6px;
-            border:1px solid #a98242; border-radius:999px; color:#ffe0a2;
-            background:color-mix(in srgb,var(--hs-bg) 92%,#6d4b16); font-size:9px; font-weight:750; }
-        .h3studio-chapter-marker.h3studio-selected span { color:#fff; border-color:#ffe0a2;
-            box-shadow:0 0 0 1px #ffe0a2 inset; }
+            border:1px solid var(--hs-warning); border-radius:999px; color:var(--hs-warning);
+            background:var(--hs-bg); font-size:9px; font-weight:750; }
+        .h3studio-chapter-marker.h3studio-selected span { color:var(--hs-text); border-color:var(--hs-warning);
+            box-shadow:0 0 0 1px var(--hs-warning) inset; }
         .h3studio-card { --scene:#84aaff; position:relative; isolation:isolate;
             flex:0 0 var(--h3-scene-width,138px); min-width:0;
             height:70px; overflow:hidden; padding:0 !important; text-align:left; border:1px solid var(--scene) !important;
@@ -243,7 +254,7 @@ function injectStyles() {
             opacity:.58; z-index:-1; background:#08090c; pointer-events:none; }
         .h3studio-card::after { content:""; position:absolute; inset:0; z-index:-1;
             background:linear-gradient(180deg,transparent 10%,rgba(5,7,12,.88)); }
-        .h3studio-card-copy { position:absolute; inset:auto 7px 6px; overflow:hidden; }
+        .h3studio-card-copy { position:absolute; inset:auto 7px 6px; overflow:hidden; color:var(--hs-media-text); }
         .h3studio-drag-handle { position:absolute; z-index:3; left:4px; top:4px; padding:1px 4px;
             border-radius:3px; color:#fff; background:rgba(5,7,12,.72); cursor:grab; user-select:none; }
         .h3studio-drag-handle:active { cursor:grabbing; }
@@ -274,7 +285,7 @@ function injectStyles() {
         .h3studio-card.h3studio-locked .h3studio-drag-handle,
         .h3studio-card.h3studio-locked .h3studio-resize-handle { cursor:not-allowed; opacity:.38; }
         .h3studio-card-title { display:block; font-weight:750; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .h3studio-card-meta { display:block; color:#dce5f7; font-size:10px; }
+        .h3studio-card-meta { display:block; color:var(--hs-media-muted); font-size:10px; }
         .h3studio-render-dot { position:absolute; right:6px; top:6px; width:8px; height:8px; border-radius:50%;
             background:#687080; box-shadow:0 0 0 1px #111; }
         .h3studio-rendered .h3studio-render-dot { background:#62d58b; }
@@ -303,7 +314,8 @@ function injectStyles() {
             background:repeating-linear-gradient(135deg,rgba(160,170,188,.07) 0 4px,transparent 4px 8px); }
         .h3studio-subtitle-timeline { position:relative; min-height:30px; }
         .h3studio-subtitle-cue { position:absolute; top:2px; bottom:2px; overflow:hidden; padding:4px 6px;
-            border:1px solid #8c6bd7; border-radius:4px; color:#eee5ff; background:rgba(76,45,124,.48);
+            border:1px solid var(--hs-alternate); border-radius:4px; color:var(--hs-alternate);
+            background:color-mix(in srgb,var(--hs-alternate) 10%,var(--hs-panel));
             font-size:9px; text-overflow:ellipsis; white-space:nowrap; }
         .h3studio-panel { flex:1 1 auto; min-height:0; overflow:auto; padding:9px;
             border:1px solid var(--hs-border); border-radius:7px; background:var(--hs-panel); }
@@ -311,8 +323,8 @@ function injectStyles() {
         .h3studio-grid-markers { display:flex; align-items:center; gap:5px; flex-wrap:wrap; margin-left:auto; }
         .h3studio-grid-marker { padding:2px 6px; border:1px solid var(--hs-border); border-radius:999px;
             color:var(--hs-muted); background:color-mix(in srgb,var(--hs-panel) 82%,transparent); font-size:9px; }
-        .h3studio-grid-marker.h3studio-grid-exact { color:#91e5b5; border-color:#4c9c70; }
-        .h3studio-grid-marker.h3studio-grid-warning { color:#ffd08a; border-color:#a47738; }
+        .h3studio-grid-marker.h3studio-grid-exact { color:var(--hs-success); border-color:var(--hs-success); }
+        .h3studio-grid-marker.h3studio-grid-warning { color:var(--hs-warning); border-color:var(--hs-warning); }
         .h3studio-grid-marker.h3studio-grid-experimental { border-style:dashed; }
         .h3studio-scene-label { color:var(--hs-muted); }
         /* Reflow against the node's width, not the browser viewport. Each cell
@@ -322,8 +334,8 @@ function injectStyles() {
         .h3studio-audio-overrides { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr));
             gap:7px; margin:0 0 8px; align-items:end; }
         .h3studio-field { display:flex; min-width:0; flex-direction:column; gap:3px; color:var(--hs-muted); }
-        .h3studio-alternate { margin:0 0 9px; padding:9px; border:1px solid #7259a8;
-            border-radius:7px; background:color-mix(in srgb,var(--hs-panel) 88%,#3b245f); }
+        .h3studio-alternate { margin:0 0 9px; padding:9px; border:1px solid var(--hs-alternate);
+            border-radius:7px; background:color-mix(in srgb,var(--hs-panel) 94%,var(--hs-alternate)); }
         .h3studio-alternate-title { display:flex; align-items:center; gap:7px; margin-bottom:4px; }
         .h3studio-alternate-enable { display:flex; align-items:center; gap:5px; margin:8px 0;
             color:var(--hs-text); }
@@ -331,7 +343,7 @@ function injectStyles() {
         .h3studio-alternate-grid { display:grid; grid-template-columns:minmax(260px,1fr) 180px;
             gap:8px; margin-top:7px; align-items:end; }
         .h3studio-alternate-prompt { min-height:105px; }
-        .h3studio-alternate-diff { margin:6px 0; color:#d6c7f4; font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;
+        .h3studio-alternate-diff { margin:6px 0; color:var(--hs-alternate); font:11px/1.4 ui-monospace,SFMono-Regular,Consolas,monospace;
             white-space:pre-wrap; overflow-wrap:anywhere; }
         .h3studio-plan-settings { display:grid; grid-template-columns:repeat(3,minmax(170px,1fr));
             gap:9px; align-items:end; }
@@ -352,7 +364,7 @@ function injectStyles() {
         .h3studio-history { justify-content:center; min-height:26px; }
         .h3studio-history-count { min-width:44px; text-align:center; font-variant-numeric:tabular-nums; }
         .h3studio-history-meta { max-width:300px; color:var(--hs-muted); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
-        .h3studio-error { color:#ffb3b3; white-space:pre-wrap; }
+        .h3studio-error { color:var(--hs-danger); white-space:pre-wrap; }
         .h3studio-shared { min-height:260px; font:15px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace !important; }
         .h3studio-defaults { display:grid; grid-template-columns:1fr 1fr; gap:8px; margin-top:8px; max-width:390px; }
         .h3studio-chapter-settings { display:flex; flex-wrap:wrap; align-items:flex-end; gap:8px; margin-top:8px; }
@@ -389,8 +401,8 @@ function injectStyles() {
         .h3studio-player-controls input[type=range] { flex:1; padding:0; }
         .h3studio-context-selector { display:flex; flex-direction:column; gap:9px; }
         .h3studio-context-tabs { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-        .h3studio-context-tabs button.h3studio-context-tab-active { border-color:#79a7ff;
-            color:#d9e7ff; background:rgba(65,112,190,.28); }
+        .h3studio-context-tabs button.h3studio-context-tab-active { border-color:var(--hs-accent);
+            color:var(--hs-text); background:var(--hs-selected); }
         .h3studio-context-tabs .h3studio-context-lock { margin-left:auto; }
         .h3studio-context-audio-settings { display:grid;
             grid-template-columns:repeat(3,minmax(170px,1fr)); gap:7px; align-items:end; }
@@ -411,7 +423,7 @@ function injectStyles() {
         .h3studio-context-video { display:block; width:100%; min-height:180px; max-height:330px;
             object-fit:contain; background:#050608; border-radius:6px; }
         .h3studio-context-empty { display:grid; place-items:center; width:100%; min-height:180px;
-            padding:18px; color:var(--hs-muted); text-align:center; border:1px dashed var(--hs-border);
+            padding:18px; color:var(--hs-media-muted); text-align:center; border:1px dashed var(--hs-border);
             border-radius:6px; background:#050608; }
         .h3studio-context-range { display:flex; flex-direction:column; gap:5px; margin-top:7px; }
         .h3studio-context-movie-track { position:relative; width:100%; height:38px; overflow:hidden;
@@ -433,7 +445,7 @@ function injectStyles() {
             background:repeating-linear-gradient(135deg,rgba(211,154,80,.24) 0,
                 rgba(211,154,80,.24) 4px,rgba(211,154,80,.06) 4px,
                 rgba(211,154,80,.06) 8px); }
-        .h3studio-context-phase-note { margin-top:4px; color:#d7ad73; font-size:10px; }
+        .h3studio-context-phase-note { margin-top:4px; color:var(--hs-warning); font-size:10px; }
         .h3studio-context-playhead { position:absolute; z-index:2; top:0; bottom:0; width:2px;
             pointer-events:none; background:#ff9a3c; transform:translateX(-1px); }
         .h3studio-context-range-readout { display:flex; justify-content:space-between; gap:8px; }
