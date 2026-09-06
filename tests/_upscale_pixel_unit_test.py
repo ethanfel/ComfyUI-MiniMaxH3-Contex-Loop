@@ -5,6 +5,7 @@ Set COMFYUI_PATH when ComfyUI is not adjacent to the checkout. No weights,
 external image upscalers, live projects or GPU sampling are used.
 """
 import copy
+import gc
 import importlib.util
 import json
 import os
@@ -12,6 +13,8 @@ from pathlib import Path
 import sys
 import subprocess
 import tempfile
+import weakref
+from types import SimpleNamespace
 from unittest.mock import patch
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,6 +54,110 @@ class Clip:
 
     def encode_from_tokens_scheduled(self, tokens):
         return [[torch.zeros(1, 1, 4), {"tokens": tokens}]]
+
+
+def assert_loop_releases_pixels(package, chain, upscale, manifest, ram_cache=False):
+    """Run the real recursive Comfy executor, without models or a live server.
+
+    NullCache deliberately evicts ordinary node outputs. Pending subgraph
+    input references still survive there, so this detects the original leak
+    independently of Comfy's discretionary RAM-pressure cache policy.
+    """
+    import execution
+    import nodes
+    old_frames = []
+    rendered = []
+    consumed = []
+
+    def evict_finished_images():
+        if not ram_cache:
+            return
+        # Model ordinary output-cache eviction independently of scheduler
+        # ownership. The production RAM-pressure policy is free to retain
+        # outputs until needed; it must be ABLE to release finished scenes.
+        old_ids = {id(ref()) for ref in old_frames if ref() is not None}
+        def contains_old(value):
+            if isinstance(value, dict):
+                return any(contains_old(v) for v in value.values())
+            if isinstance(value, (list, tuple)):
+                return any(contains_old(v) for v in value)
+            return id(value) in old_ids
+        cache = executor.caches.outputs
+        for key, entry in list(cache.cache.items()):
+            if contains_old(entry.outputs):
+                cache.cache.pop(key)
+                cache.timestamps.pop(key, None)
+                cache.used_generation.pop(key, None)
+
+    class Pixels:
+        @classmethod
+        def INPUT_TYPES(cls):
+            return {"required": {"state": (upscale.UPSCALE_STATE_TYPE,)}}
+        RETURN_TYPES = (upscale.UPSCALE_STATE_TYPE, "IMAGE")
+        FUNCTION = "make"
+
+        def make(self, state):
+            evict_finished_images()
+            gc.collect()
+            assert all(ref() is None for ref in old_frames), (
+                "A waiting loop node still pins a completed scene's pixels")
+            scene = int(state["index"])
+            source = upscale._source_segment(state)
+            images = torch.full((source["raw_frames"], 64, 96, 3), scene / 10)
+            old_frames.append(weakref.ref(images))
+            rendered.append(scene)
+            return state, images
+
+    class Result:
+        @classmethod
+        def INPUT_TYPES(cls):
+            return {"required": {"manifest": (upscale.UPSCALE_MANIFEST_TYPE,),
+                                 "tail": ("IMAGE",)}}
+        RETURN_TYPES = ()
+        FUNCTION = "consume"
+        OUTPUT_NODE = True
+
+        def consume(self, manifest, tail):
+            assert len(manifest["segments"]) == len(rendered) == 2, rendered
+            assert torch.all(tail == rendered[-1] / 10)
+            consumed.append(manifest)
+            return ()
+
+    prompt = {
+        "adapter": {"class_type": "MiniMaxH3ChainUpscaleAdapter", "inputs": {
+            "source_manifest": manifest, "profile": "memory-test-" + str(ram_cache), "backend": "pixel",
+            "recipe_json": "{}", "start_clip": 1, "end_clip": 0,
+            "save_latent": False, "segment_crf": 18}},
+        "pixels": {"class_type": "MemoryTestPixels", "inputs": {"state": ["adapter", 1]}},
+        "save": {"class_type": "MiniMaxH3ChainUpscaleSegmentSave", "inputs": {
+            "state": ["pixels", 0], "images": ["pixels", 1]}},
+        "end": {"class_type": "MiniMaxH3ChainUpscaleLoopEnd", "inputs": {
+            "flow": ["adapter", 0], "state": ["pixels", 0],
+            "images": ["pixels", 1], "segment": ["save", 0]}},
+        "result": {"class_type": "MemoryTestResult", "inputs": {
+            "manifest": ["end", 0], "tail": ["end", 2]}},
+    }
+    server = SimpleNamespace(client_id=None, last_node_id=None,
+                             send_sync=lambda *a, **k: None)
+    executor = execution.PromptExecutor(server, execution.CacheType.RAM_PRESSURE if ram_cache else execution.CacheType.NONE,
+                                       {"ram": 0, "ram_inactive": 0})
+    class SaveForTest(upscale.MiniMaxH3ChainUpscaleSegmentSave):
+        # With no cache, eagerly scheduled OUTPUT_NODE saves can execute twice
+        # before the lazy boundary attaches its dependencies. Test the same
+        # saver through its explicit handoff dependency only.
+        OUTPUT_NODE = False
+
+    with patch.dict(nodes.NODE_CLASS_MAPPINGS, {
+            **package.NODE_CLASS_MAPPINGS, "MemoryTestPixels": Pixels,
+            "MemoryTestResult": Result,
+            "MiniMaxH3ChainUpscaleSegmentSave": (
+                upscale.MiniMaxH3ChainUpscaleSegmentSave if ram_cache else SaveForTest)}):
+        executor.execute(prompt, "pixel-memory-test", execute_outputs=["result"])
+    assert executor.success, executor.status_messages
+    assert len(consumed) == 1 and rendered == [1, 2]
+    evict_finished_images()
+    gc.collect()
+    assert all(ref() is None for ref in old_frames)
 
 
 def main():
@@ -97,6 +204,8 @@ def main():
             "output_mode": "workflow_local"}))[0]
         assert pinned == manifest, "local pin must preserve the source recipe and manifests"
         manifest = pinned
+        assert_loop_releases_pixels(package, chain, upscale, manifest)
+        assert_loop_releases_pixels(package, chain, upscale, manifest, ram_cache=True)
         # Chapter output can combine takes with different catalog histories.
         # Cache lookup must use the current take, including an empty legacy
         # fingerprint, not the first chapter scene's catalog.
