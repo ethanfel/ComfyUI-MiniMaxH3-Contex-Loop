@@ -27,6 +27,7 @@ import {
 const NODE_NAME = "MiniMaxH3ChainReview";
 const PLAN_NAME = "MiniMaxH3ChainPlan";
 const PLAN_NAMES = new Set([PLAN_NAME, "MiniMaxH3ChainPlanModern"]);
+const ASSET_CAROUSEL_NAMES = new Set(["MiniMaxH3ProjectAssetManager"]);
 const PROMPT_EDITOR_SETTING = "MiniMaxH3ContexLoop.ReviewGate.PromptEditor";
 const VIDEO_HEIGHT_PROPERTY = "h3_chain_review_video_height";
 const PROMPT_HEIGHT_PROPERTY = "h3_chain_review_prompt_height";
@@ -891,6 +892,13 @@ function mount(node) {
     captureRow.append(captureButton, captureStatus);
 
     function captureTargetProject() {
+        // The Asset Carousel's project can be renamed independently of any
+        // upstream Plan's run_name, so prefer reading it directly from a
+        // connected (or any on-canvas) Carousel node before falling back.
+        const carouselNode = findUpstreamNode(node, ASSET_CAROUSEL_NAMES) ??
+            allNodes(app.graph).find((item) => ASSET_CAROUSEL_NAMES.has(nodeType(item)));
+        const carouselProject = carouselNode?._h3ProjectAssetCurrentProject?.();
+        if (carouselProject) return carouselProject;
         return planResumeContext(node).runName;
     }
 
@@ -931,8 +939,7 @@ function mount(node) {
         try {
             project = captureTargetProject();
         } catch (_error) {
-            captureStatus.textContent = "Open a connected Plan to name the target project.";
-            return;
+            project = "";
         }
         closeCaptureDialog();
 
@@ -950,9 +957,25 @@ function mount(node) {
         const title = document.createElement("div");
         title.className = "h3r-capture-title";
         title.textContent = `Save frame at ${captureTime.toFixed(2)}s`;
-        const projectLine = document.createElement("div");
-        projectLine.className = "h3r-capture-hint";
-        projectLine.textContent = `Carousel project: ${project}`;
+        const projectField = document.createElement("label");
+        projectField.className = "h3r-capture-field";
+        projectField.append("Carousel project");
+        const projectInput = document.createElement("input");
+        projectInput.className = "h3r-capture-tag";
+        projectInput.value = project;
+        projectInput.placeholder = "e.g. sammys_house";
+        projectInput.title = "The Asset Carousel node's own project name, which can differ " +
+            "from any connected Plan's run_name. Guessed from an on-canvas Carousel node " +
+            "when possible — edit it if it guessed wrong.";
+        projectField.append(projectInput);
+        projectInput.addEventListener("change", () => {
+            knownTags = [];
+            renderTagMenu(tagInput.value);
+            fetchExistingTags(projectInput.value.trim()).then((tags) => {
+                knownTags = tags;
+                if (!tagMenu.hidden) renderTagMenu(tagInput.value);
+            });
+        });
         const preview = document.createElement("img");
         preview.className = "h3r-capture-preview";
         try { preview.src = canvas.toDataURL("image/png"); } catch (_error) {}
@@ -1033,12 +1056,12 @@ function mount(node) {
         saveButton.className = "h3r-button";
         saveButton.textContent = "Save to Carousel";
         actionsRow.append(cancelButton, saveButton);
-        card.append(title, projectLine, preview, tagField, hint, error, actionsRow);
+        card.append(title, projectField, preview, tagField, hint, error, actionsRow);
         overlay.append(card);
         root.append(overlay);
         tagInput.focus();
 
-        fetchExistingTags(project).then((tags) => {
+        fetchExistingTags(projectInput.value.trim()).then((tags) => {
             knownTags = tags;
             if (!tagMenu.hidden) renderTagMenu(tagInput.value);
         });
@@ -1049,7 +1072,14 @@ function mount(node) {
         });
         saveButton.addEventListener("click", async () => {
             const tag = tagInput.value.trim();
+            const targetProject = projectInput.value.trim();
             error.hidden = true;
+            if (!targetProject) {
+                error.textContent = "Carousel project cannot be blank.";
+                error.hidden = false;
+                projectInput.focus();
+                return;
+            }
             saveButton.disabled = true;
             cancelButton.disabled = true;
             saveButton.textContent = "Saving…";
@@ -1059,7 +1089,7 @@ function mount(node) {
                         method: "POST",
                         headers: {"Content-Type": "application/json"},
                         body: JSON.stringify({
-                            project,
+                            project: targetProject,
                             filename: item.filename,
                             subfolder: item.subfolder ?? "",
                             type: item.type ?? "output",
@@ -1071,7 +1101,7 @@ function mount(node) {
                 const body = await response.json();
                 if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
                 captureStatus.textContent =
-                    `Saved @${body.asset?.tag ?? tag} to the ${project} Asset Carousel.`;
+                    `Saved @${body.asset?.tag ?? tag} to the ${targetProject} Asset Carousel.`;
                 overlay.remove();
             } catch (captureError) {
                 error.textContent = captureError.message || String(captureError);
