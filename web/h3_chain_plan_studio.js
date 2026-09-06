@@ -49,7 +49,7 @@ import {
     visualContextDefaultPartition,
     visualContextMaximumBlocks,
     visualContextPartitionFromBoundaries,
-} from "./h3_chain_plan_core.mjs?v=0.6.0";
+} from "./h3_chain_plan_core.mjs?v=0.6.4";
 import {
     promptRevisionHelp,
     promptRevisionLabel,
@@ -1094,7 +1094,9 @@ function mount(node) {
         }
         state.plan.shots.forEach((shot, index) => {
             const id = String(shot?.id ?? "").trim();
-            const current = (id ? byId.get(id) : null) ?? live.shots[index];
+            // A new ID (duplicate/add/rename) has no live counterpart yet.
+            // Never replace its prompt with the scene formerly at this index.
+            const current = id ? byId.get(id) : live.shots[index];
             if (current) shot.prompt = promptTextToLines(promptValueToText(current.prompt));
         });
     }
@@ -2950,6 +2952,7 @@ function mount(node) {
         const id = element("input");
         id.value = shot.id ?? "";
         id.addEventListener("change", () => {
+            preserveDelegatedPrompts();
             let renamed;
             try {
                 renamed = renamePlanShot(state.plan, state.active, id.value);
@@ -5762,6 +5765,7 @@ function mount(node) {
         const duplicate = button("Duplicate", "Duplicate the selected scene", async () => {
             if (state.plan.shots.length >= MAX_SHOTS) return;
             await flushHistoryDraft();
+            preserveDelegatedPrompts();
             duplicateShot(state.plan.shots, state.active); state.active += 1;
             state.activeChapterId = "";
             state.timelinePosition = null; persistView(); writePlan(); renderShell(); publishActiveScene();

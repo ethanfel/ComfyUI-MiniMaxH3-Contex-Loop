@@ -578,7 +578,8 @@ export function uniqueShotId(shots, requested = "scene") {
     const base = safeShotId(requested, "scene");
     if (!used.has(base)) return base;
     for (let suffix = 2; suffix <= MAX_SHOTS + 1; suffix += 1) {
-        const candidate = `${base}_${suffix}`.slice(0, 96);
+        const tail = `_${suffix}`;
+        const candidate = `${base.slice(0, 96 - tail.length)}${tail}`;
         if (!used.has(candidate)) return candidate;
     }
     return `${base}_${Date.now()}`.slice(0, 96);
@@ -593,12 +594,81 @@ export function makeShot(shots = []) {
 }
 
 export function duplicateShot(shots, index) {
+    if (!Array.isArray(shots) || !Number.isInteger(index)
+            || index < 0 || index >= shots.length) {
+        throw new Error("Scene duplication target is outside the Plan.");
+    }
+    const original = [...shots];
+    const ids = original.map((shot, offset) => safeShotId(
+        shot.id, `clip_${String(offset + 1).padStart(4, "0")}`,
+    ));
     const duplicated = clone(shots[index]);
     duplicated.id = uniqueShotId(shots, `${safeShotId(
         duplicated.id,
         `scene_${String(index + 1).padStart(2, "0")}`,
     )}_copy`);
+    // Pin legacy implicit identities before insertion shifts their positions.
+    // Existing ID-based links and delegated prompts must keep naming the same
+    // original scene, not the new occupant of its old index.
+    original.forEach((shot, offset) => {
+        if (!String(shot.id ?? "").trim()) shot.id = ids[offset];
+    });
     shots.splice(index + 1, 0, duplicated);
+
+    const authored = value => value !== undefined && value !== null
+        && !(typeof value === "string" && !value.trim());
+    function remap(shot, oldIndex, newIndex) {
+        function source(holder, key, followsPrevious = false) {
+            const raw = holder[key];
+            const numeric = typeof raw === "number" || (
+                typeof raw === "string" && /^\d+$/.test(raw.trim())
+            );
+            let prior;
+            if (numeric && Number.isInteger(Number(raw))) prior = Number(raw) - 1;
+            else if (typeof raw === "string") {
+                if (["", "previous", "immediate"].includes(raw.trim().toLowerCase())) return;
+                prior = ids.indexOf(raw.trim());
+                if (prior !== ids.lastIndexOf(raw.trim())) return;
+            } else return;
+            // Do not silently repair invalid authored references.
+            if (prior < 0 || prior >= oldIndex || !Number.isInteger(prior)) return;
+            const shifted = prior + (prior > index ? 1 : 0);
+            const next = followsPrevious && prior === oldIndex - 1
+                ? newIndex - 1 : shifted;
+            if (numeric) {
+                if (next !== prior) holder[key] = typeof raw === "number" ? next + 1 : String(next + 1);
+            } else if (followsPrevious && prior === oldIndex - 1
+                    && next !== shifted) {
+                // Purely numeric IDs are interpreted as positions by the
+                // validator, so use a numeric position for those targets.
+                const id = safeShotId(
+                    shots[next].id, `clip_${String(next + 1).padStart(4, "0")}`,
+                );
+                holder[key] = /^\d+$/.test(String(id).trim()) ? next + 1 : id;
+            }
+        }
+        for (const kind of ["visual", "audio"]) {
+            // A plain predecessor tail follows the newly inserted scene.
+            // Explicit windows, composed context and deliberately older
+            // sources retain their original clip identities and frame ranges.
+            const linear = !authored(shot[`${kind}_context_start_frame`])
+                && !authored(shot[`${kind}_context_lead_source`])
+                && !Object.hasOwn(shot, `${kind}_context_blocks`);
+            source(shot, `${kind}_context_source`, linear);
+            source(shot, `${kind}_context_lead_source`);
+        }
+        if (Array.isArray(shot.visual_context_blocks)) {
+            for (const block of shot.visual_context_blocks) {
+                if (!block || typeof block !== "object" || Array.isArray(block)) continue;
+                source(block, "source", shot.visual_context_blocks.length === 1
+                    && !authored(block.start_frame));
+            }
+        }
+    }
+    original.forEach((shot, offset) => remap(
+        shot, offset, offset + (offset > index ? 1 : 0),
+    ));
+    remap(duplicated, index, index + 1);
     return duplicated;
 }
 

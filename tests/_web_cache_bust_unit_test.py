@@ -11,6 +11,7 @@ VERSION_MATCH = re.search(r'^version\s*=\s*"([^"]+)"', PROJECT, re.MULTILINE)
 assert VERSION_MATCH, "pyproject.toml does not declare the project version"
 VERSION = VERSION_MATCH.group(1)
 MINIMUM_CACHE_VERSION = {
+    "h3_chain_plan_core.mjs": "0.6.4",
     "h3_chain_plan_studio_core.mjs": "0.6.3",
     "h3_checkpoint_manager_core.mjs": "0.6.2",
     "h3_prompt_companion_sync.mjs": "0.6.2",
