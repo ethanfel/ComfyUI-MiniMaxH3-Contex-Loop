@@ -14,7 +14,7 @@ IMPORT = re.compile(
     r'''["'](\./[^"']+\.mjs)(?:\?v=([^"']+))?["']''')
 SEMVER = re.compile(r"^(\d+)\.(\d+)\.(\d+)$")
 MINIMUM_CACHE_VERSION = {
-    "h3_chain_plan_core.mjs": "0.7.7",
+    "h3_chain_plan_core.mjs": "0.7.8",
     "h3_chain_review_core.mjs": "0.7.7",
     "h3_chain_cancel_reroll_core.mjs": "0.7.7",
     "h3_prompt_assistant_core.mjs": "0.7.7",
