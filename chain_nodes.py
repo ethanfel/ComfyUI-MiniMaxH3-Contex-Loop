@@ -18659,7 +18659,9 @@ class MiniMaxH3ChainCheckpointManager:
     OUTPUT_TOOLTIPS = (
         "The selected checkpoint lineage as a verified manifest. A partial "
         "generated lineage is valid even when the saved Plan contains later "
-        "scenes. This is the only Checkpoint Upscale Adapter input.",
+        "scenes. Use branch locally pins this output in the workflow without "
+        "changing the project's active branch. Connect to Checkpoint Upscale "
+        "Adapter; no source Plan connection is required.",
     )
     FUNCTION = "passthrough"
     CATEGORY = "conditioning/minimax/context_loop"
@@ -18667,9 +18669,17 @@ class MiniMaxH3ChainCheckpointManager:
         "Browse checkpoint scenes and inferred revision branches across H3 "
         "runs; preview saved media, inspect exact video/audio context "
         "dependencies and storage, emit the selected generated lineage for "
-        "standalone upscaling, load any branch into a connected Plan, "
+        "standalone upscaling or pin it locally to this workflow. Local output "
+        "does not activate a project branch or restore a Plan. Separately, "
+        "load any branch into a connected Plan, "
         "delete inactive leaves, or roll back the active branch tip after a "
         "complete deletion preview.")
+
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        # Recheck immutable artifacts on every queue, even if a local pin has
+        # not changed. A deleted/corrupt pinned take must not use cached output.
+        return float("NaN")
 
     def passthrough(self, selection_json="", plan=None):
         manifest = _checkpoint_selection_manifest(selection_json)
@@ -27871,6 +27881,10 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         raise ValueError(
             "Checkpoint Manager selection is not a JSON object. Select a "
             "checkpoint revision again.")
+    output_mode = selection.get("output_mode")
+    if output_mode not in (None, "workflow_local"):
+        raise ValueError("Checkpoint Manager has an unknown output selection mode.")
+    local_output = output_mode == "workflow_local"
     run_name = _strict_run_name(selection.get("run_name"))
     lineage = selection.get("lineage")
     if not isinstance(lineage, list) or not lineage:
@@ -28002,8 +28016,14 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 adopted = local_cache is None
                 if local_cache is None:
                     legacy_cache = _load_reference_cache_descriptor(descriptor)
-                    local_cache = _adopt_reference_cache_for_run(
-                        archived_plan, legacy_cache)
+                    if local_output:
+                        # Local output is read-only, including legacy cache
+                        # migration. Keep its verified descriptor in memory.
+                        local_cache = legacy_cache
+                        adopted = False
+                    else:
+                        local_cache = _adopt_reference_cache_for_run(
+                            archived_plan, legacy_cache)
                 local_descriptor = _reference_cache_descriptor(local_cache)
                 if local_descriptor is None:
                     raise ValueError(

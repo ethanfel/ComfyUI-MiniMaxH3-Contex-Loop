@@ -110,7 +110,7 @@ workflows](ADVANCED_WORKFLOWS.md).
 | Node | Main inputs → outputs | Use it for |
 |---|---|---|
 | **Run Manager** | Plan, archive controls, optional loader assets/Source Timeline/tagged refs → Plan, Source Timeline | Browse runs, restore a saved Plan and loader bindings, and archive recovery assets. |
-| **Checkpoint Manager** | Saved UI selection; optional Plan → selected manifest | Preview branches and nested final-cut alternates, activate a take, remove safe leaves, or emit a lineage for deferred upscaling. |
+| **Checkpoint Manager** | Saved UI selection; optional Plan → selected manifest | Pin a workflow-local lineage for deferred upscaling, browse takes, or explicitly activate a project-wide branch. Local output leaves the project and connected Plan unchanged. |
 | **Load Manifest** | Plan; optional source media/context → manifest, manifest JSON, status | Verify and load saved segments without executing the generation loop. Usually muted in generation examples. |
 | **Chapter Delivery** | Full/partial manifest + enabled + chapter number → chapter manifest, JSON, number, immutable path, status | Freeze the available scenes of a chapter and route finishing into its own folder. `0` means the chapter containing the manifest tip; `1`, `2`, etc. select a particular chapter, including a partially generated one. |
 | **Chapter Recovery Load** | Run name + chapter number + optional snapshot id → verified chapter manifest | Recover the newest snapshot of a particular chapter, or paste its 32-character id to recover an older sealed version. |

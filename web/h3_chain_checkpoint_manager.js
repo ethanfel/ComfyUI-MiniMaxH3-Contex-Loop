@@ -9,9 +9,12 @@ import {
     checkpointRevisionKey,
     checkpointRevisionLineage,
     checkpointSelectionJson,
+    checkpointLocalSelection,
+    checkpointLocalSelectionJson,
+    checkpointOutputSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.7.6";
+} from "./h3_checkpoint_manager_core.mjs?v=0.7.8";
 import {
     parsePlanJson,
     planToJson,
@@ -187,6 +190,10 @@ function injectStyles() {
       .h3cm-root button:disabled { cursor:not-allowed; opacity:.45; }
       .h3cm-run-select { flex:1; min-width:0; padding:5px 7px; }
       .h3cm-run-delete { white-space:nowrap; color:var(--h3cm-danger) !important; }
+      .h3cm-output { display:flex; flex-wrap:wrap; align-items:center; gap:6px;
+        flex:0 0 auto; padding:7px; border:1px solid var(--h3cm-border); border-radius:7px; }
+      .h3cm-output-summary { flex:1 1 250px; overflow-wrap:anywhere; }
+      .h3cm-local-label { color:var(--h3cm-accent) !important; font-weight:700; }
       .h3cm-scenes { flex:0 0 auto; overflow:auto; padding-bottom:2px; }
       .h3cm-chapter-tabs { flex:0 0 auto; overflow:auto; padding:2px 0; }
       .h3cm-chapter-tab { white-space:nowrap; border-radius:999px !important; }
@@ -322,6 +329,15 @@ function mount(node) {
     );
     deleteRun.disabled = true;
     runRow.append(runSelect, refresh, open, deleteRun);
+    const outputRow = element("div", "h3cm-output");
+    const outputSummary = element("div", "h3cm-output-summary");
+    const useLocal = button("Use branch locally",
+        "Pin the browsed lineage to selected_manifest in this workflow only. No project activation or Plan change.",
+        () => pinLocalOutput());
+    const followSelection = button("Follow browsing",
+        "Release the local pin: selected_manifest will follow the browsed revision again. The project's active branch is unchanged.",
+        () => releaseLocalOutput());
+    outputRow.append(outputSummary, useLocal, followSelection);
     const chapterTabs = element("div", "h3cm-chapter-tabs");
     const scenes = element("div", "h3cm-scenes");
     const main = element("div", "h3cm-main");
@@ -357,15 +373,15 @@ function mount(node) {
     const deletionBody = element("div");
     const deletionActions = element("div", "h3cm-delete-actions");
     const status = element("div", "h3cm-status");
-    const load = button("Load selected branch", "Restore this revision and its chapter lineage into the connected Plan", () => void loadSelected());
-    const activate = button("Make branch active", "Promote this revision inside its chapter without changing other chapters", () => void activateSelected());
+    const load = button("Load selected branch", "Project-wide: activate this chapter lineage and restore the connected Plan for generation", () => void loadSelected());
+    const activate = button("Make branch active (project)", "Project-wide: promote this chapter for all workflows using this Run", () => void activateSelected());
     const remove = button("Delete selected revision", "Delete an inactive leaf or roll back the active branch tip after confirmation", () => void deleteSelected(), "h3cm-delete-button");
     load.disabled = true;
     activate.disabled = true;
     remove.disabled = true;
     deletionActions.append(load, activate, status, remove);
     deletion.append(deletionTitle, deletionBody, deletionActions);
-    root.append(head, runRow, chapterTabs, scenes, main, deletion);
+    root.append(head, runRow, outputRow, chapterTabs, scenes, main, deletion);
 
     function setPreviewHeight(value, persist = false) {
         state.previewHeight = previewHeight(value);
@@ -444,8 +460,8 @@ function mount(node) {
             previousRevision !== state.revision ||
             previousChapter !== state.chapterTab;
         if (selectionWidget) {
-            const value = checkpointSelectionJson(
-                state.payload, state.runName, state.selected,
+            const value = checkpointOutputSelectionJson(
+                selectionWidget.value, state.payload, state.runName, state.selected,
                 selectedChapterRange());
             if (selectionWidget.value !== value) {
                 selectionWidget.value = value;
@@ -454,6 +470,63 @@ function mount(node) {
             }
         }
         if (changed) node.graph?.setDirtyCanvas?.(true, true);
+    }
+
+    function writeOutputSelection(value) {
+        if (!selectionWidget) return;
+        selectionWidget.value = value;
+        selectionWidget.callback?.(value);
+        node.graph?.setDirtyCanvas?.(true, true);
+    }
+
+    function pinLocalOutput() {
+        if (state.busy || state.attribution || !selectionWidget) return;
+        try {
+            writeOutputSelection(checkpointLocalSelectionJson(
+                state.payload, state.runName, state.selected, selectedChapterRange()));
+            status.className = "h3cm-status";
+            status.textContent = "Output pinned to this workflow. Project active branch and connected Plan unchanged.";
+            render();
+        } catch (error) {
+            status.className = "h3cm-status h3cm-error";
+            status.textContent = error.message;
+        }
+    }
+
+    function releaseLocalOutput() {
+        if (state.busy || !checkpointLocalSelection(selectionWidget?.value)) return;
+        writeOutputSelection(checkpointSelectionJson(
+            state.payload, state.runName, state.selected, selectedChapterRange()));
+        status.className = "h3cm-status";
+        status.textContent = "Output follows browsing again. Project active branch unchanged.";
+        render();
+    }
+
+    function localRevisionKeys() {
+        const local = checkpointLocalSelection(selectionWidget?.value);
+        return new Set(local?.run_name === state.runName
+            ? (local.lineage ?? []).map((item) => checkpointRevisionKey(item.scene, item.revision)) : []);
+    }
+
+    function renderOutputSelection() {
+        const local = checkpointLocalSelection(selectionWidget?.value);
+        useLocal.disabled = state.busy || Boolean(state.attribution) || !selectionWidget || !canLoadSelected();
+        followSelection.disabled = state.busy || !local;
+        outputSummary.className = "h3cm-output-summary";
+        if (local) {
+            const tip = local.lineage?.at(-1);
+            outputSummary.textContent = `Local output · ${local.run_name} · through scene ${tip?.scene ?? "?"} / ${String(tip?.revision ?? "").slice(0, 8)} · saved with this workflow`;
+            if (state.payload && local.run_name === state.runName) {
+                const available = new Set((state.payload.revisions ?? []).filter((item) => item.ready)
+                    .map((item) => checkpointRevisionKey(item.scene, item.revision)));
+                if ((local.lineage ?? []).some((item) => !available.has(checkpointRevisionKey(item.scene, item.revision)))) {
+                    outputSummary.className += " h3cm-error";
+                    outputSummary.textContent += " · pinned checkpoint unavailable; reselect explicitly (no fallback)";
+                }
+            }
+        } else {
+            outputSummary.textContent = "Output follows browsing · use branch locally to pin it; project activation is separate";
+        }
     }
 
     function setBusy(value, message = "") {
@@ -468,6 +541,7 @@ function mount(node) {
         if (state.attributionButton) {
             state.attributionButton.disabled = state.busy || !state.attribution?.candidate;
         }
+        renderOutputSelection();
         if (message) status.textContent = message;
     }
 
@@ -645,6 +719,7 @@ function mount(node) {
     }
 
     function renderBranchRows(container, rows) {
+        const localKeys = localRevisionKeys();
         const occurrences = new Map();
         for (const branch of rows) {
             for (const revision of branch.revisions) {
@@ -671,7 +746,7 @@ function mount(node) {
                     selectRevision(tip);
                 });
             }
-            const name = element("span", branch.active ? "h3cm-branch-active" : "", branch.label);
+            const name = element("span", branch.active ? "h3cm-branch-active" : "", branch.active ? "Project active branch" : branch.label);
             const count = element("span", "h3cm-muted", `${branch.revisions.length} visible scene${branch.revisions.length === 1 ? "" : "s"}`);
             header.append(name, count);
             const path = element("div", "h3cm-branch-path");
@@ -696,6 +771,7 @@ function mount(node) {
                     ));
                 }
                 card.append(element("small", "", `${selected ? "selected · " : ""}${revision.active ? "saved active" : "saved inactive"}${revision.ready ? "" : " · broken"}`));
+                if (localKeys.has(key)) card.append(element("small", "h3cm-local-label", "local output"));
                 if (selected) {
                     card.classList.add("h3cm-revision-selected");
                 }
@@ -924,10 +1000,10 @@ function mount(node) {
         const activationMode = selectedActivationMode();
         const rollsBack = activationMode === "rollback";
         activate.textContent = rollsBack
-            ? "Roll active branch back" : "Make branch active";
+            ? "Roll active branch back (project)" : "Make branch active (project)";
         activate.title = rollsBack
-            ? "Retire later active scene pointers in this chapter without deleting any saved revision"
-            : "Promote this revision inside its chapter without changing other chapters";
+            ? "Project-wide: retire later active scene pointers in this chapter without deleting saved revisions"
+            : "Project-wide: promote this chapter for all workflows using this Run";
         deletion.classList.toggle("h3cm-delete-blocked", Boolean(state.deletion && !state.deletion.allowed));
         deletionTitle.textContent = checkpointDeletionTitle(state.deletion);
         load.disabled = state.busy || !canLoadSelected();
@@ -1000,6 +1076,7 @@ function mount(node) {
         summary.textContent = total
             ? `${total.scene_count} scenes · ${total.revision_count} revisions · ${total.branch_count} branches · ${formatCheckpointBytes(total.bytes)}`
             : "Select a saved run";
+        renderOutputSelection();
         renderChapterTabs();
         renderScenes();
         renderBranches();
@@ -1048,7 +1125,7 @@ function mount(node) {
             );
             let selected = selectedCheckpointRevision(
                 state.payload, state.scene, state.revision);
-            if (state.initialRefresh) {
+            if (state.initialRefresh && !checkpointLocalSelection(selectionWidget?.value)) {
                 const activeTip = selectedCheckpointRevision(state.payload);
                 if (checkpointRevisionLineage(
                         state.payload, activeTip).length >
@@ -1056,8 +1133,8 @@ function mount(node) {
                             state.payload, selected).length) {
                     selected = activeTip;
                 }
-                state.initialRefresh = false;
             }
+            state.initialRefresh = false;
             status.className = "h3cm-status";
             status.textContent = state.payload.summary?.broken_count
                 ? `${state.payload.summary.broken_count} broken revision${state.payload.summary.broken_count === 1 ? "" : "s"} found`
@@ -1082,8 +1159,13 @@ function mount(node) {
             const payload = await jsonRequest("/minimax_h3_context_loop/runs");
             state.runs = payload.runs ?? [];
             const connected = activePlanRun();
-            const preferred = state.runName || connected;
-            state.runName = state.runs.some((item) => item.run_name === preferred)
+            const local = checkpointLocalSelection(selectionWidget?.value);
+            const preferred = local?.run_name || state.runName || connected;
+            if (local && state.initialRefresh) {
+                state.scene = local.lineage?.at(-1)?.scene ?? null;
+                state.revision = local.lineage?.at(-1)?.revision ?? "";
+            }
+            state.runName = local ? preferred : state.runs.some((item) => item.run_name === preferred)
                 ? preferred : state.runs[0]?.run_name ?? "";
             runSelect.replaceChildren();
             for (const run of state.runs) {
@@ -1091,8 +1173,12 @@ function mount(node) {
                 option.value = run.run_name;
                 runSelect.append(option);
             }
+            if (local && !state.runs.some((item) => item.run_name === preferred)) {
+                const option = element("option", "", `${preferred} · pinned run unavailable`);
+                option.value = preferred;
+                runSelect.append(option);
+            }
             runSelect.value = state.runName;
-            persistSelection();
         } catch (error) {
             state.runs = [];
             state.runName = "";
@@ -1328,6 +1414,7 @@ function mount(node) {
         }
         const confirmed = window.confirm(
             `Load ${state.runName} through scene ${record.scene} revision ${record.revision.slice(0, 8)}?\n\n` +
+            "This activates the branch project-wide and restores the connected Plan. For output only, cancel and choose Use branch locally.\n\n" +
             `${scope.title} scenes ${scope.start}–${scope.end} will use this branch. Other chapters keep their active checkpoint branches. Saved revision files are kept.`,
         );
         if (!confirmed) return;
@@ -1407,6 +1494,7 @@ function mount(node) {
         if (!record || !canActivateSelected() || state.busy) return;
         const confirmed = window.confirm(
             `${rollsBack ? "Roll" : "Make"} ${scope.title} ${rollsBack ? "back" : "active"} through scene ${record.scene} revision ${record.revision.slice(0, 8)}?\n\n` +
+            "This changes the project-wide active branch for all workflows using this Run. Use branch locally changes only this manager's output.\n\n" +
             `${rollsBack ? `Active pointers after scene ${record.scene} will be cleared. ` : ""}` +
             `Only scenes ${scope.start}–${scope.end} are affected. Other chapters keep their active branches. If a Plan is connected, the selected chapter's saved scene settings are restored. No saved revision, workflow, reference, or assembled video is deleted.`,
         );
@@ -1480,7 +1568,16 @@ function mount(node) {
     }
 
     runSelect.addEventListener("change", () => {
+        if (checkpointLocalSelection(selectionWidget?.value)) {
+            if (!window.confirm("Switch runs and release this workflow's local output pin? The project active branches will not change.")) {
+                runSelect.value = state.runName;
+                return;
+            }
+            writeOutputSelection("");
+        }
         state.runName = runSelect.value;
+        state.payload = null;
+        state.selected = null;
         state.scene = null;
         state.revision = "";
         persistSelection();
@@ -1500,7 +1597,7 @@ function mount(node) {
         const result = connectionsChanged?.apply(this, arguments);
         window.setTimeout(() => {
             const connected = activePlanRun();
-            if (connected && connected !== state.runName) {
+            if (connected && connected !== state.runName && !checkpointLocalSelection(selectionWidget?.value)) {
                 state.runName = connected;
                 void refreshRuns();
             }

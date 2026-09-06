@@ -166,6 +166,23 @@ The node outputs only `selected_manifest`; it is not a Plan pass-through and is
 normally kept beside the generation route. Its run selector can inspect any
 other folder under `output/h3_chains`.
 
+For an experiment, select a generated branch tip and click **Use branch
+locally**. This pins the exact lineage on `selected_manifest` in this workflow
+only, including the earlier chapters included in that selection. Browsing
+other takes, refreshing, reopening the workflow, or activating another branch
+in a different tab cannot move this pin. Saved files are still verified on
+execution: a missing or corrupt pinned take fails instead of falling back to
+the project's active branch. The output row and **local output** badges show
+which revisions are pinned. **Follow browsing** releases the pin; an explicit
+run switch asks before releasing it. Save the workflow to keep the pin on disk.
+
+**Make branch active (project)**, **Roll active branch back (project)** and
+**Load selected branch** remain project-wide actions. Local selection neither
+restores connected Plan settings nor arms generation/resume. It does not require
+project ownership; downstream nodes retain their own write protections. Use the
+manager's manifest output for the experiment, not Manifest Load (which reads the
+project's active checkpoints).
+
 The manager groups immutable scene revisions into inferred branches. A revision
 can appear in more than one branch when it is their shared ancestor. Selecting
 a revision shows its saved preview, prompt, seed, timing, canvas, storage,
@@ -175,7 +192,7 @@ revision and checkpoint hashes; newly saved checkpoints also carry a stable
 branch id and effective context fields.
 
 Plan chapters are checkpoint-management boundaries. The **All scenes** tab
-shows a separate graph for each chapter. Selecting or activating a Chapter 2
+shows a separate graph for each chapter. Project-wide activation of a Chapter 2
 branch changes only Chapter 2 pointers and connected Plan scene values; Chapter
 1 keeps its current active branch. The chapter-start checkpoint can retain its
 original predecessor as provenance, but that structural edge does not choose
@@ -356,11 +373,16 @@ alternate muxing graphs.
 
 ### Deferred H3 upscale child runs
 
-Select the right-hand generated tip you want in Checkpoint Manager,
+Select the right-hand generated tip you want in Checkpoint Manager and click
+**Use branch locally** to keep that source fixed while experimenting,
 then connect its **selected_manifest** output to **MiniMax H3 Checkpoint Upscale
 Adapter**. The manager verifies the immutable lineage and embeds recovery-only
 compatibility and Source Timeline metadata directly. No source Plan, Chain
-Policy, or decoded source media is retained by the recursive upscale graph:
+Policy, or decoded source media is retained by the recursive upscale graph.
+
+Use a separate adapter **profile** name for each upscale experiment. Results
+live under `output/h3_chains/<run>/upscaled/<profile>/`; a local source pin is
+not a separate output folder and does not isolate experiments sharing a profile.
 
 ```text
 Checkpoint Manager → Upscale Adapter → Upscale Current Scene

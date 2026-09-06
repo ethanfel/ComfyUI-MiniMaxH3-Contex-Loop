@@ -92,6 +92,11 @@ def main():
         manifest = chain.MiniMaxH3ChainCheckpointManager().passthrough(
             json.dumps({"run_name": "pixel_test", "lineage": lineage}))[0]
         original_files = {p: p.read_bytes() for p in Path(temporary).rglob("*") if p.is_file()}
+        pinned = chain.MiniMaxH3ChainCheckpointManager().passthrough(json.dumps({
+            "run_name": "pixel_test", "lineage": lineage,
+            "output_mode": "workflow_local"}))[0]
+        assert pinned == manifest, "local pin must preserve the source recipe and manifests"
+        manifest = pinned
         adapter = upscale.MiniMaxH3ChainUpscaleAdapter()
         flow, state, _, _ = adapter.adapt(manifest, "pixel", "pixel", "{}", 1, 0, False, 18)
         reader = upscale.MiniMaxH3ChainUpscalePixelCurrent()
