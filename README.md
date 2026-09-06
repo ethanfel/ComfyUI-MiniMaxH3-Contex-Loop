@@ -15,6 +15,20 @@ result later—without keeping the whole production in memory.
 
 ## Changelog
 
+### Latest 0.6 updates
+
+- **Chapter output.** Export or recover a chosen chapter, including its already
+  generated scenes while it is unfinished. Chapters can use different resolutions;
+  locked saved scenes preserve their chapter's original size.
+- **Local checkpoint branches.** Pin a branch for this workflow's output without
+  changing the project's active branch. Select **Selected chapter only** for
+  chapter-specific export and upscale experiments.
+- **Authoring polish.** Rich prompt marker menus and completion improvements,
+  clearer responsive/light-theme controls, and scene duplication that preserves
+  prompts and updates context links correctly.
+- **Pixel upscale controls.** Optional conditioning width and height; `0` keeps
+  automatic sizing from the upscaled images.
+
 ### 0.6 — Better authoring, recovery, and export
 
 - **Production Plan.** The familiar scene columns, with settings organized

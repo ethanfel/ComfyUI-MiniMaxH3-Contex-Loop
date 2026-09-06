@@ -171,7 +171,7 @@ export function checkpointProjectLineage(payload, selected, range = null) {
     return [...prefix, ...chapterLineage];
 }
 
-export function checkpointSelectionJson(payload, runName, selected, range = null) {
+export function checkpointSelectionJson(payload, runName, selected, range = null, outputScope = "project") {
     const normalizedRun = String(runName ?? "").trim();
     const lineage = checkpointProjectLineage(payload, selected, range);
     const start = Math.max(1, Number(range?.start) || 1);
@@ -182,8 +182,42 @@ export function checkpointSelectionJson(payload, runName, selected, range = null
             lineage,
             scope_start_scene:start,
             scope_end_scene:end,
+            ...(outputScope === "chapter" ? {output_scope:"chapter"} : {}),
         })
         : "";
+}
+
+// Keep the pinned output in the execution widget itself: one serialized source
+// of truth survives save/load, duplication and node reconfiguration.
+export function checkpointLocalSelection(value) {
+    try {
+        const selection = typeof value === "string" ? JSON.parse(value) : value;
+        return selection?.output_mode === "workflow_local" ? selection : null;
+    } catch {
+        return null;
+    }
+}
+
+export function checkpointLocalSelectionJson(payload, runName, selected, range = null, outputScope = "project") {
+    const value = checkpointSelectionJson(payload, runName, selected, range, outputScope);
+    if (!value) throw new Error("Select a complete saved checkpoint lineage first.");
+    const selection = JSON.parse(value);
+    const records = checkpointRevisionMap(payload);
+    if (selection.lineage.some((item) => {
+        const record = records.get(checkpointRevisionKey(item.scene, item.revision));
+        // Earlier chapters supply immutable timing metadata only.
+        if (outputScope === "chapter" && item.scene < selection.scope_start_scene) return !record;
+        return !record?.ready || record.take_kind === "editorial_alternate";
+    })) {
+        throw new Error("Local output requires available generation checkpoints for every selected scene.");
+    }
+    return JSON.stringify({...selection, output_mode:"workflow_local"});
+}
+
+export function checkpointOutputSelectionJson(current, payload, runName, selected, range = null, outputScope = "project") {
+    // Browsing or a new project-wide active tip must never move a local pin.
+    return checkpointLocalSelection(current) ? current
+        : checkpointSelectionJson(payload, runName, selected, range, outputScope);
 }
 
 export function checkpointActivationMode(payload, selected, range = null) {

@@ -88,6 +88,10 @@ from .nodes import (
     _streams_from_latent,
 )
 from .motion_context_upstream import apply_motion_context
+from .chapter_resolution import (
+    normalize_resolution, scene_resolution, saved_resolution,
+    apply_chapter_resolutions, common_saved_resolution,
+)
 from .prompt_history import PromptHistoryStore
 from .prompt_optimizer import optimize_prompt_payload
 from .run_manager import RunArchiveManager, archive_policy_inputs
@@ -139,6 +143,7 @@ from .contracts_v05 import (
 from .checkpoint_manager import (
     CheckpointDeleteBlocked,
     CheckpointGraphManager,
+    checkpoint_audio_context_length,
     checkpoint_revision_token,
     checkpoint_run_lock,
 )
@@ -157,6 +162,7 @@ PNG_EXPORT_AUTO_WORKERS_CAP = 8
 PNG_EXPORT_MIN_CHUNK_FRAMES = 8
 PNG_EXPORT_MAX_CHUNK_FRAMES = 64
 PNG_EXPORT_HASH_CACHE_FORMAT = "h3_png_checkpoint_hash_cache_v1"
+CHAPTER_MANIFEST_FORMAT = "h3_chain_chapter_manifest_v1"
 BOUNDARY_TONE_MATCH_MODES = ("off", "auto")
 BOUNDARY_TONE_MATCH_CONTEXT_FRAMES = 8
 BOUNDARY_TONE_MATCH_SEARCH_FRAMES = 4
@@ -574,6 +580,20 @@ def _safe_name(value: str, fallback: str = "chain") -> str:
     text = re.sub(r"[^A-Za-z0-9._-]+", "_", str(value or "").strip())
     text = text.strip("._-")
     return (text or fallback)[:96]
+
+
+def _strict_run_name(value: Any) -> str:
+    """Return an exact Run identity; never redirect a selected chapter."""
+    requested = str(value or "").strip()
+    normalized = _safe_name(requested, "")
+    if not normalized:
+        raise ValueError("A non-empty H3 chain run_name is required.")
+    if requested != normalized:
+        raise ValueError(
+            "H3 run_name must be 1-96 characters, start and end with a "
+            "letter or number, and contain only letters, numbers, '.', '_' "
+            "or '-'. Use %r for this Run." % normalized)
+    return normalized
 
 
 def _expand_filename_date(value: str, now: datetime | None = None) -> str:
@@ -5567,6 +5587,8 @@ def _legacy_history_contract(
         # scene and the continuation history after it.
         if "continuation_mode" in shot:
             contract["continuation_mode"] = shot["continuation_mode"]
+        if "resolution" in shot:
+            contract["resolution"] = dict(shot["resolution"])
         if "context_length" in shot:
             contract["context_length"] = shot["context_length"]
         if "visual_context_source" in shot:
@@ -5790,8 +5812,8 @@ def _scene_dependency_record(
     scopes = {
         "global_generation": {
             "plan_version": int(plan.get("version", PLAN_VERSION)),
-            "width": int(compatibility.get("width", 0)),
-            "height": int(compatibility.get("height", 0)),
+            "width": int(shot.get("resolution", compatibility).get("width", 0)),
+            "height": int(shot.get("resolution", compatibility).get("height", 0)),
             "encode_mode": str(compatibility.get("encode_mode", "video")),
             "crop": str(compatibility.get("crop", "disabled")),
             "generation_fingerprint": str(
@@ -7539,6 +7561,15 @@ def _normalize_plan(
         "segment_crf": segment_crf,
         "total_delivered_frames": stitched_frames,
     }
+    if raw.get("chapters"):
+        editorial = _normalize_run_editorial({
+            "chapters": raw["chapters"],
+            "scene_order": [{"scene": shot["index"], "scene_id": shot["id"]}
+                            for shot in shots],
+        }, plan["run_name"])
+        plan["chapters"] = editorial["chapters"]
+        apply_chapter_resolutions(
+            plan, plan["chapters"], _locked_saved_resolutions(plan))
     plan_shot_contracts = []
     for shot in shots:
         contract = {
@@ -7566,6 +7597,66 @@ def _normalize_plan(
          _audio_policy_summary(compatibility),
          _transition_policy_summary(compatibility), plan["run_name"]))
     return plan
+
+
+def _locked_saved_resolutions(plan: dict[str, Any]) -> dict[str, Any]:
+    """Read old scene locks without rewriting or adopting checkpoint metadata."""
+    locked = set(_load_run_editorial(plan["run_name"]).get("locked_scene_ids", []))
+    result = {}
+    for shot in plan["shots"]:
+        if shot["id"] not in locked:
+            continue
+        path = _artifact_paths(plan, int(shot["index"]))["metadata"]
+        if not os.path.isfile(path):
+            continue  # Locking an ungenerated timeline slot cannot pin pixels.
+        metadata = _read_json(path)
+        segment = metadata.get("segment") or {}
+        if (segment.get("id") != shot["id"]
+                or int(segment.get("index", 0)) != int(shot["index"])):
+            raise ValueError("Locked scene %s no longer matches its saved checkpoint. "
+                             "Refresh the matching Plan before continuing." % shot["id"])
+        resolution = saved_resolution(segment, metadata)
+        if resolution is None:
+            raise ValueError("Cannot verify the saved resolution of locked scene %s. "
+                             "Restore its checkpoint metadata before continuing." % shot["id"])
+        result[shot["id"]] = resolution
+    return result
+
+
+def _scene_compatibility(plan: dict[str, Any], index: int) -> dict[str, Any]:
+    return {**plan["compatibility"], **scene_resolution(plan, index)}
+
+
+def _require_chapter_resolution_locks(plan: dict[str, Any]) -> None:
+    """Fence a lock/branch change made after the execution Plan was resolved."""
+    if not plan.get("chapters"):
+        return
+    locked = _locked_saved_resolutions(plan)
+    for shot in plan["shots"]:
+        saved = locked.get(shot["id"])
+        if saved and saved != scene_resolution(plan, shot["index"]):
+            raise ValueError(
+                "Locked scene %s now pins its chapter to %dx%d, which differs "
+                "from the queued Plan. Requeue with the current chapter settings "
+                "or unlock the saved scene first. Its checkpoint was not replaced."
+                % (shot["id"], saved["width"], saved["height"]))
+
+
+def _validate_scene_resolution_boundary(plan: dict[str, Any], index: int) -> None:
+    shot = plan["shots"][index - 1]
+    mode = shot.get("continuation_mode", plan["compatibility"].get("continuation_mode", "guide"))
+    if mode not in (*MASKED_CONTINUATION_MODES, "latent_guide"):
+        return
+    sources = _resume_context_predecessors(plan, index)
+    visual = {sources.get("visual"), sources.get("visual_lead"),
+              *sources.get("visual_blocks", [])} - {None}
+    for source in visual:
+        if scene_resolution(plan, source) != scene_resolution(plan, index):
+            raise ValueError(
+                "Scene %d cannot carry native video latent context from scene %d "
+                "across different chapter resolutions. Use zero video context "
+                "at this chapter boundary or keep the same resolution. Scene "
+                "locks do not resize saved latents." % (index, source))
 
 
 def _output_root() -> str:
@@ -7945,7 +8036,8 @@ def _publish_final_review_preview(
     manifest: dict[str, Any], final_path: str, status: str
 ) -> None:
     """Return the completed final assembly to the gate that approved it."""
-    if manifest.get("format") != "h3_chain_manifest_v3":
+    if manifest.get("format") not in (
+            "h3_chain_manifest_v3", CHAPTER_MANIFEST_FORMAT):
         return
     pending = _PENDING_FINAL_REVIEW_PREVIEWS.pop(
         _final_review_preview_key(manifest), None)
@@ -8160,6 +8252,8 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
             "start_scene": int(scene_by_id.get(
                 start_id, item.get("start_scene", offset + 1))),
             "text": text,
+            **({"resolution": normalize_resolution(item["resolution"])}
+               if item.get("resolution") is not None else {}),
         })
     chapters.sort(key=lambda item: int(item["start_scene"]))
 
@@ -8329,9 +8423,11 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
     document = {
         "format": "h3_chain_editorial_v1",
         "run_name": normalized_run,
-        "updated_at": str(value.get("updated_at") or
-                          datetime.now(timezone.utc).isoformat(
-                              timespec="seconds").replace("+00:00", "Z")),
+        # Normalization is also a read path. Inventing "now" for legacy
+        # sidecars changed chapter/source hashes every second and prevented
+        # an unchanged local upscale from resuming. Actual edit paths stamp
+        # updated_at explicitly; absent historical timestamps stay stable.
+        "updated_at": str(value.get("updated_at") or "1970-01-01T00:00:00Z"),
         "chapters": chapters,
         "scene_order": scene_order,
         "placements": placements,
@@ -8723,7 +8819,7 @@ def _editorial_dependency_mismatches(
                                int(index) - 1
                                if resolved_visual > 0 else 0)))
     uses_immediate_audio = (
-        int(segment.get("resolved_audio_context_length", 0)) > 0
+        _saved_audio_dependency_length(segment) > 0
         and str(segment.get("generated_continuity", "on")) == "on"
         and not bool(segment.get("audio_context_unlocked", False)))
     if (predecessor is not None
@@ -8765,6 +8861,10 @@ def _editorial_dependency_mismatches(
             ("audio_context_lead_source_scene",
              "audio_context_lead_editorial_out_frames",
              "composed audio lead source")):
+        if (source_field.startswith("audio_")
+                and "resolved_audio_context_length" in segment
+                and _saved_audio_dependency_length(segment) <= 0):
+            continue
         source_index = int(segment.get(source_field, 0))
         source = editorial_segments.get(source_index)
         if source is None:
@@ -8777,6 +8877,15 @@ def _editorial_dependency_mismatches(
                 "%s scene %d endpoint changed from %df to %df" %
                 (label, source_index, actual, expected))
     return reasons
+
+
+def _saved_audio_dependency_length(segment: dict[str, Any]) -> int:
+    return checkpoint_audio_context_length(
+        str(segment.get("continuation_mode") or ""),
+        int(segment.get("resolved_context_length", segment.get("context_length", -1))),
+        int(segment.get("resolved_audio_context_length", 0)),
+        str(segment.get("generated_continuity") or "").lower(),
+        str(segment.get("source_audio_target") or "").lower())
 
 
 def _editorial_dependency_sources(
@@ -8797,7 +8906,7 @@ def _editorial_dependency_sources(
             int(index) - 1 if resolved_visual > 0 else 0))
         if visual_source_index > 0:
             sources.add(visual_source_index)
-    if (int(segment.get("resolved_audio_context_length", 0)) > 0
+    if (_saved_audio_dependency_length(segment) > 0
             and str(segment.get("generated_continuity", "on")) == "on"
             and int(index) > 1):
         sources.add(int(segment.get(
@@ -8808,7 +8917,9 @@ def _editorial_dependency_sources(
         sources.add(lead_source_index)
     audio_lead_source_index = int(segment.get(
         "audio_context_lead_source_scene", 0))
-    if audio_lead_source_index > 0:
+    if (audio_lead_source_index > 0
+            and ("resolved_audio_context_length" not in segment
+                 or _saved_audio_dependency_length(segment) > 0)):
         sources.add(audio_lead_source_index)
     return sources
 
@@ -8910,10 +9021,12 @@ def _editorial_context_tail(
 
 
 def _editorial_timeline_records(
-        run_name: Any, segments: list[dict[str, Any]]) -> tuple[
+        run_name: Any, segments: list[dict[str, Any]],
+        editorial: dict[str, Any] | None = None,
+        natural_start_frame: int = 0) -> tuple[
             dict[str, Any], list[dict[str, Any]], int]:
     """Resolve editorial clip positions without changing the chain manifest."""
-    editorial = _load_run_editorial(run_name)
+    editorial = editorial or _load_run_editorial(run_name)
     editorial, cleared_editorial = _editorial_for_base_segments(
         editorial, segments)
     if cleared_editorial:
@@ -8941,7 +9054,7 @@ def _editorial_timeline_records(
         if isinstance(item, dict)
     }
     ordered: list[dict[str, Any]] = []
-    natural_start = 0
+    natural_start = max(0, int(natural_start_frame))
     source_cursor = 0
     for offset, segment in enumerate(presentation_segments, start=1):
         editorial_segment = editorial_segments[
@@ -9051,7 +9164,8 @@ def _parse_timed_lyrics(value: Any) -> list[dict[str, Any]]:
 
 
 def _editorial_subtitle_cues(
-        run_name: str, editorial: dict[str, Any], total_frames: int
+        run_name: str, editorial: dict[str, Any], total_frames: int,
+        timeline_origin_frames: int = 0
         ) -> list[dict[str, Any]]:
     settings = editorial.get("subtitles") or {}
     if settings.get("mode") != "preview_srt":
@@ -9071,7 +9185,8 @@ def _editorial_subtitle_cues(
         raise ValueError(
             "Editorial subtitle asset @%s has no LRC or SRT timestamps."
             % str(asset.get("tag") or "audio"))
-    shift = float(settings.get("offset_seconds", 0.0))
+    shift = (float(settings.get("offset_seconds", 0.0))
+             - int(timeline_origin_frames) / float(FPS))
     duration = int(total_frames) / float(FPS)
     result = []
     for cue in cues:
@@ -9154,13 +9269,16 @@ def _effective_editor_plan(plan: dict[str, Any]) -> dict[str, Any]:
             for shot in plan["shots"]],
     }
     editorial = _load_run_editorial(plan.get("run_name"))
-    if editorial["chapters"]:
+    chapters = plan.get("chapters", editorial["chapters"])
+    if chapters:
         result["chapters"] = [{
             "id": chapter["id"],
             "title": chapter["title"],
             "start_scene_id": chapter["start_scene_id"],
             "text": chapter["text"],
-        } for chapter in editorial["chapters"]]
+            **({"resolution": dict(chapter["resolution"])}
+               if chapter.get("resolution") else {}),
+        } for chapter in chapters]
     return result
 
 
@@ -9807,7 +9925,7 @@ def _public_segment(value: dict[str, Any]) -> dict[str, Any]:
         "created_at", "branch_id", "forked_from_branch_id",
         "generated_audio", "generated_audio_sha256",
         "raw_frames", "delivered_frames", "history_hash",
-        "scene_dependency", "reference_cache",
+        "scene_dependency", "reference_cache", "generation_fingerprint",
         "prompt_prefix", "scene_prompt", "scene_prompt_template", "prompt",
         "prompt_hash", "prompt_template_hash", "prompt_choice_seed", "archives",
         "seed", "steps", "continuation_mode", "context_length",
@@ -10570,6 +10688,8 @@ def _load_resume_state(
             "chapter branch. Activate a matching branch or attribute the independent "
             "saved take in Checkpoint Manager first. No saved files were changed."
             % min(stale_prefix))
+    if start_clip <= len(plan["shots"]):
+        _validate_scene_resolution_boundary(plan, start_clip)
     consumed_predecessors = set(context_sources["scenes"])
     editorial = _load_run_editorial(plan.get("run_name"))
     segments = []
@@ -13966,7 +14086,7 @@ class MiniMaxH3ChainExternalVideo:
                 "H3 existing-video source_frames must be "
                 "[frames,height,width,channels]; got %r." %
                 (getattr(source_frames, "shape", None),))
-        cfg = plan["compatibility"]
+        cfg = _scene_compatibility(plan, 1)
         context_length = _shot_context_length(
             plan["shots"][0], int(cfg["context_length"]))
         indices = _external_video_frame_indices(
@@ -14868,6 +14988,9 @@ class MiniMaxH3ChainPlan:
                 and str(shot.get("prompt_seed_mode") or "").strip().lower()
                     == "randomize"
                 for shot in shots):
+            return float("NaN")
+        if isinstance(raw, dict) and raw.get("chapters"):
+            # Locks are external to Plan JSON. Resolve their saved size at queue time.
             return float("NaN")
         return False
 
@@ -15814,6 +15937,10 @@ def _preflight_validation_recovery(
             "Reconnect the automatic generation fingerprint source.",
             ("Rebuild the Plan if its compatibility metadata was edited "
              "manually.",)),
+        "chapter_resolution": (
+            "incompatible_chapter_resolution",
+            "Use zero video context at the chapter boundary, or match the chapter resolutions.",
+            ("Keep native AV/latent continuation within a single resolution.",)),
         "runtime": (
             "runtime_compatibility_validation_failed",
             "Update ComfyUI and this node pack together, then restart.",
@@ -15851,6 +15978,9 @@ def _preflight_chain(
         start, end = _parse_scene_range(
             scene_range, len(plan["shots"]), start_clip)
         report["selection"] = {"start": start, "end": end}
+        stage = "chapter_resolution"
+        for scene in range(start, end + 1):
+            _validate_scene_resolution_boundary(plan, scene)
         stage = "source"
         prepared, runtime_timeline = _preflight_bind_source(
             plan, report, source_timeline, source_audio)
@@ -15883,6 +16013,7 @@ def _preflight_chain(
             record = {
                 "index": int(shot["index"]), "id": str(shot["id"]),
                 "selected": start <= int(shot["index"]) <= end,
+                "resolution": scene_resolution(prepared, int(shot["index"])),
                 "raw_frames": int(shot["raw_frames"]),
                 "delivered_frames": int(shot["delivered_frames"]),
                 "overlap_trim_frames": context,
@@ -16817,8 +16948,11 @@ class MiniMaxH3ChainPlanStudio:
                 "queued_alternate": queued_alternate,
             })
         run_name = str(_kwargs.get("run_name") or "")
+        plan_change = MiniMaxH3ChainPlan.IS_CHANGED(plan_json)
+        if isinstance(plan_change, float) and math.isnan(plan_change):
+            return plan_change
         return _fingerprint({
-            "plan": MiniMaxH3ChainPlan.IS_CHANGED(plan_json),
+            "plan": plan_change,
             "alternate_draft": _load_run_editorial(
                 run_name).get("alternate_draft"),
             "queued_alternate": queued_alternate,
@@ -17588,7 +17722,11 @@ class MiniMaxH3ChainCheckpointManager:
     OUTPUT_TOOLTIPS = (
         "The selected checkpoint lineage as a verified manifest. A partial "
         "generated lineage is valid even when the saved Plan contains later "
-        "scenes. This is the only Checkpoint Upscale Adapter input.",
+        "scenes. Use branch locally pins this output in the workflow without "
+        "changing the project's active branch. Selected chapter only excludes "
+        "earlier chapters while keeping original scene numbers and timing. "
+        "Connect to Checkpoint Upscale "
+        "Adapter; no source Plan connection is required.",
     )
     FUNCTION = "passthrough"
     CATEGORY = "conditioning/minimax/context_loop"
@@ -17596,9 +17734,17 @@ class MiniMaxH3ChainCheckpointManager:
         "Browse checkpoint scenes and inferred revision branches across H3 "
         "runs; preview saved media, inspect exact video/audio context "
         "dependencies and storage, emit the selected generated lineage for "
-        "standalone upscaling, load any branch into a connected Plan, "
+        "standalone upscaling or pin it locally to this workflow. Local output "
+        "does not activate a project branch or restore a Plan. Separately, "
+        "load any branch into a connected Plan, "
         "delete inactive leaves, or roll back the active branch tip after a "
         "complete deletion preview.")
+
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        # Recheck immutable artifacts on every queue, even if a local pin has
+        # not changed. A deleted/corrupt pinned take must not use cached output.
+        return float("NaN")
 
     def passthrough(self, selection_json="", plan=None):
         manifest = _checkpoint_selection_manifest(selection_json)
@@ -17934,8 +18080,8 @@ class MiniMaxH3ChainCurrent:
         "H3-valid RAW frame count, including the repeated head overlap on "
         "continuations. Connect to the stock H3 conditioning node's length.",
         "Resolved sampler steps for this scene.",
-        "Plan generation width.",
-        "Plan generation height.",
+        "Resolved chapter generation width; connect to H3 conditioning.",
+        "Resolved chapter generation height; connect to H3 conditioning.",
         "Start time in seconds of this scene's extension-track window. For an "
         "imported-video scene 1, its separate context lead precedes this time.",
         "Raw conditioning-audio duration in seconds, including any imported "
@@ -17956,6 +18102,7 @@ class MiniMaxH3ChainCurrent:
 
     def current(self, state, source_audio=None, align_audio_reference=False):
         plan = state["plan"]
+        _require_chapter_resolution_locks(plan)
         index = int(state["index"])
         shot = plan["shots"][index - 1]
         source_timeline = state.get("source_timeline")
@@ -18092,7 +18239,8 @@ class MiniMaxH3ChainCurrent:
             audio_status = "song %.3f..%.3fs" % (
                 shot["audio_start_seconds"],
                 shot["audio_start_seconds"] + shot["audio_duration_seconds"])
-        cfg = plan["compatibility"]
+        cfg = _scene_compatibility(plan, index)
+        _validate_scene_resolution_boundary(plan, index)
         context_length = _shot_context_length(
             shot, int(cfg.get("context_length", 0)))
         repeated_frames = max(
@@ -18385,8 +18533,18 @@ class MiniMaxH3ChainContext:
               lip_sync_voice=None):
         index = int(state["index"])
         plan = state["plan"]
-        cfg = plan["compatibility"]
+        cfg = _scene_compatibility(plan, index)
         shot = plan["shots"][index - 1]
+        _validate_scene_resolution_boundary(plan, index)
+        if shot.get("resolution"):
+            video = _streams_from_latent(latent)[0]
+            if (int(video.shape[-1]) * 16, int(video.shape[-2]) * 16) != (
+                    cfg["width"], cfg["height"]):
+                raise ValueError(
+                    "Scene %d conditioning does not match its chapter resolution "
+                    "%dx%d. Wire Current Shot width/height to the conditioning "
+                    "node, not the Plan-wide outputs." %
+                    (index, cfg["width"], cfg["height"]))
         context_length = _shot_context_length(
             shot, int(cfg["context_length"]))
         audio_context_length = _shot_audio_context_length(
@@ -18789,6 +18947,7 @@ class MiniMaxH3ChainSegmentSave:
         if _st_save is None:
             raise RuntimeError("safetensors is required for H3 chain checkpoints.")
         plan = state["plan"]
+        _require_chapter_resolution_locks(plan)
         index = int(state["index"])
         shot = plan["shots"][index - 1]
         compatibility = plan["compatibility"]
@@ -18799,6 +18958,12 @@ class MiniMaxH3ChainSegmentSave:
             effective_context_length)
         actual_frames = int(images.shape[0])
         expected_frames = int(shot["delivered_frames"])
+        if shot.get("resolution") and (
+                int(images.shape[2]), int(images.shape[1])) != tuple(
+                    scene_resolution(plan, index)[key] for key in ("width", "height")):
+            raise ValueError("Scene %d decoded dimensions do not match its chapter "
+                             "resolution. Connect Current Shot width/height to conditioning."
+                             % index)
         if actual_frames != expected_frames:
             raise ValueError(
                 "H3 chain clip %d produced %d delivered frames; expected %d. "
@@ -18838,6 +19003,12 @@ class MiniMaxH3ChainSegmentSave:
         continuation_mode = migrate_continuation_mode(shot.get(
             "continuation_mode",
             compatibility.get("continuation_mode", "guide")))
+        scene_audio_policy = _resolved_scene_audio_policy(plan, shot)
+        resolved_audio_context_length = checkpoint_audio_context_length(
+            continuation_mode, effective_context_length,
+            effective_audio_context_length,
+            str(scene_audio_policy["generated_continuity"]),
+            str(scene_audio_policy.get("source_audio_target", "off")))
         visual_state = (
             _selected_context_state(state)
             if index > 1 else state)
@@ -18869,7 +19040,7 @@ class MiniMaxH3ChainSegmentSave:
             visual_state.get("visual_context_lead_segment")
             if visual_lead_source_index is not None else None)
         audio_context_unlocked = (
-            index > 1 and effective_audio_context_length > 0
+            index > 1 and resolved_audio_context_length > 0
             and _shot_audio_context_unlocked(shot))
         audio_source_index = (
             _shot_audio_context_source(plan, index)
@@ -19138,6 +19309,8 @@ class MiniMaxH3ChainSegmentSave:
                 "delivered_frames": shot["delivered_frames"],
                 "history_hash": _history_hash(plan, index),
                 "scene_dependency": scene_dependency,
+                **({"resolution": scene_resolution(plan, index)}
+                   if shot.get("resolution") else {}),
                 **_prompt_fields(plan, index),
                 "archives": archives,
                 "seed": shot["seed"],
@@ -19312,8 +19485,8 @@ class MiniMaxH3ChainSegmentSave:
                 str(plan["compatibility"].get(
                     "generation_fingerprint") or ""),
                 index, len(plan["shots"]), str(shot["prompt"]),
-                int(plan["compatibility"]["width"]),
-                int(plan["compatibility"]["height"]),
+                scene_resolution(plan, index)["width"],
+                scene_resolution(plan, index)["height"],
                 int(shot["raw_frames"]))
             try:
                 if cache_metadata is not None:
@@ -19342,7 +19515,7 @@ class MiniMaxH3ChainSegmentSave:
             segment["resolved_context_length"] = (
                 0 if index == 1 else effective_context_length)
             segment["resolved_audio_context_length"] = (
-                0 if index == 1 else effective_audio_context_length)
+                0 if index == 1 else resolved_audio_context_length)
             if published_blend is not None:
                 segment.update({
                     "blend_segment": _relative_output_path(published_blend),
@@ -19406,7 +19579,7 @@ class MiniMaxH3ChainSegmentSave:
                 "plan_hash": plan["plan_hash"],
                 "history_hash": segment["history_hash"],
                 "scene_dependency": scene_dependency,
-                "compatibility": plan["compatibility"],
+                "compatibility": _scene_compatibility(plan, index),
                 "archives": archives,
                 "segment": segment,
             }
@@ -19416,6 +19589,7 @@ class MiniMaxH3ChainSegmentSave:
             # This metadata replacement is the transaction's commit point. Until
             # it succeeds, resume keeps referencing the previous immutable pair.
             with checkpoint_run_lock(_output_root(), plan["run_name"]):
+                _require_chapter_resolution_locks(plan)
                 _atomic_json(published_metadata, metadata)
                 if alternate_take is None:
                     _atomic_json(paths["metadata"], metadata)
@@ -20668,6 +20842,427 @@ def _manifest_path(plan: dict[str, Any]) -> str:
     return os.path.join(_run_dir(plan), "manifest.json")
 
 
+def _manifest_editorial(manifest: dict[str, Any]) -> dict[str, Any]:
+    """Return the immutable editorial view embedded by a chapter manifest."""
+    run_name = _strict_run_name(manifest.get("run_name"))
+    embedded = manifest.get("editorial")
+    if embedded is None:
+        return _load_run_editorial(run_name)
+    try:
+        return _normalize_run_editorial(embedded, run_name)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(
+            "H3 chapter manifest contains invalid editorial recovery data: %s"
+            % exc) from exc
+
+
+def _manifest_segment_bounds(
+        manifest: dict[str, Any], segments: list[dict[str, Any]],
+        purpose: str) -> tuple[int, int]:
+    """Validate one contiguous manifest without assuming that it starts at 1."""
+    if not segments:
+        raise ValueError("%s requires at least one scene." % purpose)
+    indexes = [int(item.get("index", -1)) for item in segments]
+    start = int(manifest.get("scene_start", indexes[0]))
+    expected = list(range(start, start + len(segments)))
+    if indexes != expected:
+        raise ValueError(
+            "%s requires contiguous scene indexes; found %s, expected %s." %
+            (purpose, indexes, expected))
+    end = start + len(segments) - 1
+    if int(manifest.get("scene_end", end)) != end:
+        raise ValueError("%s has an inconsistent scene_end." % purpose)
+    chapter = manifest.get("chapter")
+    if isinstance(chapter, dict):
+        if (int(chapter.get("start_scene", 0)) != start or
+                int(chapter.get("end_scene", 0)) != end):
+            raise ValueError(
+                "%s chapter range does not match its selected scenes." % purpose)
+        planned_end = int(chapter.get("planned_end_scene", end))
+        if (planned_end < end or
+                chapter.get("complete", True) != (end == planned_end)):
+            raise ValueError(
+                "%s has inconsistent chapter completion metadata." % purpose)
+    return start, end
+
+
+def _editorial_chapter_ranges(
+        editorial: dict[str, Any], maximum_scene: int
+) -> list[dict[str, Any]]:
+    """Resolve the same implicit ranges displayed by Checkpoint Manager."""
+    maximum = max(1, int(maximum_scene))
+    chapters = sorted(
+        (dict(item) for item in editorial.get("chapters", [])
+         if isinstance(item, dict)
+         and 1 <= int(item.get("start_scene", 0)) <= maximum),
+        key=lambda item: int(item["start_scene"]))
+    ranges: list[dict[str, Any]] = []
+    if not chapters:
+        chapters = [{
+            "id": "chapter_01",
+            "title": "Chapter 1",
+            "text": "",
+            "start_scene": 1,
+            "start_scene_id": "",
+            "implicit": True,
+        }]
+    elif int(chapters[0]["start_scene"]) > 1:
+        chapters.insert(0, {
+            "id": "unassigned",
+            "title": "Unassigned",
+            "text": "",
+            "start_scene": 1,
+            "start_scene_id": "",
+            "implicit": True,
+        })
+    for offset, chapter in enumerate(chapters):
+        start = int(chapter["start_scene"])
+        end = (int(chapters[offset + 1]["start_scene"]) - 1
+               if offset + 1 < len(chapters) else maximum)
+        if end < start:
+            continue
+        ranges.append({
+            "number": len(ranges) + 1,
+            "id": _safe_name(
+                chapter.get("id"), "chapter_%02d" % (len(ranges) + 1)),
+            "title": (str(chapter.get("title") or
+                          "Chapter %d" % (len(ranges) + 1)).strip()
+                      or "Chapter %d" % (len(ranges) + 1)),
+            "text": str(chapter.get("text") or ""),
+            "start_scene": start,
+            "end_scene": end,
+            "start_scene_id": str(chapter.get("start_scene_id") or ""),
+            "implicit": bool(chapter.get("implicit", False)),
+        })
+    return ranges
+
+
+def _chapter_directory_name(chapter: dict[str, Any]) -> str:
+    number = int(chapter.get("number", 0))
+    if number < 1 or number > MAX_SHOTS:
+        raise ValueError("H3 chapter number is outside the supported range.")
+    chapter_id = _safe_name(
+        chapter.get("id"), "chapter_%02d" % number)
+    return "%02d_%s" % (number, chapter_id)
+
+
+def _chapter_delivery_root(manifest: dict[str, Any]) -> str:
+    root = _run_dir({"run_name": _strict_run_name(manifest.get("run_name"))})
+    chapter = manifest.get("chapter")
+    if not isinstance(chapter, dict):
+        return root
+    candidate = os.path.realpath(os.path.join(
+        root, "chapters", _chapter_directory_name(chapter)))
+    chapter_root = os.path.realpath(os.path.join(root, "chapters"))
+    if os.path.commonpath([chapter_root, candidate]) != chapter_root:
+        raise ValueError("H3 chapter output path escapes its Run directory.")
+    return candidate
+
+
+def _chapter_scoped_editorial(
+        run_name: str, segments: list[dict[str, Any]],
+        editorial: dict[str, Any], chapter: dict[str, Any],
+        natural_start_frame: int = 0,
+        timeline_segments: list[dict[str, Any]] | None = None
+) -> tuple[dict[str, Any], int]:
+    """Freeze chapter-local placement, trims, alternates, and subtitle origin."""
+    _resolved, records, _total = _editorial_timeline_records(
+        run_name, timeline_segments if timeline_segments is not None else segments,
+        editorial, natural_start_frame)
+    selected_scenes = {int(segment["index"]) for segment in segments}
+    scene_records = [item for item in records if item.get("kind") == "scene"
+                     and int(item["scene"]) in selected_scenes]
+    if len(scene_records) != len(segments):
+        raise ValueError(
+            "H3 chapter editorial scope did not resolve every selected scene.")
+    origin = min(int(item.get("start_frame", 0)) for item in scene_records)
+    ids = {str(segment.get("id") or "") for segment in segments}
+    scene_order = [{
+        "scene": int(segment["index"]),
+        "scene_id": str(segment.get("id") or
+                        "clip_%04d" % int(segment["index"])),
+    } for segment in segments]
+    placements = [{
+        "scene": int(item["scene"]),
+        "scene_id": str(item["scene_id"]),
+        "start_frame": int(item["start_frame"]) - origin,
+    } for item in scene_records]
+    start_id = next(
+        item["scene_id"] for item in scene_order
+        if int(item["scene"]) == int(chapter["start_scene"]))
+    scoped = {
+        "format": "h3_chain_editorial_v1",
+        "run_name": run_name,
+        "updated_at": str(
+            editorial.get("updated_at") or "1970-01-01T00:00:00Z"),
+        "chapters": [{
+            "id": chapter["id"],
+            "title": chapter["title"],
+            "start_scene_id": start_id,
+            "start_scene": int(chapter["start_scene"]),
+            "text": chapter.get("text", ""),
+        }],
+        "scene_order": scene_order,
+        "placements": placements,
+        "trims": [dict(item) for item in editorial.get("trims", [])
+                  if isinstance(item, dict)
+                  and str(item.get("scene_id") or "") in ids],
+        "locked_scene_ids": [
+            str(item) for item in editorial.get("locked_scene_ids", [])
+            if str(item) in ids],
+        "subtitles": dict(editorial.get("subtitles") or {}),
+        "alternate_draft": None,
+        "replacements": [
+            dict(item) for item in editorial.get("replacements", [])
+            if isinstance(item, dict)
+            and str(item.get("scene_id") or "") in ids],
+    }
+    return _normalize_run_editorial(scoped, run_name), origin
+
+
+def _chapter_manifest_identity(manifest: dict[str, Any]) -> dict[str, Any]:
+    identity = _json_document(manifest) or {}
+    for key in ("sealed_at", "chapter_manifest_id", "chapter_manifest_path"):
+        identity.pop(key, None)
+    return identity
+
+
+def _chapter_manifest_digest(manifest: dict[str, Any]) -> str:
+    return hashlib.sha256(_canonical_json(
+        _chapter_manifest_identity(manifest)).encode("utf-8")).hexdigest()[:32]
+
+
+def _chapter_manifest_storage_path(
+        manifest: dict[str, Any], snapshot_id: str) -> str:
+    token = str(snapshot_id or "").strip().lower()
+    if re.fullmatch(r"[0-9a-f]{32}", token) is None:
+        raise ValueError("H3 chapter manifest id must be 32 hexadecimal digits.")
+    root = _chapter_delivery_root(manifest)
+    return os.path.join(root, "manifests", token + ".json")
+
+
+def _persist_chapter_manifest(manifest: dict[str, Any]) -> tuple[
+        dict[str, Any], str]:
+    # Sealing and checkpoint deletion must be mutually exclusive. Revalidate
+    # inside the lock, so a deletion between selection and sealing cannot
+    # publish a chapter snapshot whose recovery inputs are already gone.
+    with checkpoint_run_lock(_output_root(), manifest.get("run_name")):
+        _validate_manifest(manifest)
+        _editorial_presentation_segments(
+            manifest.get("run_name"), manifest["segments"],
+            _manifest_editorial(manifest))
+        return _persist_chapter_manifest_locked(manifest)
+
+
+def _persist_chapter_manifest_locked(manifest: dict[str, Any]) -> tuple[
+        dict[str, Any], str]:
+    snapshot = _json_document(manifest)
+    if not isinstance(snapshot, dict):
+        raise ValueError("H3 chapter delivery requires a JSON manifest.")
+    snapshot_id = _chapter_manifest_digest(snapshot)
+    path = _chapter_manifest_storage_path(snapshot, snapshot_id)
+    snapshot.update({
+        "chapter_manifest_id": snapshot_id,
+        "chapter_manifest_path": _relative_output_path(path),
+        "sealed_at": datetime.now(timezone.utc).isoformat(
+            timespec="seconds").replace("+00:00", "Z"),
+    })
+    if os.path.isfile(path):
+        existing = _read_json(path)
+        if (not isinstance(existing, dict)
+                or _chapter_manifest_digest(existing) != snapshot_id
+                or str(existing.get("chapter_manifest_id") or "") !=
+                   snapshot_id
+                or str(existing.get("chapter_manifest_path") or "") !=
+                   _relative_output_path(path)):
+            raise ValueError(
+                "Stored H3 chapter manifest %s failed its identity check." %
+                snapshot_id)
+        snapshot = existing
+    else:
+        _atomic_json(path, snapshot)
+    return snapshot, path
+
+
+def _chapter_manifest_from_manifest(
+        manifest: dict[str, Any], chapter_number: int = 0, *, persist: bool = True
+) -> tuple[dict[str, Any], str]:
+    """Snapshot the available scenes of one explicitly selectable chapter."""
+    if not isinstance(manifest, dict):
+        raise ValueError("H3 chapter delivery requires a chain manifest.")
+    if manifest.get("format") == CHAPTER_MANIFEST_FORMAT:
+        chapter = manifest.get("chapter") or {}
+        selected = int(chapter.get("number", 0))
+        requested = int(chapter_number)
+        if requested not in (0, selected):
+            raise ValueError(
+                "This input contains only Chapter %d. Connect the full Run "
+                "manifest to select Chapter %d." % (selected, requested))
+        _validate_manifest(manifest)
+        if not persist:
+            return _json_document(manifest), ""
+        snapshot, path = _persist_chapter_manifest(manifest)
+        return snapshot, path
+    if manifest.get("format") not in (
+            "h3_chain_manifest_v3", "h3_chain_partial_manifest_v3"):
+        raise ValueError(
+            "H3 chapter delivery requires a generated or partial H3 manifest.")
+    segments = list(manifest.get("segments") or [])
+    start, last_completed = _manifest_segment_bounds(
+        manifest, segments, "H3 chapter delivery")
+    if start != 1:
+        raise ValueError(
+            "Select another chapter from the original full Run manifest.")
+    editorial = _manifest_editorial(manifest)
+    planned = max(
+        last_completed,
+        int(manifest.get("planned_clip_count", 0) or 0),
+        *(int(item.get("scene", 0))
+          for item in editorial.get("scene_order", [])
+          if isinstance(item, dict)))
+    ranges = _editorial_chapter_ranges(editorial, planned)
+    requested = int(chapter_number)
+    if requested == 0:
+        chapter = next((item for item in ranges
+                        if int(item["start_scene"]) <= last_completed
+                        <= int(item["end_scene"])), None)
+        if chapter is None:
+            raise ValueError(
+                "No chapter contains the last generated scene %d."
+                % last_completed)
+    else:
+        chapter = next((item for item in ranges
+                        if int(item["number"]) == requested), None)
+        if chapter is None:
+            raise ValueError(
+                "Chapter %d does not exist; this Plan defines %d chapter(s)." %
+                (requested, len(ranges)))
+    chapter_start = int(chapter["start_scene"])
+    planned_end = int(chapter["end_scene"])
+    chapter_end = min(planned_end, last_completed)
+    if chapter_start > last_completed:
+        raise ValueError(
+            "Chapter %d has no generated scenes yet: it starts at scene %d, "
+            "but the manifest contains scenes only through %d." %
+            (int(chapter["number"]), chapter_start, last_completed))
+    by_index = {int(item["index"]): item for item in segments}
+    selected = [by_index[index] for index in range(chapter_start, chapter_end + 1)
+                if index in by_index]
+    if len(selected) != chapter_end - chapter_start + 1:
+        raise ValueError(
+            "Chapter %d is missing one or more saved scenes." %
+            int(chapter["number"]))
+    source_start = sum(
+        int(item.get("delivered_frames", 0)) for item in segments
+        if int(item.get("index", 0)) < chapter_start)
+    scoped_editorial, editorial_origin = _chapter_scoped_editorial(
+        _strict_run_name(manifest.get("run_name")), selected, editorial,
+        chapter, timeline_segments=segments)
+    total_frames = sum(int(item.get("delivered_frames", 0))
+                       for item in selected)
+    chapter_record = dict(chapter)
+    chapter_record.update({
+        "end_scene": chapter_end,
+        "planned_end_scene": planned_end,
+        "complete": chapter_end == planned_end,
+        "editorial_origin_frame": editorial_origin,
+        "source_start_frame": source_start,
+        "source_editorial_revision": str(editorial.get("revision") or ""),
+    })
+    resolution = common_saved_resolution(selected, "Chapter export")
+    if resolution:
+        chapter_record["resolution"] = resolution
+    scoped = {
+        "format": CHAPTER_MANIFEST_FORMAT,
+        "run_name": _strict_run_name(manifest.get("run_name")),
+        "plan_hash": manifest.get("plan_hash"),
+        "prompt_prefix": str(manifest.get("prompt_prefix") or ""),
+        "compatibility": _json_document(manifest.get("compatibility")) or {},
+        "clip_count": len(selected),
+        "source_scene_count": int(manifest.get("source_scene_count") or
+                                  manifest.get("planned_clip_count") or planned),
+        "scene_start": chapter_start,
+        "scene_end": chapter_end,
+        "total_delivered_frames": total_frames,
+        "duration_seconds": total_frames / float(FPS),
+        "segments": [_json_document(item) for item in selected],
+        "chapter": chapter_record,
+        "editorial": scoped_editorial,
+        "source_manifest_format": manifest.get("format"),
+        "source_plan_hash": manifest.get("plan_hash"),
+        "source_manifest_hash": _fingerprint(manifest),
+        "archives": _json_document(manifest.get("archives")) or {},
+    }
+    if resolution:
+        scoped["compatibility"].update(resolution)
+    if chapter_start == 1 and isinstance(manifest.get("prelude"), dict):
+        scoped["prelude"] = _json_document(manifest["prelude"])
+    if isinstance(manifest.get("source_timeline"), dict):
+        scoped["source_timeline"] = _json_document(
+            manifest["source_timeline"])
+    _validate_manifest(scoped)
+    if not persist:
+        return scoped, ""
+    snapshot, path = _persist_chapter_manifest(scoped)
+    return snapshot, path
+
+
+def _load_chapter_manifest(
+        run_name: Any, chapter_number: int,
+        snapshot_id: str = "") -> tuple[dict[str, Any], str]:
+    """Load one immutable chapter snapshot without requiring the old workflow."""
+    normalized = _strict_run_name(run_name)
+    number = int(chapter_number)
+    if number < 1 or number > MAX_SHOTS:
+        raise ValueError("Choose a chapter number between 1 and %d." % MAX_SHOTS)
+    requested = str(snapshot_id or "").strip().lower()
+    if requested and re.fullmatch(r"[0-9a-f]{32}", requested) is None:
+        raise ValueError("Chapter manifest id must be blank or 32 hexadecimal digits.")
+    chapters_root = os.path.realpath(os.path.join(
+        _run_dir({"run_name": normalized}), "chapters"))
+    candidates: list[tuple[int, str]] = []
+    if os.path.isdir(chapters_root):
+        prefix = "%02d_" % number
+        for directory_name in os.listdir(chapters_root):
+            if not directory_name.startswith(prefix):
+                continue
+            manifest_root = os.path.realpath(os.path.join(
+                chapters_root, directory_name, "manifests"))
+            if (not os.path.isdir(manifest_root)
+                    or os.path.commonpath([
+                        chapters_root, manifest_root
+                    ]) != chapters_root):
+                continue
+            for filename in os.listdir(manifest_root):
+                match = re.fullmatch(r"([0-9a-f]{32})\.json", filename)
+                if match is None or (requested and match.group(1) != requested):
+                    continue
+                path = os.path.realpath(os.path.join(manifest_root, filename))
+                if (os.path.commonpath([manifest_root, path]) != manifest_root
+                        or not os.path.isfile(path)):
+                    continue
+                candidates.append((os.stat(path).st_mtime_ns, path))
+    if not candidates:
+        suffix = " snapshot %s" % requested if requested else ""
+        raise FileNotFoundError(
+            "No sealed Chapter %d%s exists for Run %s." %
+            (number, suffix, normalized))
+    _mtime, path = max(candidates, key=lambda item: (item[0], item[1]))
+    manifest = _read_json(path)
+    file_snapshot_id = os.path.splitext(os.path.basename(path))[0]
+    if (not isinstance(manifest, dict)
+            or manifest.get("format") != CHAPTER_MANIFEST_FORMAT
+            or str(manifest.get("run_name") or "") != normalized
+            or int((manifest.get("chapter") or {}).get("number", 0)) != number
+            or _chapter_manifest_digest(manifest) !=
+               str(manifest.get("chapter_manifest_id") or "")
+            or str(manifest.get("chapter_manifest_id") or "") !=
+               file_snapshot_id
+            or str(manifest.get("chapter_manifest_path") or "") !=
+               _relative_output_path(path)):
+        raise ValueError("Sealed H3 chapter manifest failed its identity check.")
+    _validate_manifest(manifest)
+    return manifest, path
 def _saved_scene_prefix_length(plan: dict[str, Any]) -> int:
     """Return the contiguous active checkpoint prefix available for recovery.
 
@@ -21088,6 +21683,128 @@ class MiniMaxH3ChainManifestLoad:
         return (manifest, manifest_json, status)
 
 
+class MiniMaxH3ChainChapterDelivery:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "manifest": (MANIFEST_TYPE, {
+                    "tooltip": "Full or partial manifest from Loop End, "
+                               "Manifest Load, or Checkpoint Manager."}),
+                "enabled": ("BOOLEAN", {
+                    "default": True,
+                    "tooltip": "On seals and outputs one chapter. Off passes "
+                               "the complete incoming Run manifest through for "
+                               "the traditional ever-growing final."}),
+                "chapter_number": ("INT", {
+                    "default": 0, "min": 0, "max": MAX_SHOTS,
+                    "tooltip": "0 selects the chapter containing the last "
+                               "generated scene. Use 1, 2, 3, and so on to "
+                               "export a particular chapter. Unfinished "
+                               "chapters export their generated scenes now; "
+                               "later exports can include new scenes."}),
+            },
+        }
+
+    RETURN_TYPES = (MANIFEST_TYPE, "STRING", "INT", "STRING", "STRING")
+    RETURN_NAMES = ("delivery_manifest", "manifest_json", "chapter_number",
+                    "chapter_manifest_path", "status")
+    OUTPUT_TOOLTIPS = (
+        "Selected immutable chapter manifest, or the full input when disabled.",
+        "Human-readable delivery manifest JSON.",
+        "Resolved chapter number; zero when chapter delivery is disabled.",
+        "Immutable recovery manifest path for the sealed chapter.",
+        "Selected chapter range, snapshot id, and recovery location.",
+    )
+    FUNCTION = "select"
+    CATEGORY = "conditioning/minimax/context_loop"
+    DESCRIPTION = (
+        "Turn Plan Studio chapter markers into immutable delivery units. Each "
+        "chapter keeps its exact checkpoint lineage and editorial state, and "
+        "routes every downstream MP4, PNG/WAV, or full-chain upscale export "
+        "into a separate chapter folder. Disable it for a whole-Run final.")
+
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        return float("NaN")
+
+    def select(self, manifest, enabled=True, chapter_number=0):
+        if not bool(enabled):
+            document = _json_document(manifest)
+            if not isinstance(document, dict):
+                raise ValueError("H3 Chapter Delivery requires a manifest.")
+            status = "chapter delivery disabled; passing through the full Run"
+            return (document, json.dumps(
+                document, ensure_ascii=False, indent=2, sort_keys=True),
+                0, "", status)
+        chapter_manifest, path = _chapter_manifest_from_manifest(
+            manifest, int(chapter_number))
+        chapter = chapter_manifest["chapter"]
+        status = (
+            "sealed Chapter %d %r, scenes %d:%d, snapshot %s -> %s" %
+            (int(chapter["number"]), str(chapter["title"]),
+             int(chapter["start_scene"]), int(chapter["end_scene"]),
+             str(chapter_manifest["chapter_manifest_id"])[:8], path))
+        return (
+            chapter_manifest,
+            json.dumps(chapter_manifest, ensure_ascii=False, indent=2,
+                       sort_keys=True),
+            int(chapter["number"]), path, status)
+
+
+class MiniMaxH3ChainChapterLoad:
+    @classmethod
+    def INPUT_TYPES(cls):
+        return {
+            "required": {
+                "run_name": ("STRING", {
+                    "default": "h3_chain",
+                    "tooltip": "Exact Run name containing the sealed chapter."}),
+                "chapter_number": ("INT", {
+                    "default": 1, "min": 1, "max": MAX_SHOTS,
+                    "tooltip": "Chapter to recover independently."}),
+                "chapter_manifest_id": ("STRING", {
+                    "default": "",
+                    "tooltip": "Blank loads the newest immutable snapshot for "
+                               "this chapter. Paste a complete 32-character id "
+                               "to recover a particular older chapter final."}),
+            },
+        }
+
+    RETURN_TYPES = (MANIFEST_TYPE, "STRING", "STRING", "STRING")
+    RETURN_NAMES = ("chapter_manifest", "manifest_json",
+                    "chapter_manifest_path", "status")
+    OUTPUT_TOOLTIPS = (
+        "Verified immutable chapter manifest for any finishing node.",
+        "Human-readable recovered chapter manifest JSON.",
+        "Absolute path of the selected immutable chapter snapshot.",
+        "Recovered chapter range and snapshot id.",
+    )
+    FUNCTION = "load"
+    CATEGORY = "conditioning/minimax/context_loop"
+    DESCRIPTION = (
+        "Recover one sealed chapter without loading or extending the rest of "
+        "the Run. Blank snapshot id selects the newest saved version; an exact "
+        "id restores an older chapter delivery non-destructively.")
+
+    @classmethod
+    def IS_CHANGED(cls, *args, **kwargs):
+        return float("NaN")
+
+    def load(self, run_name, chapter_number, chapter_manifest_id=""):
+        manifest, path = _load_chapter_manifest(
+            run_name, int(chapter_number), chapter_manifest_id)
+        chapter = manifest["chapter"]
+        status = (
+            "loaded Chapter %d %r scenes %d:%d snapshot %s from %s" %
+            (int(chapter["number"]), str(chapter["title"]),
+             int(chapter["start_scene"]), int(chapter["end_scene"]),
+             str(manifest["chapter_manifest_id"])[:8], path))
+        return (manifest, json.dumps(
+            manifest, ensure_ascii=False, indent=2, sort_keys=True), path,
+            status)
+
+
 def _generated_audio(manifest: dict[str, Any]) -> dict[str, Any]:
     if _st_load is None or torch is None:
         raise RuntimeError("Generated-audio assembly requires safetensors and torch.")
@@ -21491,8 +22208,10 @@ def _validate_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]:
         raise ValueError(
             "H3 chain manifest contains %d segments; expected %d." %
             (len(segments), clip_count))
+    _manifest_segment_bounds(manifest, segments, "H3 chain manifest")
     total_frames = 0
-    for index, segment in enumerate(segments, start=1):
+    for segment in segments:
+        index = int(segment["index"])
         _verify_segment_artifacts(segment, index)
         total_frames += int(segment.get("delivered_frames", 0))
     expected_frames = int(manifest.get("total_delivered_frames", -1))
@@ -21848,9 +22567,7 @@ def _blend_video_records(
                     raise RuntimeError(
                         "H3 Chain scheduled blend recovery has no temporary "
                         "artifact owner.")
-                final_dir = os.path.join(
-                    _output_root(), "h3_chains",
-                    _safe_name(manifest.get("run_name"), "h3_chain"), "final")
+                final_dir = os.path.join(_chapter_delivery_root(manifest), "final")
                 os.makedirs(final_dir, exist_ok=True)
                 path = os.path.join(
                     final_dir, ".scheduled_blend_clip_%04d.%s.mkv" %
@@ -22826,10 +23543,22 @@ def _write_ffmetadata(path: str, metadata: dict[str, Any]) -> None:
 
 def _manifest_media_metadata(manifest: dict[str, Any]) -> dict[str, str]:
     metadata = _archive_media_metadata(manifest.get("archives"))
+    chapter = manifest.get("chapter")
+    chapter_suffix = ""
+    chapter_comment = ""
+    if isinstance(chapter, dict):
+        chapter_suffix = " - Chapter %d %s" % (
+            int(chapter.get("number", 0)), str(chapter.get("title") or ""))
+        chapter_comment = "; Chapter %d scenes %d-%d" % (
+            int(chapter.get("number", 0)),
+            int(chapter.get("start_scene", 0)),
+            int(chapter.get("end_scene", 0)))
     metadata.update({
-        "title": "MiniMax H3 chain - %s" % manifest.get("run_name", "h3_chain"),
-        "comment": "%d H3 scenes; prompts and recovery workflow embedded" %
-                   int(manifest.get("clip_count", 0)),
+        "title": "MiniMax H3 chain - %s%s" % (
+            manifest.get("run_name", "h3_chain"), chapter_suffix),
+        "comment": (
+            "%d H3 scenes%s; prompts and recovery workflow embedded" %
+            (int(manifest.get("clip_count", 0)), chapter_comment)),
         "h3_manifest": json.dumps(
             manifest, ensure_ascii=False, separators=(",", ":")),
     })
@@ -22843,12 +23572,10 @@ def _checkpoint_export_segments(manifest: dict[str, Any]) -> list[dict[str, Any]
         raise ValueError(
             "H3 PNG export manifest contains %d segments; expected %d." %
             (len(segments), clip_count))
+    _manifest_segment_bounds(manifest, segments, "H3 PNG/WAV export")
     delivered_total = 0
-    for expected_index, segment in enumerate(segments, start=1):
-        if int(segment.get("index", -1)) != expected_index:
-            raise ValueError(
-                "H3 PNG export requires contiguous segment indexes starting "
-                "at 1; expected clip %d." % expected_index)
+    for segment in segments:
+        expected_index = int(segment["index"])
         checkpoint_value = segment.get("checkpoint")
         if not isinstance(checkpoint_value, str):
             raise ValueError(
@@ -22942,10 +23669,9 @@ def _verify_png_export_checkpoint(
 
 
 def _new_export_directory(manifest: dict[str, Any], export_name: str) -> str:
-    run_name = _safe_name(manifest.get("run_name"), "h3_chain")
     name = _safe_name(export_name, "png_sequence")
     base = os.path.abspath(os.path.join(
-        _output_root(), "h3_chains", run_name, "frames", name))
+        _chapter_delivery_root(manifest), "frames", name))
     root = _output_root()
     if os.path.commonpath([root, base]) != root:
         raise ValueError("H3 PNG export path escapes the ComfyUI output directory.")
@@ -23144,8 +23870,9 @@ class MiniMaxH3ChainExportPNG:
                                "scene by scene; the H.264 segments are not used."}),
                 "export_name": ("STRING", {
                     "default": "png_sequence",
-                    "tooltip": "Folder name under output/h3_chains/<run>/frames. "
-                               "An existing folder is never overwritten; a "
+                    "tooltip": "Folder name under the Run frames folder, or "
+                               "the selected Chapter frames folder. An "
+                               "existing folder is never overwritten; a "
                                "numbered sibling is created automatically."}),
                 "first_frame_number": ("INT", {
                     "default": 1, "min": 0, "max": 999999999,
@@ -23220,7 +23947,7 @@ class MiniMaxH3ChainExportPNG:
                 "H3 PNG/WAV export needs video_vae, audio_vae, or both. "
                 "Connect only audio_vae for an audio-only export.")
         segments = _checkpoint_export_segments(manifest)
-        editorial = _load_run_editorial(manifest.get("run_name"))
+        editorial = _manifest_editorial(manifest)
         editorial_segments = [
             _editorial_trimmed_segment(segment, editorial)
             for segment in segments
@@ -23277,6 +24004,10 @@ class MiniMaxH3ChainExportPNG:
                 "complete": False,
                 "run_name": manifest.get("run_name"),
                 "source_manifest_format": manifest.get("format"),
+                "chapter": _json_document(manifest.get("chapter")),
+                "chapter_manifest_id": manifest.get("chapter_manifest_id"),
+                "chapter_manifest_path": manifest.get(
+                    "chapter_manifest_path"),
                 "first_frame_number": first_number,
                 "frame_count": written,
                 "phase": phase,
@@ -23625,6 +24356,9 @@ class MiniMaxH3ChainExportPNG:
             "run_name": manifest.get("run_name"),
             "source_manifest_format": manifest.get("format"),
             "source_plan_hash": manifest.get("plan_hash"),
+            "chapter": _json_document(manifest.get("chapter")),
+            "chapter_manifest_id": manifest.get("chapter_manifest_id"),
+            "chapter_manifest_path": manifest.get("chapter_manifest_path"),
             "first_frame_number": first_number,
             "last_frame_number": (
                 frame_number - 1 if video_enabled else None),
@@ -23705,6 +24439,9 @@ def _full_chain_selected_audio(
 ) -> dict[str, Any] | None:
     """Recover exactly the final audio policy without another Plan socket."""
     extension_frames = int(manifest["total_delivered_frames"])
+    chapter = manifest.get("chapter") or {}
+    source_start_frame = int(chapter.get("source_start_frame", 0))
+    source_end_frame = source_start_frame + extension_frames
     if selected == "none":
         return None
     if selected == "generated":
@@ -23728,40 +24465,48 @@ def _full_chain_selected_audio(
                 manifest["compatibility"], timeline,
                 "H3 Full-Chain Latent Video")
             audio = _source_timeline_scene_audio(
-                timeline, 0, extension_frames)
+                timeline, source_start_frame, source_end_frame)
         else:
             _validate_source_audio_hash(
                 manifest["compatibility"], source_audio,
                 "H3 Full-Chain Latent Video")
             waveform, sample_rate = _validate_audio(
                 source_audio, "H3 Full-Chain Latent Video source audio")
-            required = int(round(
-                extension_frames / float(FPS) * sample_rate))
-            if int(waveform.shape[-1]) < required:
+            source_start_sample = sample_boundary_from_frames(
+                source_start_frame, sample_rate, FPS)
+            source_end_sample = sample_boundary_from_frames(
+                source_end_frame, sample_rate, FPS)
+            if int(waveform.shape[-1]) < source_end_sample:
                 if (manifest["compatibility"].get(
                         "source_audio_silent_padding")
                         and _audio_is_silent(waveform)):
-                    audio = _pad_audio_to_samples(
-                        source_audio, required,
+                    padded = _pad_audio_to_samples(
+                        source_audio, source_end_sample,
                         "H3 Full-Chain Latent Video silent source audio")
+                    waveform, sample_rate = _validate_audio(
+                        padded,
+                        "H3 Full-Chain Latent Video padded source audio")
                 else:
                     raise ValueError(
                         "H3 Full-Chain Latent Video source audio has %d "
-                        "samples; %d are required." %
-                        (int(waveform.shape[-1]), required))
-            else:
-                audio = source_audio
+                        "samples; %d are required to reach Chapter source "
+                        "frame %d." %
+                        (int(waveform.shape[-1]), source_end_sample,
+                         source_end_frame))
+            audio = {
+                "waveform": waveform[
+                    ..., source_start_sample:source_end_sample],
+                "sample_rate": sample_rate,
+            }
     else:
         raise ValueError(
             "Unknown H3 full-chain audio source %r." % selected)
-    if (audio is not None and selected == "generated"
-            and editorial_records is not None
-            and editorial_frames is not None
-            and int(editorial_frames) != extension_frames):
+    if (audio is not None and editorial_records is not None
+            and editorial_frames is not None):
         audio = _audio_with_editorial_timeline(
             audio, editorial_records, extension_frames,
             int(editorial_frames),
-            "H3 full-chain latent-safe generated audio")
+            "H3 full-chain latent-safe %s audio" % selected)
         extension_frames = int(editorial_frames)
     if audio is not None and prelude is not None:
         audio = _audio_with_prelude(audio, extension_frames, prelude)
@@ -23816,6 +24561,9 @@ def _full_chain_cache_identity(
         "format": "h3_full_chain_latent_video_cache_v1",
         "run_name": str(manifest.get("run_name") or ""),
         "plan_hash": str(manifest.get("plan_hash") or ""),
+        "chapter_manifest_id": str(
+            manifest.get("chapter_manifest_id") or ""),
+        "chapter": _json_document(manifest.get("chapter")),
         "vae": _full_chain_vae_signature(video_vae),
         "audio_source": str(audio_source),
         "source_audio_hash": str(
@@ -24042,14 +24790,18 @@ class MiniMaxH3ChainLatentVideoAdapter:
             raise RuntimeError(
                 "H3 Full-Chain Latent Video requires safetensors, torch, "
                 "NumPy, and PyAV.")
-        if not isinstance(manifest, dict) or manifest.get(
-                "format") != "h3_chain_manifest_v3":
+        if not isinstance(manifest, dict) or manifest.get("format") not in (
+                "h3_chain_manifest_v3", CHAPTER_MANIFEST_FORMAT):
             raise ValueError(
-                "H3 Full-Chain Latent Video requires a generated lineage from "
-                "Checkpoint Manager.")
+                "H3 Full-Chain Latent Video requires a generated or sealed "
+                "chapter lineage.")
         segments = _checkpoint_export_segments(manifest)
+        geometry = common_saved_resolution(segments, "H3 Full-Chain Latent Video")
+        if geometry:
+            manifest = {**manifest, "compatibility": {
+                **(manifest.get("compatibility") or {}), **geometry}}
         prelude = _validate_prelude(manifest)
-        editorial = _load_run_editorial(manifest.get("run_name"))
+        editorial = _manifest_editorial(manifest)
         editorial_segments = [
             _editorial_trimmed_segment(segment, editorial)
             for segment in segments
@@ -24085,10 +24837,8 @@ class MiniMaxH3ChainLatentVideoAdapter:
                 "scene_id": str(item.get("scene_id") or ""),
                 "out_frame": int(item.get("out_frame", 0)),
             } for item in editorial.get("trims", [])])
-        run_name = _safe_name(manifest.get("run_name"), "h3_chain")
         cache_dir = os.path.join(
-            _output_root(), "h3_chains", run_name, "upscaled", "seedvr2",
-            "source")
+            _chapter_delivery_root(manifest), "upscaled", "seedvr2", "source")
         os.makedirs(cache_dir, exist_ok=True)
         final_path = os.path.join(cache_dir, digest + ".mkv")
         sidecar_path = os.path.join(cache_dir, digest + ".json")
@@ -24250,23 +25000,13 @@ class MiniMaxH3ChainLatentVideoAdapter:
                     "H3 Full-Chain Latent Video wrote %d frames; expected %d."
                     % (writer.written, total_frames))
 
-            generated_cursor = 0
-            editorial_cursor = 0
-            natural_records = []
-            for original, edited in zip(segments, editorial_segments):
-                used = _editorial_segment_delivered_frames(edited)
-                full = int(original["delivered_frames"])
-                natural_records.append({
-                    "kind": "scene",
-                    "scene": int(original["index"]),
-                    "scene_id": str(original.get("id") or ""),
-                    "start_frame": editorial_cursor,
-                    "frame_count": used,
-                    "source_start_frame": generated_cursor,
-                    "source_frame_count": full,
-                })
-                generated_cursor += full
-                editorial_cursor += used
+            natural_records, packed_frames = _png_export_packed_audio_records(
+                segments, editorial_segments)
+            if packed_frames != editorial_frames:
+                raise RuntimeError(
+                    "H3 Full-Chain Latent Video audio timeline resolved %d "
+                    "frames; the video timeline contains %d." %
+                    (packed_frames, editorial_frames))
             audio = _full_chain_selected_audio(
                 manifest, selected_audio, prelude, source_audio,
                 editorial_records=natural_records,
@@ -24450,10 +25190,15 @@ class MiniMaxH3ChainAssemble:
             manifest = upscale_support._assembly_manifest(
                 upscale_manifest, upscale_segments)
         segments = _validate_manifest(manifest)
+        geometry = common_saved_resolution(segments, "H3 Chain Assemble")
+        if geometry:
+            manifest = {**manifest, "compatibility": {
+                **(manifest.get("compatibility") or {}), **geometry}}
         prelude = _validate_prelude(manifest)
         run_name = _safe_name(manifest.get("run_name"), "h3_chain")
+        editorial = _manifest_editorial(manifest)
         editorial, editorial_records, editorial_extension_frames = (
-            _editorial_timeline_records(run_name, segments))
+            _editorial_timeline_records(run_name, segments, editorial))
         presentation_segments = _editorial_presentation_segments(
             run_name, segments, editorial)
         generated_extension_frames = int(manifest["total_delivered_frames"])
@@ -24493,7 +25238,8 @@ class MiniMaxH3ChainAssemble:
         selected = audio_source
         if selected == "plan":
             selected = _audio_policy_final(manifest)
-        preserve_generated = manifest.get("format") == "h3_chain_manifest_v3"
+        preserve_generated = manifest.get("format") in (
+            "h3_chain_manifest_v3", CHAPTER_MANIFEST_FORMAT)
         generated_track = None
         generated_warning = ""
         if preserve_generated or selected == "generated":
@@ -24512,6 +25258,10 @@ class MiniMaxH3ChainAssemble:
                 "H3 generated editorial audio")
         audio = None
         if selected == "source":
+            chapter = manifest.get("chapter") or {}
+            source_start_frame = int(chapter.get("source_start_frame", 0))
+            source_end_frame = (
+                source_start_frame + generated_extension_frames)
             if source_timeline is None:
                 source_timeline = _source_timeline_from_metadata(manifest)
             if source_timeline is not None and source_audio is not None:
@@ -24530,31 +25280,45 @@ class MiniMaxH3ChainAssemble:
                     manifest["compatibility"], source_timeline,
                     "H3 Chain Assemble")
                 source_audio = _source_timeline_scene_audio(
-                    source_timeline, 0,
-                    editorial_extension_frames)
+                    source_timeline, source_start_frame, source_end_frame)
             else:
                 _validate_source_audio_hash(
                     manifest["compatibility"], source_audio,
                     "H3 Chain Assemble")
             waveform, sample_rate = _validate_audio(
                 source_audio, "H3 Chain Assemble source audio")
-            required_samples = int(round(
-                editorial_extension_frames /
-                float(FPS) * sample_rate))
-            if int(waveform.shape[-1]) < required_samples:
+            source_start_sample = (
+                0 if source_timeline is not None else
+                sample_boundary_from_frames(
+                    source_start_frame, sample_rate, FPS))
+            source_end_sample = (
+                sample_boundary_from_frames(
+                    generated_extension_frames, sample_rate, FPS)
+                if source_timeline is not None else
+                sample_boundary_from_frames(
+                    source_end_frame, sample_rate, FPS))
+            if int(waveform.shape[-1]) < source_end_sample:
                 if manifest["compatibility"].get(
                         "source_audio_silent_padding") and _audio_is_silent(waveform):
-                    audio = _pad_audio_to_samples(
-                        source_audio, required_samples,
+                    padded = _pad_audio_to_samples(
+                        source_audio, source_end_sample,
                         "H3 Chain Assemble silent placeholder audio")
+                    waveform, sample_rate = _validate_audio(
+                        padded, "H3 Chain Assemble padded source audio")
                 else:
                     raise ValueError(
                         "H3 Chain Assemble source audio has %d samples; at least "
-                        "%d are required for %d video frames." %
-                        (int(waveform.shape[-1]), required_samples,
-                         editorial_extension_frames))
-            else:
-                audio = source_audio
+                        "%d are required to reach Chapter source frame %d." %
+                        (int(waveform.shape[-1]), source_end_sample,
+                         source_end_frame))
+            audio = {
+                "waveform": waveform[
+                    ..., source_start_sample:source_end_sample],
+                "sample_rate": sample_rate,
+            }
+            audio = _audio_with_editorial_timeline(
+                audio, editorial_records, generated_extension_frames,
+                editorial_extension_frames, "H3 source editorial audio")
         elif selected == "generated":
             audio = generated_track
         elif selected != "none":
@@ -24570,7 +25334,10 @@ class MiniMaxH3ChainAssemble:
             generated_sidecar_audio = _audio_with_prelude(
                 generated_sidecar_audio, extension_frames, prelude)
         subtitle_cues = _editorial_subtitle_cues(
-            run_name, editorial, editorial_extension_frames)
+            run_name, editorial, editorial_extension_frames,
+            timeline_origin_frames=int(
+                (manifest.get("chapter") or {}).get(
+                    "editorial_origin_frame", 0)))
         if prelude_frames and subtitle_cues:
             subtitle_shift = prelude_frames / float(FPS)
             subtitle_cues = [{
@@ -24583,9 +25350,10 @@ class MiniMaxH3ChainAssemble:
         if upscale_manifest is not None:
             final_dir = upscale_support._profile_paths(
                 upscale_manifest["run_name"],
-                upscale_manifest["profile"], 1)["final"]
+                upscale_manifest["profile"], 1,
+                upscale_manifest.get("source_manifest"))["final"]
         else:
-            final_dir = os.path.join(run_dir, "final")
+            final_dir = os.path.join(_chapter_delivery_root(manifest), "final")
         os.makedirs(final_dir, exist_ok=True)
         final_name = _safe_name(_expand_filename_date(filename), "final")
         final_path = os.path.join(final_dir, final_name + ".mp4")
@@ -24834,6 +25602,13 @@ def _assemble_review_partial(
     source_audio: dict[str, Any] | None,
 ) -> tuple[str, str]:
     manifest = _partial_manifest(state, segment)
+    sizes = {(size["width"], size["height"])
+             for item in manifest["segments"]
+             if (size := saved_resolution(item)) is not None}
+    if len(sizes) > 1:
+        # Review the current chapter without combining incompatible pictures.
+        # The execution state's full history remains untouched.
+        manifest, _chapter_path = _chapter_manifest_from_manifest(manifest, 0)
     index = int(segment["index"])
     partial_dir = os.path.join(_run_dir(state["plan"]), "partial")
     manifest_path = os.path.join(
@@ -25273,7 +26048,7 @@ def _checkpoint_audio_sidecar(
 
 
 def _load_checkpoint_revision(
-        run_name: str, scene: Any, revision: Any
+        run_name: str, scene: Any, revision: Any, *, verify_artifacts: bool = True
 ) -> tuple[dict[str, Any], str]:
     index = int(scene)
     token = str(revision or "").strip().lower()
@@ -25301,8 +26076,18 @@ def _load_checkpoint_revision(
         raise ValueError("Checkpoint revision belongs to a different scene.")
     if str(segment.get("revision") or "").lower() != token:
         raise ValueError("Checkpoint revision id does not match its metadata.")
-    _verify_segment_artifacts(segment, index)
+    if verify_artifacts:
+        _verify_segment_artifacts(segment, index)
     return metadata, metadata_path
+
+
+def _checkpoint_output_compatibility(value: dict[str, Any]) -> dict[str, Any]:
+    # Reference catalogs can grow between already-generated scenes. Their
+    # fingerprints protect generation/resume, not playback of an immutable
+    # lineage. Preserve each take's cache identity separately; all other
+    # compatibility checks (including geometry/audio) remain unchanged.
+    return {key:item for key, item in value.items() if key not in (
+        "generation_fingerprint", "generation_fingerprint_lineage")}
 
 
 def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
@@ -25314,9 +26099,15 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         raise ValueError(
             "Checkpoint Manager selection is not a JSON object. Select a "
             "checkpoint revision again.")
-    run_name = _safe_name(selection.get("run_name"), "")
-    if not run_name:
-        raise ValueError("Checkpoint Manager selection has no saved run.")
+    output_mode = selection.get("output_mode")
+    if output_mode not in (None, "workflow_local"):
+        raise ValueError("Checkpoint Manager has an unknown output selection mode.")
+    local_output = output_mode == "workflow_local"
+    output_scope = selection.get("output_scope", "project")
+    if output_scope not in ("project", "chapter"):
+        raise ValueError("Checkpoint Manager has an unknown output scope.")
+    chapter_output = output_scope == "chapter"
+    run_name = _strict_run_name(selection.get("run_name"))
     lineage = selection.get("lineage")
     if not isinstance(lineage, list) or not lineage:
         raise ValueError(
@@ -25338,12 +26129,32 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
     scope_start_scene = int(selection.get("scope_start_scene", 1))
     scope_end_scene = int(selection.get(
         "scope_end_scene", len(shots)))
+    editorial = _load_run_editorial(run_name)
+    maximum_scene = max([
+        len(shots), *(int(item.get("scene", 0))
+                     for item in editorial.get("scene_order", [])
+                     if isinstance(item, dict))])
     if (scope_start_scene < 1 or scope_start_scene > len(lineage) or
             scope_end_scene < scope_start_scene or
-            scope_end_scene > len(shots)):
+            (not chapter_output and scope_end_scene > maximum_scene)):
         raise ValueError(
             "Checkpoint Manager selection has an invalid chapter scope.")
-    editorial = _load_run_editorial(run_name)
+    selected_chapter = None
+    if chapter_output:
+        selected_chapter = next((chapter for chapter in
+            _editorial_chapter_ranges(editorial, maximum_scene)
+            if int(chapter["start_scene"]) == scope_start_scene), None)
+        if (selected_chapter is None or len(lineage) > scope_end_scene
+                or len(lineage) > int(selected_chapter["end_scene"])):
+            raise ValueError(
+                "Checkpoint Manager chapter boundaries changed or do not "
+                "match this selection. Select the chapter branch again.")
+        # The UI knows current editorial/generated scenes, while this take's
+        # immutable Plan may have more (or fewer) ungenerated scenes. The
+        # planned end is not chapter identity. Preserve the pinned revisions
+        # and require their start/tip to stay inside the same chapter, without
+        # requiring identical empty tails or silently adding new takes.
+        scope_end_scene = int(selected_chapter["end_scene"])
     chapter_starts = {
         int(chapter.get("start_scene", 0))
         for chapter in editorial.get("chapters", [])
@@ -25358,7 +26169,8 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         (int(item.get("scene", 0)), str(item.get("revision") or "").lower()):
             item
         for item in CheckpointGraphManager(_output_root()).graph(
-            run_name).get("revisions", [])
+            run_name, adopt_legacy=not (local_output or chapter_output)
+        ).get("revisions", [])
         if isinstance(item, dict)
     }
 
@@ -25371,7 +26183,14 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 "Checkpoint Manager lineage must contain contiguous scenes "
                 "1 through %d." % len(lineage))
         metadata, _metadata_path = _load_checkpoint_revision(
-            run_name, index, item.get("revision"))
+            run_name, index, item.get("revision"),
+            verify_artifacts=not chapter_output or index >= scope_start_scene)
+        if chapter_output and index < scope_start_scene:
+            # The frozen prefix supplies the original timeline clock, not
+            # media for export/upscale. Do not validate or migrate its assets,
+            # or compare another chapter's generation compatibility.
+            loaded.append(metadata)
+            continue
         if str(metadata["segment"].get("take_kind") or "") == \
                 "editorial_alternate":
             raise ValueError(
@@ -25399,11 +26218,14 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 % index)
         if compatibility is None:
             compatibility = current_compatibility
-        elif _canonical_json(current_compatibility) != _canonical_json(
-                compatibility):
+        elif _canonical_json(_checkpoint_output_compatibility(
+                current_compatibility)) != _canonical_json(
+                _checkpoint_output_compatibility(compatibility)):
             raise ValueError(
                 "Selected checkpoint revisions use different compatibility "
-                "settings.")
+                "settings." + (" Choose compatible takes within this chapter."
+                if chapter_output else " For differently sized chapters, choose "
+                "Selected chapter only in Checkpoint Manager's output scope."))
         segment = metadata["segment"]
         current_prefix = str(segment.get("prompt_prefix") or "")
         if prompt_prefix is None:
@@ -25435,8 +26257,14 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 adopted = local_cache is None
                 if local_cache is None:
                     legacy_cache = _load_reference_cache_descriptor(descriptor)
-                    local_cache = _adopt_reference_cache_for_run(
-                        archived_plan, legacy_cache)
+                    if local_output or chapter_output:
+                        # Local output is read-only, including legacy cache
+                        # migration. Keep its verified descriptor in memory.
+                        local_cache = legacy_cache
+                        adopted = False
+                    else:
+                        local_cache = _adopt_reference_cache_for_run(
+                            archived_plan, legacy_cache)
                 local_descriptor = _reference_cache_descriptor(local_cache)
                 if local_descriptor is None:
                     raise ValueError(
@@ -25459,6 +26287,12 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         loaded.append(metadata)
 
     segments = [_public_segment(item["segment"]) for item in loaded]
+    output_metadata = loaded[scope_start_scene - 1:] if chapter_output else loaded
+    if len({str(item["compatibility"].get("generation_fingerprint") or "")
+            for item in output_metadata}) > 1:
+        for segment, metadata in zip(segments, loaded):
+            segment["generation_fingerprint"] = str(
+                metadata.get("compatibility", {}).get("generation_fingerprint") or "")
     total_frames = sum(int(item["delivered_frames"]) for item in segments)
     manifest = {
         "format": "h3_chain_manifest_v3",
@@ -25484,7 +26318,7 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
     if isinstance(archived_plan.get("prelude"), dict):
         manifest["prelude"] = _json_document(archived_plan["prelude"])
     timeline_records = [
-        item.get("source_timeline") for item in loaded
+        item.get("source_timeline") for item in output_metadata
         if isinstance(item.get("source_timeline"), dict)]
     if timeline_records:
         timeline_record = _json_document(timeline_records[0])
@@ -25497,7 +26331,16 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
     elif isinstance(archived_plan.get("source_timeline"), dict):
         manifest["source_timeline"] = _json_document(
             archived_plan["source_timeline"])
-    _validate_manifest(manifest)
+    if chapter_output:
+        # Picture-only alternates cannot change duration. Earlier chapters'
+        # base timing metadata suffices; do not require their alternate media.
+        manifest["editorial"] = {**editorial, "replacements":[
+            item for item in editorial.get("replacements", [])
+            if int(item.get("scene", 0)) >= scope_start_scene]}
+        manifest, _path = _chapter_manifest_from_manifest(
+            manifest, int(selected_chapter["number"]), persist=False)
+    else:
+        _validate_manifest(manifest)
     return manifest
 
 
@@ -27503,6 +28346,8 @@ CHAIN_NODE_CLASS_MAPPINGS = {
     "MiniMaxH3ChainReview": MiniMaxH3ChainReview,
     "MiniMaxH3ChainLoopEnd": MiniMaxH3ChainLoopEnd,
     "MiniMaxH3ChainManifestLoad": MiniMaxH3ChainManifestLoad,
+    "MiniMaxH3ChainChapterDelivery": MiniMaxH3ChainChapterDelivery,
+    "MiniMaxH3ChainChapterLoad": MiniMaxH3ChainChapterLoad,
     "MiniMaxH3ChainExportPNG": MiniMaxH3ChainExportPNG,
     "MiniMaxH3ChainLatentVideoAdapter": MiniMaxH3ChainLatentVideoAdapter,
     "MiniMaxH3ChainAssemble": MiniMaxH3ChainAssemble,
@@ -27569,6 +28414,8 @@ CHAIN_NODE_DISPLAY_NAME_MAPPINGS = {
     "MiniMaxH3ChainReview": "MiniMax H3 Context Loop Review Gate",
     "MiniMaxH3ChainLoopEnd": "MiniMax H3 Context Loop End",
     "MiniMaxH3ChainManifestLoad": "MiniMax H3 Context Loop Load Manifest",
+    "MiniMaxH3ChainChapterDelivery": "MiniMax H3 Chapter Delivery",
+    "MiniMaxH3ChainChapterLoad": "MiniMax H3 Chapter Recovery Load",
     "MiniMaxH3ChainExportPNG": (
         "MiniMax H3 Context Loop Export PNG Sequence + Audio"),
     "MiniMaxH3ChainLatentVideoAdapter": (

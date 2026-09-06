@@ -30,6 +30,26 @@ _ARTIFACT_KINDS = {
     "review_preview": "Review preview",
     "active_pointer": "Active scene pointer",
 }
+def checkpoint_audio_context_length(
+        continuation: str, visual: int, audio: int,
+        generated_continuity: str = "", source_audio_target: str = "") -> int:
+    """Interpret saved predecessor audio using the generation contract.
+
+    Legacy saves recorded the configured audio span even when AV conditioning
+    returned early with no picture prefix. AV modes consume a joint prefix;
+    Guide modes can consume audio alone. Unknown modes/policies retain their
+    recorded dependency rather than treating missing evidence as independence.
+    This must never consult a mutable Plan to reinterpret an existing take.
+    """
+    if generated_continuity == "off" or source_audio_target == "locked":
+        return 0
+    if visual >= 0 and continuation in (
+            "masked_av", "tapered_av", "feathered_av", "audio_feathered_av",
+            "drift_control_av", "color_stable_drift_av"):
+        return visual if audio > 0 else audio
+    return audio
+
+
 _RUN_LOCKS: dict[tuple[str, str], threading.RLock] = {}
 _RUN_LOCKS_GUARD = threading.Lock()
 _LOG = logging.getLogger("minimax_h3_context_loop.checkpoints")
@@ -224,6 +244,10 @@ class CheckpointGraphManager:
                 audio_mode not in (
                     "generated_audio", "source_plus_timeline")):
             audio_context = 0
+        audio_context = checkpoint_audio_context_length(
+            continuation, context, audio_context,
+            str(segment.get("generated_continuity") or "").lower(),
+            str(segment.get("source_audio_target") or "").lower())
         return continuation, max(0, context), max(0, audio_context)
 
     def _adopt_legacy_active_revisions(
@@ -448,24 +472,30 @@ class CheckpointGraphManager:
         incoming = (scopes.get("incoming_boundary")
                     if isinstance(scopes, dict) else None)
         generated = str(
-            incoming.get("generated_continuity")
-            if isinstance(incoming, dict) else
-            segment.get("generated_continuity") or "off").lower()
+            segment.get("generated_continuity",
+                        incoming.get("generated_continuity")
+                        if isinstance(incoming, dict) else "off") or "off").lower()
         audio_frames = max(0, self._integer(
-            incoming.get("audio_context_length")
+            segment.get("resolved_audio_context_length",
+                        incoming.get("audio_context_length"))
             if isinstance(incoming, dict) else
             record.get("audio_context_length")))
+        audio_frames = checkpoint_audio_context_length(
+            str(record.get("continuation_mode") or ""), visual_frames,
+            audio_frames, generated,
+            str(segment.get("source_audio_target") or "").lower())
         if generated == "on" and audio_frames and parent_key in records:
             if parent_key not in found:
                 found.append(parent_key)
         return found
 
-    def _scan(self, run_name: Any) -> dict[str, Any]:
+    def _scan(self, run_name: Any, *, adopt_legacy: bool = True) -> dict[str, Any]:
         run_dir, run = self._run_dir(run_name)
         checkpoint_dir = os.path.join(run_dir, "checkpoints")
         review_dir = os.path.join(run_dir, "reviews")
         chapter_starts = self._chapter_starts(run_dir)
-        self._adopt_legacy_active_revisions(checkpoint_dir, run)
+        if adopt_legacy:
+            self._adopt_legacy_active_revisions(checkpoint_dir, run)
         active = self._active_revisions(checkpoint_dir)
         selected, stale = self.active_selection(run)
         records: dict[tuple[int, str], dict[str, Any]] = {}
@@ -693,6 +723,17 @@ class CheckpointGraphManager:
             visual, audio = int(visual), int(audio)
         except (TypeError, ValueError):
             return False
+        if visual < 0 or audio < 0:
+            return False
+        compatibility = record["_metadata"].get("compatibility")
+        compatibility = compatibility if isinstance(compatibility, dict) else {}
+        continuation = str(segment.get("continuation_mode") or
+                           incoming.get("continuation_mode") or
+                           compatibility.get("continuation_mode") or
+                           record.get("continuation_mode") or "")
+        audio = checkpoint_audio_context_length(
+            continuation, visual, audio, generated,
+            str(segment.get("source_audio_target") or "").lower())
         # Unknown legacy audio policy must not silently mean 'off'.
         return visual == 0 and (audio == 0 or (audio > 0 and generated == "off"))
 
@@ -1067,11 +1108,11 @@ class CheckpointGraphManager:
             },
         }
 
-    def graph(self, run_name: Any) -> dict[str, Any]:
+    def graph(self, run_name: Any, *, adopt_legacy: bool = True) -> dict[str, Any]:
         run_dir, run = self._run_dir(run_name)
         if not os.path.isdir(run_dir):
             raise FileNotFoundError("H3 run %r does not exist." % run)
-        return self._public_graph(self._scan(run))
+        return self._public_graph(self._scan(run, adopt_legacy=adopt_legacy))
 
     def attribute(
             self, run_name: Any, parent_scene: Any, parent_revision: Any,
@@ -1198,6 +1239,77 @@ class CheckpointGraphManager:
                      parent_token[:8])),
             }
 
+    def _chapter_references(self, scan: dict[str, Any], revision: str,
+                            artifacts: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Sealed delivery snapshots pin their recovery inputs, not just MP4s.
+
+        Called under the same Run lock used to publish chapter manifests.
+        Inspect small JSON documents only; never follow chapter symlinks.
+        Unreadable snapshots block cleanup rather than risk losing recovery.
+        """
+        root = os.path.join(scan["run_dir"], "chapters")
+        paths = {os.path.realpath(item["_path"]) for item in artifacts
+                 if item.get("owned")}
+
+        def mentions(value: Any) -> bool:
+            if isinstance(value, dict):
+                return any(mentions(item) for item in value.values())
+            if isinstance(value, list):
+                return any(mentions(item) for item in value)
+            if not isinstance(value, str):
+                return False
+            if value.lower() == revision:
+                return True
+            relative = value.replace("\\", "/")
+            if not (relative.startswith("h3_chains/") or os.path.isabs(relative)):
+                return False
+            return os.path.realpath(os.path.join(self.output_root, relative)) in paths
+
+        references = []
+        if not os.path.lexists(root):
+            return references
+        try:
+            if os.path.islink(root):
+                raise ValueError("chapter directory is a symlink")
+            with os.scandir(root) as entries:
+                chapters = sorted(entries, key=lambda entry: entry.name)
+            for directory in chapters:
+                if directory.is_symlink():
+                    raise ValueError("chapter directory is a symlink: " + directory.name)
+                if not directory.is_dir(follow_symlinks=False):
+                    continue
+                manifest_dir = os.path.join(directory.path, "manifests")
+                if not os.path.lexists(manifest_dir):
+                    continue
+                if os.path.islink(manifest_dir):
+                    raise ValueError("chapter manifests directory is a symlink")
+                with os.scandir(manifest_dir) as entries:
+                    snapshots = sorted(entries, key=lambda entry: entry.name)
+                for entry in snapshots:
+                    if not re.fullmatch(r"[0-9a-f]{32}\.json", entry.name):
+                        continue
+                    if entry.is_symlink() or not entry.is_file(follow_symlinks=False):
+                        raise ValueError("chapter snapshot is not a regular file")
+                    document = self._read_json(entry.path)
+                    if (not isinstance(document, dict)
+                            or document.get("format") != "h3_chain_chapter_manifest_v1"
+                            or document.get("run_name") != scan["run_name"]
+                            or not isinstance(document.get("segments"), list)
+                            or not document["segments"]
+                            or not isinstance(document.get("chapter"), dict)):
+                        raise ValueError("invalid chapter snapshot: " + entry.name)
+                    if mentions(document):
+                        chapter = document["chapter"]
+                        references.append({
+                            "number": chapter.get("number"),
+                            "title": str(chapter.get("title") or directory.name),
+                            "snapshot": entry.name[:-5],
+                            "path": os.path.relpath(entry.path, self.output_root),
+                        })
+        except (OSError, ValueError, TypeError, RecursionError) as error:
+            references.append({"error": "Cannot verify sealed chapter recovery: " + str(error)})
+        return references
+
     def deletion_preview(self, run_name: Any, scene: Any,
                          revision: Any) -> dict[str, Any]:
         run_dir, run = self._run_dir(run_name)
@@ -1235,7 +1347,13 @@ class CheckpointGraphManager:
                 })
             dependents.sort(key=lambda item: (
                 not item["leaf"], -int(item["scene"]), item["revision"]))
-            blockers = []
+            chapter_references = self._chapter_references(scan, token, artifacts)
+            blockers = [
+                item.get("error") or (
+                    "Sealed Chapter %s (%s), snapshot %s, requires this revision "
+                    "or its recovery artifacts. Keep it to preserve chapter recovery." %
+                    (item["number"], item["title"], item["snapshot"][:8]))
+                for item in chapter_references]
             try:
                 editorial = self._read_json(os.path.join(
                     scan["run_dir"], "editorial.json"))
@@ -1306,6 +1424,7 @@ class CheckpointGraphManager:
                 "revision": token,
                 "active": record["active"],
                 "rollback": rollback,
+                "chapter_references": chapter_references,
                 "dependents": [(item["scene"], item["revision"])
                                for item in dependents],
                 "files": [(item["path"], item["exists"], item["size_bytes"],
@@ -1327,6 +1446,7 @@ class CheckpointGraphManager:
                 "allowed": not blockers,
                 "blockers": blockers,
                 "dependents": dependents,
+                "chapter_references": chapter_references,
                 "files": public_files,
                 "owned_file_count": sum(item["exists"] for item in owned),
                 "reclaimed_bytes": sum(item["size_bytes"] for item in owned),

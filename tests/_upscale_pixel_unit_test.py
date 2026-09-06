@@ -92,10 +92,38 @@ def main():
         manifest = chain.MiniMaxH3ChainCheckpointManager().passthrough(
             json.dumps({"run_name": "pixel_test", "lineage": lineage}))[0]
         original_files = {p: p.read_bytes() for p in Path(temporary).rglob("*") if p.is_file()}
+        pinned = chain.MiniMaxH3ChainCheckpointManager().passthrough(json.dumps({
+            "run_name": "pixel_test", "lineage": lineage,
+            "output_mode": "workflow_local"}))[0]
+        assert pinned == manifest, "local pin must preserve the source recipe and manifests"
+        manifest = pinned
+        # Chapter output can combine takes with different catalog histories.
+        # Cache lookup must use the current take, including an empty legacy
+        # fingerprint, not the first chapter scene's catalog.
+        for fingerprint in ("second-scene-catalog", ""):
+            mixed = copy.deepcopy(manifest)
+            mixed["segments"][1]["generation_fingerprint"] = fingerprint
+            mixed["segments"][1].pop("reference_cache", None)
+            with patch.object(chain, "_find_reference_cache", return_value=None) as lookup:
+                try:
+                    upscale.MiniMaxH3ChainUpscaleReferenceConditioning().condition(
+                        {"source_manifest":mixed, "index":2}, Clip(), missing_cache="error")
+                except FileNotFoundError:
+                    pass
+                else:
+                    raise AssertionError("Expected a missing cache")
+                assert lookup.call_args.args[:2] == (fingerprint, 2)
         adapter = upscale.MiniMaxH3ChainUpscaleAdapter()
         flow, state, _, _ = adapter.adapt(manifest, "pixel", "pixel", "{}", 1, 0, False, 18)
         reader = upscale.MiniMaxH3ChainUpscalePixelCurrent()
         conditioner = upscale.MiniMaxH3ChainUpscalePixelConditioning()
+        schema = conditioner.INPUT_TYPES()
+        assert list(schema["optional"])[-2:] == ["conditioning_width", "conditioning_height"]
+        assert list(schema["optional"])[:-2] == [
+            name for name in upscale.MiniMaxH3ChainUpscaleReferenceConditioning.INPUT_TYPES()["optional"]
+            if name not in ("video_vae", "target_video_latent")]
+        for axis in ("width", "height"):
+            assert schema["optional"][f"conditioning_{axis}"][1]["default"] == 0
         current = reader.current(state, VideoVAE())
         assert current[1].shape == (5, 32, 32, 3)
         assert current[2]["sample_rate"] == 8000 and current[4] == 1
@@ -112,6 +140,10 @@ def main():
         for bad, message in ((target[:4], "RAW RGB"), (target[..., :2], "RAW RGB"),
                              (torch.zeros(5, 64, 80, 3), "multiples of 32")):
             fails(lambda: conditioner.condition(state, Clip(), bad, VideoVAE()), message)
+        for axis in ("width", "height"):
+            for invalid in (-32, 1, 1080, 32.5, "64", None, 16416):
+                fails(lambda: conditioner.condition(state, Clip(), target, VideoVAE(),
+                      **{f"conditioning_{axis}":invalid}), f"conditioning_{axis} must be 0")
 
         # Real cache-v2 RGB master rebuild, same canvas as latent counterpart,
         # and no double scaling during the integrated sync step.
@@ -130,6 +162,28 @@ def main():
             assert torch.equal(actual["latent"], expected["latent"])
         assert torch.equal(cached[0][0][1]["tokens"]["presentation"][0]["data"],
                            latent_conditioning[0][0][1]["tokens"]["presentation"][0]["data"])
+        auto = conditioner.condition(state, Clip(), target, VideoVAE(), missing_cache="error",
+                                     conditioning_width=0, conditioning_height=0)
+        assert auto[1] is target and auto[2:] == cached[2:]
+        assert torch.equal(auto[0][0][1]["minimax_refs"][0]["latent"],
+                           cached[0][0][1]["minimax_refs"][0]["latent"])
+        # Each zero is independent: manual dimensions size reference pictures
+        # while all image outputs continue to report the true target canvas.
+        for requested, expected_size in (((32, 32), (32, 32)),
+                                         ((64, 0), (64, 64)),
+                                         ((0, 32), (96, 32))):
+            custom = conditioner.condition(state, Clip(), target, VideoVAE(), missing_cache="error",
+                conditioning_width=requested[0], conditioning_height=requested[1])
+            expected = upscale.MiniMaxH3ChainUpscaleReferenceConditioning().condition(
+                state, Clip(), "error", video_vae=VideoVAE(), _target_size=expected_size)
+            assert custom[1] is target and custom[2:4] == (96, 64)
+            assert "conditioning canvas %dx%d" % expected_size in custom[-1]
+            assert torch.equal(custom[0][0][1]["minimax_refs"][0]["latent"],
+                               expected[0][0][1]["minimax_refs"][0]["latent"])
+            assert torch.equal(custom[0][0][1]["tokens"]["presentation"][0]["data"],
+                               expected[0][0][1]["tokens"]["presentation"][0]["data"])
+        assert custom[0][0][1]["minimax_refs"][0]["latent"].shape != \
+            cached[0][0][1]["minimax_refs"][0]["latent"].shape
         # Connected references follow the same target path, not source size.
         refs = chain.MiniMaxH3TaggedPictureReference().add(torch.ones(1, 64, 128, 3), "detail")[0]
         connected = conditioner.condition(state, Clip(), target, VideoVAE(),
@@ -137,12 +191,26 @@ def main():
         assert "canvas=96x64" in connected[-1]
         assert torch.equal(connected[0][0][1]["minimax_refs"][0]["latent"],
                            cached[0][0][1]["minimax_refs"][0]["latent"])
+        connected_custom = conditioner.condition(state, Clip(), target, VideoVAE(),
+            tagged_references=refs, prompt_override="@detail in a quiet room.",
+            override_ref_image_size="match", conditioning_width=32, conditioning_height=32)
+        cached_custom = conditioner.condition(state, Clip(), target, VideoVAE(), missing_cache="error",
+                                             conditioning_width=32, conditioning_height=32)
+        assert connected_custom[1] is target and connected_custom[2:4] == (96, 64)
+        assert "canvas=32x32" in connected_custom[-1]
+        assert torch.equal(connected_custom[0][0][1]["minimax_refs"][0]["latent"],
+                           cached_custom[0][0][1]["minimax_refs"][0]["latent"])
         maximum = conditioner.condition(state, Clip(), target, VideoVAE(),
             tagged_references=refs, prompt_override="@detail in a quiet room.", override_ref_image_size="max")
         maximum_large = conditioner.condition(state, Clip(), torch.zeros(5, 96, 128, 3), VideoVAE(),
             tagged_references=refs, prompt_override="@detail in a quiet room.", override_ref_image_size="max")
         assert torch.equal(maximum[0][0][1]["minimax_refs"][0]["latent"],
                            maximum_large[0][0][1]["minimax_refs"][0]["latent"])
+        maximum_custom = conditioner.condition(state, Clip(), target, VideoVAE(),
+            tagged_references=refs, prompt_override="@detail in a quiet room.", override_ref_image_size="max",
+            conditioning_width=32, conditioning_height=32)
+        assert torch.equal(maximum[0][0][1]["minimax_refs"][0]["latent"],
+                           maximum_custom[0][0][1]["minimax_refs"][0]["latent"])
         # Keyframes/motion scale once; native audio tensor and time stay intact.
         audio_ref = torch.ones(1, 32, 2, 9)
         keyframe = torch.ones(1, 24, 2, 2, 2)
@@ -150,7 +218,8 @@ def main():
             "minimax_refs": [{"kind": "audio", "latent": audio_ref}]}]]
         with patch.object(upscale.MiniMaxH3ChainUpscaleReferenceConditioning, "condition",
                           return_value=(conditioning, "test", False, "test")):
-            synced = conditioner.condition(state, Clip(), target, VideoVAE())[0][0][1]
+            synced = conditioner.condition(state, Clip(), target, VideoVAE(),
+                conditioning_width=32, conditioning_height=32)[0][0][1]
         assert synced["minimax_keyframes"][0]["latent"].shape == (1, 24, 2, 4, 6)
         assert synced["minimax_keyframes"][0]["frame"] == 3
         assert synced["minimax_refs"][0]["latent"] is audio_ref
@@ -228,6 +297,94 @@ def main():
         assert any(s["codec_type"] == "audio" for s in streams)
         # No original prompt, checkpoint, audio or selection metadata changed.
         assert all(path.read_bytes() == content for path, content in original_files.items())
+        # A chapter is a non-1-based view. Exercise scenes 8..10 through the
+        # actual CPU decode/conditioning/save/resume/assembly path, reusing the
+        # tiny immutable artifacts above as source fixtures.
+        chapter_source = copy.deepcopy(manifest)
+        chapter_source.update({
+            "format":chain.CHAPTER_MANIFEST_FORMAT,
+            "scene_start":8, "scene_end":10, "clip_count":3,
+            "source_scene_count":12,
+            "chapter":{"number":2, "id":"two", "title":"Chapter 2",
+                       "start_scene":8, "end_scene":10, "planned_end_scene":12,
+                       "complete":False, "source_start_frame":120,
+                       "editorial_origin_frame":100},
+            "segments":[copy.deepcopy(manifest["segments"][offset]) for offset in (0, 1, 1)],
+        })
+        for index, segment in enumerate(chapter_source["segments"], start=8):
+            segment.update(index=index, id=f"chapter_scene_{index}")
+            if index > 8:
+                segment["visual_context_blocks"] = [{"source_scene":index - 1}]
+        chapter_source["total_delivered_frames"] = sum(s["delivered_frames"] for s in chapter_source["segments"])
+        chapter_source["duration_seconds"] = chapter_source["total_delivered_frames"] / 24
+        chapter_source["editorial"] = chain._normalize_run_editorial({
+            "scene_order":[{"scene":i,"scene_id":f"chapter_scene_{i}"} for i in (8, 9, 10)],
+            "chapters":[{"id":"two","start_scene_id":"chapter_scene_8"}],
+        }, manifest["run_name"])
+        before_chapter = {p:p.read_bytes() for p in Path(temporary).rglob("*") if p.is_file()}
+        _, scoped_state, _, _ = adapter.adapt(chapter_source, "pixel", "pixel", "{}", 1, 0, False, 18)
+        assert scoped_state["index"] == 8 and scoped_state["end_clip"] == 10
+        assert upscale._derope_state_view(scoped_state)[1:3] == (8, 10)
+        assert upscale._source_scene_count(chapter_source) == 12
+        assert upscale.MiniMaxH3ChainUpscaleCurrent().current(scoped_state)[4:6] == (8, 12)
+        assert upscale._derope_future_visual_consumers(scoped_state, 8) == [9]
+        with patch.object(chain, "_compile_tagged_reference_prompt",
+                          wraps=chain._compile_tagged_reference_prompt) as compile_prompt:
+            conditioner.condition(scoped_state, Clip(), target, VideoVAE(),
+                tagged_references=refs, prompt_override="@detail in a quiet room.")
+            assert compile_prompt.call_args.args[1:3] == (8, 12)
+        drift_chapter = copy.deepcopy(scoped_state)
+        drift_chapter["profile_config"]["backend"] = "h3_latent"
+        drift_chapter["source_manifest"]["segments"][1].update(
+            raw_frames=44, delivered_frames=5, continuation_mode="drift_control_av")
+        assert upscale._next_drift_context_steps(drift_chapter, 8) > 0
+        assert upscale._next_drift_context_steps(drift_chapter, 10) == 0
+        fails(lambda: adapter.adapt(chapter_source, "pixel", "pixel", "{}", 2, 0, False, 18), "start_clip")
+        for index in (8, 9, 10):
+            assert scoped_state["index"] == index
+            decoded = reader.current(scoped_state, VideoVAE())
+            assert decoded[5] == index
+            hq = decoded[1].repeat_interleave(2, dim=1).repeat_interleave(3, dim=2)
+            conditioned = conditioner.condition(scoped_state, Clip(), hq, VideoVAE())
+            assert conditioned[2:4] == (96, 64)
+            saved_chapter = saver.save(scoped_state, hq)["result"][0]
+            assert saved_chapter["index"] == index
+            assert f"chapters/02_two/upscaled/pixel/segments/clip_{index:04d}." in saved_chapter["segment"]
+            assert saved_chapter["delivered_frames"] == chapter_source["segments"][index - 8]["delivered_frames"]
+            if index == 10:
+                chapter_final = end.end(flow, scoped_state, hq, saved_chapter)[0]
+            else:
+                with patch.object(end, "_recurse", side_effect=lambda flow, next_state, *a: next_state):
+                    next_state = end.end(flow, scoped_state, hq, saved_chapter)
+                _, scoped_state, _, _ = adapter.adapt(chapter_source, "pixel", "pixel", "{}", index + 1, 0, False, 18)
+                assert scoped_state["index"] == next_state["index"]
+                assert scoped_state["segments"] == next_state["segments"]
+        assert chapter_final["format"] == "h3_chain_upscale_manifest_v1"
+        assert chapter_final["completed_clip_count"] == 3
+        assert (chapter_final["scene_start"], chapter_final["scene_end"]) == (8, 10)
+        upscale._validate_upscale_manifest(chapter_final)
+        broken = copy.deepcopy(chapter_final)
+        broken["segments"][1]["index"] = 2
+        fails(lambda: upscale._validate_upscale_manifest(broken), "wrong scene index")
+        chapter_assembly = upscale._assembly_manifest(chapter_final, chapter_final["segments"])
+        assert chapter_assembly["chapter"]["source_start_frame"] == 120
+        assert chapter_assembly["chapter"]["editorial_origin_frame"] == 100
+        assert chapter_assembly["chapter"]["complete"] is False
+        assert chapter_assembly["chapter"]["resolution"] == {"width":96,"height":64}
+        assert chapter_assembly["editorial"] == chapter_source["editorial"]
+        # Pixel export geometry need not be a multiple of the H3 latent grid.
+        arbitrary = [{**s, "width":1920, "height":1080} for s in chapter_final["segments"]]
+        assert upscale._assembly_manifest(chapter_final, arbitrary)["chapter"]["resolution"] == {"width":1920,"height":1080}
+        assembled_chapter = chain.MiniMaxH3ChainAssemble().assemble(
+            chapter_final, "plan", "chapter_test_final", 128, False, "")
+        final_path = assembled_chapter["result"][0]
+        assert "chapters/02_two/upscaled/pixel/final/" in final_path
+        streams = json.loads(subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_streams", "-of", "json", final_path]))["streams"]
+        video = next(s for s in streams if s["codec_type"] == "video")
+        assert int(video["nb_frames"]) == chapter_source["total_delivered_frames"]
+        assert (video["width"], video["height"]) == (96, 64)
+        assert all(path.read_bytes() == content for path, content in before_chapter.items())
     print("Pixel upscale: exact/nonuniform target geometry, cache/override/max/keyframes/audio, RAW trim, Drift-Control isolation, save/resume/assembly and immutable source pass")
 
 

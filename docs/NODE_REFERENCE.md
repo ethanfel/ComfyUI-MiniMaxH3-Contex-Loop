@@ -108,8 +108,10 @@ workflows](ADVANCED_WORKFLOWS.md).
 | Node | Main inputs → outputs | Use it for |
 |---|---|---|
 | **Run Manager** | Plan, archive controls, optional loader assets/Source Timeline/tagged refs → Plan, Source Timeline | Browse runs, restore a saved Plan and loader bindings, and archive recovery assets. |
-| **Checkpoint Manager** | Saved UI selection; optional Plan → selected manifest | Preview branches and nested final-cut alternates, activate a take, remove safe leaves, or emit a lineage for deferred upscaling. |
+| **Checkpoint Manager** | Saved UI selection; optional Plan → selected manifest | Pin a workflow-local lineage or choose **Selected chapter only** for chapter export/upscaling. Chapter output preserves original scene numbers and timing, and permits different resolutions in earlier chapters. Local output leaves the project and connected Plan unchanged. |
 | **Load Manifest** | Plan; optional source media/context → manifest, manifest JSON, status | Verify and load saved segments without executing the generation loop. Usually muted in generation examples. |
+| **Chapter Delivery** | Manifest, enabled, chapter number → delivery manifest, snapshot path | Seal a chosen chapter's generated scenes for independent export. `0` selects the chapter containing the last generated scene; a positive number selects that chapter explicitly. |
+| **Chapter Recovery Load** | Run name, chapter number, optional snapshot ID → chapter manifest | Recover a sealed chapter's exact saved lineage and editorial state without loading or extending the rest of the run. |
 | **Export PNG Sequence + Audio** | Manifest + optional video VAE and/or audio VAE; optional save workers and cached/strict verification → output directory, PNG count, status, WAV path | Connect either VAE independently for PNG-only or WAV-only output, or both for parallel-saved lossless frames plus one synchronized PCM soundtrack. |
 | **Full-Chain Latent Video Adapter** | Generated manifest + video VAE → cached continuous video | Build a low-RAM, disk-backed whole-run input for SeedVR2. |
 | **Assemble** | Manifest + audio/output choices → MP4 path | Join a complete or partial source/upscale manifest. |

@@ -155,6 +155,23 @@ The node outputs only `selected_manifest`; it is not a Plan pass-through and is
 normally kept beside the generation route. Its run selector can inspect any
 other folder under `output/h3_chains`.
 
+For an experiment, select a generated branch tip and click **Use branch
+locally**. This pins the exact lineage on `selected_manifest` in this workflow
+only, including the earlier chapters included in that selection. Browsing
+other takes, refreshing, reopening the workflow, or activating another branch
+in a different tab cannot move this pin. Saved files are still verified on
+execution: a missing or corrupt pinned take fails instead of falling back to
+the project's active branch. The output row and **local output** badges show
+which revisions are pinned. **Follow browsing** releases the pin; an explicit
+run switch asks before releasing it. Save the workflow to keep the pin on disk.
+
+**Make branch active (project)**, **Roll active branch back (project)** and
+**Load selected branch** remain project-wide actions. Local selection neither
+restores connected Plan settings nor arms generation/resume. It does not require
+project ownership; downstream nodes retain their own write protections. Use the
+manager's manifest output for the experiment, not Manifest Load (which reads the
+project's active checkpoints).
+
 The manager groups immutable scene revisions into inferred branches. A revision
 can appear in more than one branch when it is their shared ancestor. Selecting
 a revision shows its saved preview, prompt, seed, timing, canvas, storage,
@@ -164,7 +181,7 @@ revision and checkpoint hashes; newly saved checkpoints also carry a stable
 branch id and effective context fields.
 
 Plan chapters are checkpoint-management boundaries. The **All scenes** tab
-shows a separate graph for each chapter. Selecting or activating a Chapter 2
+shows a separate graph for each chapter. Project-wide activation of a Chapter 2
 branch changes only Chapter 2 pointers and connected Plan scene values; Chapter
 1 keeps its current active branch. The chapter-start checkpoint can retain its
 original predecessor as provenance, but that structural edge does not choose
@@ -301,13 +318,67 @@ H.264 VIDEO, and embeds the source audio in that VIDEO so it can connect
 straight to core Save Video. Its separate AUDIO output remains available for
 alternate muxing graphs.
 
+### Export and recover a particular chapter
+
+Connect **Load Manifest**, **Loop End**, or **Checkpoint Manager** to
+**Chapter Delivery**, then connect `delivery_manifest` to **Assemble** or
+**Export PNG Sequence + Audio**. Set `enabled=true` and `chapter_number=1`, `2`,
+or another explicit chapter number. `0` selects the chapter containing the last
+generated scene; it is not required when you want a particular older chapter.
+
+An unfinished chapter exports only its generated scenes. Chapter Delivery saves
+an immutable manifest with their exact revisions, editorial state, resolution,
+and audio offsets. Later scenes or branch switches cannot extend that snapshot.
+Explicitly deliver the chapter again to capture new scenes or changed takes.
+Unchanged snapshots are reused; changed selections create another snapshot.
+MP4 and PNG/WAV output lives under
+`output/h3_chains/<run>/chapters/<number>_<chapter_id>/`. On main, each PNG export
+uses a new numbered folder; it does not append to an earlier frame export.
+
+Use **Chapter Recovery Load** with the run name and chapter number to load a saved
+snapshot independently. An empty snapshot ID loads the newest; a full ID picks
+an exact older version. This is a recovery manifest, not a copy of all media:
+keep the run's referenced checkpoints and assets. Checkpoint Manager protects
+artifacts needed by sealed snapshots from deletion.
+
+To select chapter output without saving a snapshot, use Checkpoint Manager's
+**Selected chapter only** scope. A local branch pin alone still outputs its
+selected lineage, including earlier chapters; the scope controls the filtering.
+
 ### Deferred H3 upscale child runs
 
-Select the right-hand generated tip you want in Checkpoint Manager,
+Select the right-hand generated tip you want in Checkpoint Manager and click
+**Use branch locally** to keep that source fixed while experimenting,
 then connect its **selected_manifest** output to **MiniMax H3 Checkpoint Upscale
 Adapter**. The manager verifies the immutable lineage and embeds recovery-only
 compatibility and Source Timeline metadata directly. No source Plan, Chain
-Policy, or decoded source media is retained by the recursive upscale graph:
+Policy, or decoded source media is retained by the recursive upscale graph.
+
+Use a separate adapter **profile** name for each upscale experiment. Results
+live under `output/h3_chains/<run>/upscaled/<profile>/`; a local source pin is
+not a separate output folder and does not isolate experiments sharing a profile.
+
+To upscale or export just one chapter, set the manager's output scope to
+**Selected chapter only**, select that chapter's generated tip, and click
+**Use branch locally**. Changing the scope of an existing local pin keeps its
+pinned tip; browsing another take does not move it. Earlier chapters may have
+different resolutions: only the selected chapter's media and compatibility are
+validated. Earlier pinned revision metadata is still read to preserve exact
+source-audio and editorial timing. Selecting output does not seal a chapter or
+change project-wide active branches.
+
+Chapter output keeps original scene numbers: a Chapter 2 containing saved
+scenes 8–10 outputs scenes 8–10, even if scenes 11–12 are still planned.
+On Upscale Adapter, `start_clip=1` starts at the first selected scene (8 here),
+`end_clip=0` means the last selected scene (10), and `start_clip=9` resumes after
+verifying scene 8's saved HQ output. No HQ prefix from Chapter 1 is required.
+Reference schedules retain their original Plan scene numbering.
+
+Chapter upscale profiles and finals are isolated under
+`output/h3_chains/<run>/chapters/<number>_<chapter_id>/upscaled/<profile>/`.
+Connect the upscale manifest to **H3 Chain Assemble**; no Chapter Delivery
+filter is needed after a chapter-only selection. Use Chapter Delivery separately
+if you also want to seal an immutable original-quality chapter snapshot.
 
 ```text
 Checkpoint Manager → Upscale Adapter → Upscale Current Scene
@@ -539,6 +610,11 @@ output/h3_chains/<run_name>/
 ├── checkpoints/clip_0001.<revision>.safetensors
 ├── generated_audio/
 ├── reference_cache/
+├── chapters/<number>_<chapter_id>/
+│   ├── manifests/<snapshot_id>.json
+│   ├── final/
+│   ├── frames/
+│   └── upscaled/<profile>/  (including seedvr2/source/)
 ├── upscaled/<profile>/
 └── final/<filename>.mp4
 ```

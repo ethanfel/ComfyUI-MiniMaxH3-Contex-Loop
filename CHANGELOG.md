@@ -3,6 +3,39 @@
 Newest first. The [README](README.md#changelog) keeps a short highlight reel;
 this file records the detailed changes.
 
+## 0.6 updates — Chapter output and authoring polish
+
+- Ported the standalone Prompt IDE's marker editing, context-aware completions,
+  timestamps, and presentation settings while retaining connected Plan editing,
+  reference discovery, prompt revisions, and optimizer support. No task-aware
+  template panel was added.
+- Added chapter width/height controls in Plan Studio. Locked saved scenes pin
+  their chapter's original size; incompatible cross-resolution video context
+  still requires an independent boundary. Export differently sized chapters
+  separately rather than silently resizing saved media.
+- Added immutable Chapter Delivery and Chapter Recovery manifests, including
+  export of generated scenes from unfinished chapters. Saved chapter snapshots
+  retain their editorial state, audio timing, and exact checkpoint lineage.
+  Checkpoint deletion protects artifacts referenced by these snapshots.
+  PNG exports retain main's separate numbered export folders.
+- Added workflow-local checkpoint output and **Selected chapter only** scope.
+  Pins do not change project-wide active branches or the connected Plan.
+  Local/chapter selection is read-only, including legacy checkpoint scanning;
+  a missing pinned revision is rejected rather than silently recreated.
+- Added chapter-scoped deferred upscale runs with original scene numbering,
+  source-audio offsets, isolated profiles, and compatibility validation limited
+  to the selected chapter's media. Improved saved context-independence evidence,
+  chapter-boundary validation, and compatibility fingerprint handling.
+- Added optional pixel-upscale conditioning width/height (`0 = auto`) to the
+  nodes and example recipe. Overrides affect conditioning and reference size,
+  not the actual image batch dimensions.
+- Fixed narrow Plan Studio controls overlapping, improved light-theme contrast,
+  and refreshed shared helper cache keys consistently.
+- Fixed scene duplication rewriting context links and preserving the copied
+  prompt instead of inheriting the following scene's prompt.
+
+Workflow-ownership locking remains nightly-only; these ports do not add it to main.
+
 ## v0.6.0 — Production context authoring and synchronized export
 
 ### Release preparation

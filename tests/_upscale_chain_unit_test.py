@@ -4,12 +4,15 @@
 import importlib.util
 import json
 import pathlib
+import os
 import sys
 import tempfile
 
 
 ROOT = pathlib.Path(__file__).resolve().parents[1]
-COMFY = next(path for path in (ROOT.parent / "Comfyui", ROOT.parent / "ComfyUI")
+candidates = [pathlib.Path(os.environ["COMFYUI_PATH"])] if os.environ.get("COMFYUI_PATH") else []
+candidates += [ROOT.parent / "Comfyui", ROOT.parent / "ComfyUI"]
+COMFY = next(path for path in candidates
              if (path / "comfy" / "options.py").is_file())
 sys.path.insert(0, str(COMFY))
 sys.argv = ["h3-upscale-test", "--cpu"]

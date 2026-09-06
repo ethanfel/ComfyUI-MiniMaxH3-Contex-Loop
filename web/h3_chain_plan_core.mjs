@@ -395,6 +395,8 @@ export function parsePlanJson(source) {
                     .slice(0, 160) || `Chapter ${offset + 1}`,
                 start_scene_id: startSceneId,
                 text: promptValueToText(chapter.text ?? chapter.notes ?? "", `Chapter ${offset + 1} text`),
+                ...(chapter.resolution != null
+                    ? {resolution:normalizeChapterResolution(chapter.resolution)} : {}),
             };
         }).sort((left, right) => (
             shotIds.indexOf(left.start_scene_id) - shotIds.indexOf(right.start_scene_id)
@@ -485,6 +487,19 @@ export function renamePlanShot(plan, index, requestedId) {
         }
     }
     return {previousId, id:nextId, changed:true};
+}
+
+export function normalizeChapterResolution(value) {
+    if (value == null) return null;
+    if (typeof value !== "object" || Array.isArray(value)
+            || Object.keys(value).length !== 2
+            || !["width", "height"].every((key) => (
+                Number.isInteger(value[key]) && value[key] >= 32
+                && value[key] <= 16384 && value[key] % 32 === 0
+            ))) {
+        throw new Error("Chapter width and height must be multiples of 32 between 32 and 16384.");
+    }
+    return {width:value.width, height:value.height};
 }
 
 export function safeChapterId(value, fallback = "chapter") {

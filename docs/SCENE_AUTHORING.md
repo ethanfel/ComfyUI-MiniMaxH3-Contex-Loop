@@ -24,6 +24,38 @@ The [complete format guide](../H3_CHAIN_FORMAT_GUIDE.md) documents every Plan
 and per-scene field, raw versus delivered length, prompt structure, seeds, and
 timing.
 
+## Chapter resolution
+
+Click the chapter marker in **Plan Studio** to choose **Inherit from Plan** or
+**Chapter resolution**, with Width and Height in multiples of 32. Each chapter
+has one size; the next chapter inherits the Plan default, not the previous
+chapter's override. Wire **Current Shot** width/height to conditioning so its
+latent and reference preparation match the active chapter. The combined
+**Current Tagged Ref2VA Scene** node already handles this internally.
+
+The existing scene lock also pins a chapter to its locked saved scenes' size.
+For example, lock Chapter 1's saved scenes, then change the Plan default or set
+Chapter 2's resolution. Chapter 1 stays at its saved size. A conflicting explicit
+size for Chapter 1 is rejected until its saved scenes are unlocked. Locking an
+ungenerated slot cannot pin a size. Locks do not bypass prompt/model identity,
+artifact-integrity, or native latent compatibility checks.
+
+Different-sized chapters need an independent video boundary: set the new
+chapter's first scene's video context to zero for AV masking or latent Guide.
+Export each chapter separately with **Chapter Delivery**. Whole-run assembly
+cannot combine different sizes automatically.
+Saved media is never resized; recovery snapshots retain the resolved chapter size.
+
+In Plan JSON the optional field is, for example:
+
+```json
+{"id":"chapter_2","title":"Chapter 2","start_scene_id":"scene_08",
+ "resolution":{"width":1344,"height":768},"text":""}
+```
+
+Omit `resolution` (or set it to `null`) to inherit. Chapter titles and notes
+remain editorial only and do not change generation identity.
+
 ## Per-scene LoRA routes
 
 Each scene has a **Scene LoRA route** selector: Base or LoRA A-D. Connect
@@ -51,7 +83,7 @@ second prompt copy.
 - Typing `#` offers valid dedicated Semantic Picture Anchors (and legacy
   Tagged Picture compatibility anchors) only.
 - Typing `<` offers H3 subjects, dialogue tags, and available native reference
-  labels, plus `<scenetrans>` and `<cutoff>` dialogue-flow markers. Typing
+  labels, plus `<scenetrans>` and `<|cutoff|>` dialogue-flow markers. Typing
   `[` filters 12 shot markers, multilingual dialogue markers, and canonical
   summary-intent combinations; for example, `[re` lists the supported
   reference-generation combinations. Typing `(S` offers stable speaker IDs.
@@ -90,6 +122,34 @@ backported from the standalone
 [H3 Prompt IDE](https://github.com/ethanfel/ComfyUI-H3-Prompt-IDE), while these
 nodes retain Motion Context Plan synchronization, revisions, `@tags`,
 semantic anchors, and optimizer integration.
+
+### Editor interactions
+
+Click a Subject, speaker, dialogue, lyrics, caption or flow token to replace
+or remove it. Pasted tokens become interactive immediately. Connected media
+references keep their existing reference/syntax/time popup and previews.
+Ctrl/Cmd-click an ordinary `[Shot N]`, language, task directive or retention
+marker to change it without replacing the surrounding sentence.
+
+Inside `retention_analysis:`, completion offers visual or audio retention
+values according to the reference kind, including known `@aliases` and
+`#picture` anchors. Inside `detailed_description:`, typing
+`[Shot N] At` offers `At 00:00.000, `, selecting the seconds/milliseconds
+for immediate editing. Ctrl/Cmd+Space also offers the timestamp after a plain
+`At` in that section.
+
+ComfyUI **Settings → MiniMax H3 Context Loop → Prompt editor** controls the
+default Rich/Plain presentation, automatic suggestions, optional trailing
+spaces, and the new marker replacement menus. Saved per-node presentation
+choices win. Trailing spaces are off by default to preserve existing typing
+behavior; semantic anchors never receive an inserted space before their time.
+Turning off automatic suggestions still allows Ctrl/Cmd+Space.
+
+Ctrl/Cmd+S saves the workflow while the editor is focused. Ctrl/Cmd+Z remains
+scene-local. Token diagnostics flag malformed lyrics/caption pairs, incorrect
+special-token case, and legacy `<cutoff>`; they do not rewrite saved prompts
+or change generation. No task-aware Edit templates or new node sockets are
+introduced by this port.
 
 ## Prompt revisions
 

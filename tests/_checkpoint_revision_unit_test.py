@@ -165,7 +165,8 @@ async def check():
             "disabled", "generated_audio", 22, 2.0, 8, 7, 18,
             "model-stack", 0, "guide", None)
         assert executable_with_chapter["plan_hash"] == executable["plan_hash"]
-        assert "chapters" not in executable_with_chapter
+        assert "resolution" not in executable_with_chapter["shots"][0]
+        assert executable_with_chapter["chapters"][0]["text"] == "editorial only"
         editorial = chain._save_run_editorial_document({
             "run_name": "revision_test",
             "scene_order": [
