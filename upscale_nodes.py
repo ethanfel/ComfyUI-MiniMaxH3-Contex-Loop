@@ -60,19 +60,22 @@ CONDITIONING_SYNC_MOTION_MODES = (
     "conditioning_policy",) + MOTION_REFERENCE_MODES
 
 
-def _profile_dir(run_name: str, profile: str) -> str:
+def _profile_dir(run_name: str, profile: str, source_manifest=None) -> str:
     run = chain._safe_name(run_name, "h3_chain")
     name = chain._safe_name(profile, "upscale")
-    path = os.path.abspath(os.path.join(
-        chain._output_root(), "h3_chains", run, "upscaled", name))
+    parent = os.path.join(chain._output_root(), "h3_chains", run)
+    if isinstance(source_manifest, dict) and source_manifest.get("chapter"):
+        parent = chain._chapter_delivery_root({**source_manifest, "run_name": run})
+    path = os.path.abspath(os.path.join(parent, "upscaled", name))
     root = os.path.abspath(chain._output_root())
     if os.path.commonpath([root, path]) != root:
         raise ValueError("H3 upscale profile path escapes the output directory.")
     return path
 
 
-def _profile_paths(run_name: str, profile: str, index: int) -> dict[str, str]:
-    root = _profile_dir(run_name, profile)
+def _profile_paths(run_name: str, profile: str, index: int,
+                   source_manifest=None) -> dict[str, str]:
+    root = _profile_dir(run_name, profile, source_manifest)
     stem = "clip_%04d" % int(index)
     return {
         "root": root,
@@ -135,6 +138,26 @@ def _source_hash(manifest: dict[str, Any]) -> str:
     return chain._fingerprint(manifest)
 
 
+def _source_bounds(manifest: dict[str, Any]) -> tuple[int, int]:
+    return chain._manifest_segment_bounds(
+        manifest, manifest.get("segments") or [], "Deferred upscale source")
+
+
+def _source_scene_count(manifest: dict[str, Any]) -> int:
+    # Reference schedules/cache slots use the original Plan's scene numbers,
+    # not a chapter-relative index. Existing full-run behavior stays unchanged.
+    if manifest.get("chapter"):
+        return max(_source_bounds(manifest)[1],
+                   int(manifest.get("source_scene_count") or
+                       manifest["chapter"].get("planned_end_scene") or 0))
+    return len(manifest["segments"])
+
+
+def _state_profile_paths(state: dict[str, Any], index: int) -> dict[str, str]:
+    return _profile_paths(state["run_name"], state["profile"], index,
+                          state["source_manifest"])
+
+
 def _public_upscale_segment(value: dict[str, Any]) -> dict[str, Any]:
     private = {"_h3_upscale_decision"}
     return {
@@ -147,9 +170,10 @@ def _source_segment(state: dict[str, Any], index: int | None = None
                     ) -> dict[str, Any]:
     slot = int(state["index"] if index is None else index)
     segments = state["source_manifest"].get("segments") or []
-    if slot < 1 or slot > len(segments):
-        raise ValueError("Upscale scene must be between 1 and %d." % len(segments))
-    source = segments[slot - 1]
+    first, last = _source_bounds(state["source_manifest"])
+    if slot < first or slot > last:
+        raise ValueError("Upscale scene must be between %d and %d." % (first, last))
+    source = segments[slot - first]
     if int(source.get("index", -1)) != slot:
         raise ValueError("Source manifest scene indexes are not contiguous.")
     return source
@@ -164,18 +188,9 @@ def _derope_state_view(state: Any
             "Upscale Loop state; got %s." % type(state).__name__)
     source_manifest = state.get("source_manifest")
     if isinstance(source_manifest, dict):
-        segments = source_manifest.get("segments") or []
-        scene_count = len(segments)
         index = int(state.get("index", 0))
-        if index < 1 or index > scene_count:
-            raise ValueError(
-                "H3 de-rope upscale scene must be between 1 and %d." %
-                scene_count)
-        segment = segments[index - 1]
-        if (not isinstance(segment, dict)
-                or int(segment.get("index", -1)) != index):
-            raise ValueError(
-                "Source manifest scene indexes are not contiguous.")
+        scene_count = _source_bounds(source_manifest)[1]
+        segment = _source_segment(state, index)
         compatibility = source_manifest.get("compatibility") or {}
         return segment, index, scene_count, compatibility, "upscale"
     plan = state.get("plan")
@@ -253,9 +268,8 @@ def _derope_future_visual_consumers(state: dict[str, Any],
             if int(scene) in sources:
                 consumers.append(target)
         return consumers
-    segments = state["source_manifest"].get("segments") or []
     for target in range(int(scene) + 1, scene_count + 1):
-        candidate = segments[target - 1]
+        candidate = _source_segment(state, target)
         if not isinstance(candidate, dict):
             continue
         trim = int(candidate.get("raw_frames", 0)) - int(
@@ -645,7 +659,7 @@ def _conditioning_from_tagged_upscale_override(
     manifest = state["source_manifest"]
     compatibility = manifest.get("compatibility") or {}
     scene = int(state["index"])
-    scene_count = len(manifest["segments"])
+    scene_count = _source_scene_count(manifest)
     length = int(source.get("raw_frames", 0))
     geometry = chain.saved_resolution(source) or compatibility
     width = int(geometry.get("width", 0))
@@ -796,7 +810,7 @@ def _next_drift_context_steps(state: dict[str, Any], index: int) -> int:
     # Drift-Control. All pre-existing backends retain their safety contract.
     if state.get("profile_config", {}).get("backend") == "pixel":
         return 0
-    total = len(state["source_manifest"].get("segments") or ())
+    total = _source_bounds(state["source_manifest"])[1]
     if int(index) >= total:
         return 0
     return _drift_prefix_steps(state, int(index) + 1)
@@ -819,7 +833,7 @@ def _load_previous_upscaled_context(
     if state.get("profile_config", {}).get("backend") == "pixel":
         return None, "pixel refinement; no HQ latent continuity required"
     steps = _drift_prefix_steps(state, int(start_clip))
-    if steps <= 0 or int(start_clip) <= 1:
+    if steps <= 0 or int(start_clip) <= _source_bounds(state["source_manifest"])[0]:
         return None, "no resumed Drift-Control context required"
     segments = state.get("segments") or []
     if not segments:
@@ -854,8 +868,8 @@ def _load_previous_upscaled_context(
 def _load_upscale_prefix(state: dict[str, Any], start_clip: int
                          ) -> list[dict[str, Any]]:
     values = []
-    for index in range(1, int(start_clip)):
-        paths = _profile_paths(state["run_name"], state["profile"], index)
+    for index in range(_source_bounds(state["source_manifest"])[0], int(start_clip)):
+        paths = _state_profile_paths(state, index)
         if not os.path.isfile(paths["metadata"]):
             raise FileNotFoundError(
                 "Cannot resume upscale scene %d: scene %d metadata is missing: %s"
@@ -908,9 +922,10 @@ def _upscale_manifest(state: dict[str, Any], segments: list[dict[str, Any]],
                       complete: bool) -> dict[str, Any]:
     source = state["source_manifest"]
     total = len(source["segments"])
+    first, _last = _source_bounds(source)
     indexes = [int(item.get("index", -1)) for item in segments]
-    if indexes != list(range(1, len(segments) + 1)):
-        raise ValueError("Upscale manifest segments must be contiguous from scene 1.")
+    if len(segments) > total or indexes != list(range(first, first + len(segments))):
+        raise ValueError("Upscale manifest segments must be contiguous from scene %d." % first)
     manifest = {
         "format": ("h3_chain_upscale_manifest_v1" if complete else
                    "h3_chain_upscale_partial_manifest_v1"),
@@ -932,9 +947,12 @@ def _upscale_manifest(state: dict[str, Any], segments: list[dict[str, Any]],
     }
     if complete and len(segments) != total:
         raise ValueError("A complete upscale manifest requires %d scenes." % total)
+    if source.get("chapter"):
+        manifest["scene_start"] = first
+        manifest["scene_end"] = indexes[-1] if indexes else first - 1
     if not complete:
         manifest["planned_clip_count"] = total
-        manifest["last_completed_clip"] = len(segments)
+        manifest["last_completed_clip"] = indexes[-1] if indexes else first - 1
     return manifest
 
 
@@ -964,8 +982,10 @@ class MiniMaxH3ChainUpscaleAdapter:
                                "remains authoritative."}),
                 "start_clip": ("INT", {
                     "default": 1, "min": 1, "max": chain.MAX_SHOTS,
-                    "tooltip": "First upscale scene. Values above 1 verify and "
-                               "reuse the saved HQ prefix for this profile."}),
+                    "tooltip": "Original scene number to resume. 1 starts at "
+                               "the first selected scene (also for chapter-only "
+                               "input). Later scenes verify and reuse this "
+                               "chapter/profile's saved HQ prefix."}),
                 "end_clip": ("INT", {
                     "default": 0, "min": 0, "max": chain.MAX_SHOTS,
                     "tooltip": "Last scene to upscale; 0 means the final source scene."}),
@@ -1006,13 +1026,13 @@ class MiniMaxH3ChainUpscaleAdapter:
               initial_state=None):
         if initial_state is None:
             manifest = _verified_source_manifest(source_manifest)
-            total = len(manifest["segments"])
-            start = int(start_clip)
-            stop = total if int(end_clip) == 0 else int(end_clip)
-            if start < 1 or start > total:
-                raise ValueError("start_clip must be between 1 and %d." % total)
-            if stop < start or stop > total:
-                raise ValueError("end_clip must be between start_clip and %d." % total)
+            first, last = _source_bounds(manifest)
+            start = first if int(start_clip) == 1 else int(start_clip)
+            stop = last if int(end_clip) == 0 else int(end_clip)
+            if start < first or start > last:
+                raise ValueError("start_clip must be 1 (first selected scene) or between %d and %d." % (first, last))
+            if stop < start or stop > last:
+                raise ValueError("end_clip must be between start_clip and %d." % last)
             state = {
                 "run_name": str(manifest["run_name"]),
                 "profile": chain._safe_name(profile, "upscale"),
@@ -1041,7 +1061,7 @@ class MiniMaxH3ChainUpscaleAdapter:
                     "Selected checkpoint branch changed during upscale recursion.")
         status = ("upscale %s scene %d/%d; range %d:%d; backend=%s; HQ latent %s" %
                   (state["profile"], int(state["index"]),
-                   len(state["source_manifest"]["segments"]),
+                   _source_bounds(state["source_manifest"])[1],
                    int(state["range_start"]), int(state["end_clip"]),
                    state["profile_config"]["backend"],
                    "saved" if state["profile_config"]["save_latent"]
@@ -1073,7 +1093,8 @@ class MiniMaxH3ChainUpscaleCurrent:
         "Verified 24-channel H3 video x0 for video-only upscalers.",
         "Original H3 audio latent to preserve when recombining a refined video.",
         "One-based source scene index.",
-        "Total scene count in the selected parent branch.",
+        "Scene count for reference schedules: selected parent branch count, "
+        "or original Plan count for chapter-only input (not chapter length).",
         "Exact saved prompt for this source scene.",
         "Parent generation width used to rebuild H3 pass-2 conditioning.",
         "Parent generation height used to rebuild H3 pass-2 conditioning.",
@@ -1117,10 +1138,10 @@ class MiniMaxH3ChainUpscaleCurrent:
             raise ValueError("Source H3 manifest has no valid canvas dimensions.")
         seed = int(source.get("seed", 0))
         status = ("upscale source scene %d/%d: %s; raw=%df delivered=%df trim=%df" %
-                  (index, len(state["source_manifest"]["segments"]), route,
+                  (index, _source_bounds(state["source_manifest"])[1], route,
                    raw, delivered, trim))
         return (state, latent, video_latent, audio_latent, index,
-                len(state["source_manifest"]["segments"]),
+                _source_scene_count(state["source_manifest"]),
                 str(source.get("prompt") or ""), width, height, seed, trim,
                 raw, delivered, audio, state.get("previous_frames"),
                 state.get("previous_latent"), status)
@@ -1645,7 +1666,7 @@ class MiniMaxH3ChainUpscaleReferenceConditioning:
         fingerprint = str(
             compatibility.get("generation_fingerprint") or "")
         scene = int(state["index"])
-        scene_count = len(manifest["segments"])
+        scene_count = _source_scene_count(manifest)
         prompt = str(source.get("prompt") or "")
         custom_prompt = str(prompt_override or "").strip()
         if motion_ref_mode not in MOTION_REFERENCE_MODES:
@@ -2133,8 +2154,9 @@ class MiniMaxH3ChainUpscaleSegmentSave:
             if (int(first.get("width", width)) != width or
                     int(first.get("height", height)) != height):
                 raise ValueError(
-                    "Upscale scene %d is %dx%d; profile scene 1 is %dx%d." %
-                    (index, width, height, int(first["width"]), int(first["height"])))
+                    "Upscale scene %d is %dx%d; profile scene %d is %dx%d." %
+                    (index, width, height, int(first["index"]),
+                     int(first["width"]), int(first["height"])))
 
         save_latent = bool(state["profile_config"]["save_latent"])
         context_steps = _next_drift_context_steps(state, index)
@@ -2188,7 +2210,7 @@ class MiniMaxH3ChainUpscaleSegmentSave:
             tensors["upscaled_video_context"] = _upscaled_context_tensor(
                 upscaled_latent, context_steps)
 
-        paths = _profile_paths(state["run_name"], state["profile"], index)
+        paths = _state_profile_paths(state, index)
         for key in ("segment", "checkpoint", "metadata", "prompt", "audio"):
             os.makedirs(os.path.dirname(paths[key]), exist_ok=True)
         transaction = uuid.uuid4().hex
@@ -2296,7 +2318,7 @@ class MiniMaxH3ChainUpscaleSegmentSave:
                 chain._atomic_json(metadata_path, metadata)
                 chain._atomic_json(paths["metadata"], metadata)
             prefix = list(state.get("segments", [])) + [segment]
-            complete = (index == len(state["source_manifest"]["segments"]))
+            complete = (index == _source_bounds(state["source_manifest"])[1])
             partial = _upscale_manifest(state, prefix, complete=complete)
             chain._atomic_json(
                 paths["manifest"] if complete else paths["partial"], partial)
@@ -2310,7 +2332,7 @@ class MiniMaxH3ChainUpscaleSegmentSave:
                         chain._safe_unlink(value)
 
         status = ("saved HQ scene %d/%d at %dx%d; latent %s -> %s" %
-                  (index, len(state["source_manifest"]["segments"]), width,
+                  (index, _source_bounds(state["source_manifest"])[1], width,
                    height, "saved" if save_latent else "omitted", segment_path))
         if audio_route != "none":
             status += "; %s" % audio_route
@@ -2481,9 +2503,9 @@ class MiniMaxH3ChainUpscaleLoopEnd:
         })
         if index < int(state["end_clip"]):
             return self._recurse(flow, next_state, dynprompt, unique_id)
-        complete = index == len(state["source_manifest"]["segments"])
+        complete = index == _source_bounds(state["source_manifest"])[1]
         manifest = _upscale_manifest(state, next_state["segments"], complete)
-        paths = _profile_paths(state["run_name"], state["profile"], index)
+        paths = _state_profile_paths(state, index)
         chain._atomic_json(paths["manifest"] if complete else paths["partial"],
                            manifest)
         manifest_json = json.dumps(manifest, ensure_ascii=False, indent=2,
@@ -2501,7 +2523,14 @@ def _validate_upscale_manifest(manifest: dict[str, Any]) -> list[dict[str, Any]]
         raise ValueError("Upscale manifest contains %d/%d scenes." %
                          (len(segments), count))
     total = 0
-    for index, segment in enumerate(segments, start=1):
+    source = manifest.get("source_manifest") or {}
+    first, last = _source_bounds(source)
+    if count != last - first + 1:
+        raise ValueError("Upscale manifest does not cover its selected source scenes.")
+    if (int(manifest.get("scene_start", first)) != first or
+            int(manifest.get("scene_end", last)) != last):
+        raise ValueError("Upscale manifest scene bounds do not match its source.")
+    for index, segment in enumerate(segments, start=first):
         _verify_upscale_segment(segment, index)
         total += int(segment.get("delivered_frames", 0))
     if total != int(manifest.get("total_delivered_frames", -1)):
@@ -2518,6 +2547,15 @@ def _assembly_manifest(manifest: dict[str, Any],
     compatibility["video_blend_frames"] = 0
     compatibility["segment_crf"] = int(
         manifest["profile_config"].get("segment_crf", 18))
+    # Child output dimensions are pixels, not the H3 source latent grid (a
+    # custom image backend may legitimately deliver e.g. 1920x1080).
+    sizes = {(int(item.get("width", 0)), int(item.get("height", 0)))
+             for item in segments}
+    if len(sizes) != 1 or min(next(iter(sizes), (0, 0))) < 1:
+        raise ValueError("Upscaled scenes must have one valid output resolution before assembly.")
+    width, height = next(iter(sizes))
+    resolution = {"width": width, "height": height}
+    compatibility.update(resolution)
     assembled = []
     for item in segments:
         assembled.append({
@@ -2544,6 +2582,13 @@ def _assembly_manifest(manifest: dict[str, Any],
     if isinstance(source.get("source_timeline"), dict):
         assembly["source_timeline"] = chain._json_document(
             source["source_timeline"])
+    if source.get("chapter"):
+        assembly["format"] = chain.CHAPTER_MANIFEST_FORMAT
+        for key in ("chapter", "scene_start", "scene_end", "source_scene_count", "editorial"):
+            if key in source:
+                assembly[key] = (chain._json_document(source[key])
+                                 if isinstance(source[key], dict) else source[key])
+        assembly["chapter"]["resolution"] = resolution
     return assembly
 
 

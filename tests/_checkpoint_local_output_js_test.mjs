@@ -34,6 +34,13 @@ switchedPrefix.revisions[2].active = true;
 assert.equal(core.checkpointOutputSelectionJson(chapterPin, switchedPrefix, "demo", payload.revisions[3], {start:3, end:3}), chapterPin,
     "previous chapters are pinned too, not rebuilt from new project pointers");
 assert.equal(JSON.parse(chapterPin).lineage[1].revision, b);
+const chapterOnlyPin = core.checkpointLocalSelectionJson({
+    ...payload, revisions:payload.revisions.map(item => item.scene < 3 ? {...item, ready:false} : item),
+}, "demo", payload.revisions[3], {start:3, end:3}, "chapter");
+assert.equal(JSON.parse(chapterOnlyPin).output_scope, "chapter");
+assert.deepEqual(JSON.parse(chapterOnlyPin).lineage, JSON.parse(chapterPin).lineage,
+    "prior immutable timing metadata remains pinned, but its media is not required");
+assert.equal(core.checkpointOutputSelectionJson(chapterOnlyPin, switchedPrefix, "demo", payload.revisions[2]), chapterOnlyPin);
 
 // The whole extension is mounted with a lightweight DOM, so these exercise
 // the real handlers, async refresh and serialized widget (not extracted mocks).
@@ -100,6 +107,19 @@ const byText = (node, text) => elements(node).find(item => item.tag === "button"
 const byClass = (node, name) => elements(node).find(item => item.className.split(" ").includes(name));
 const select = (node, scene, revision) => byText(node, `S${scene} · ${revision.slice(0, 8)}`).click();
 const value = node => node.widgets[0].value;
+
+const scoped = makeNode(chapterOnlyPin);
+await settle();
+assert.equal(byClass(scoped, "h3cm-output-scope").value, "chapter");
+select(scoped, 2, c);
+await settle();
+const scopeControl = byClass(scoped, "h3cm-output-scope");
+scopeControl.value = "project"; scopeControl.listeners.change();
+assert.equal(JSON.parse(value(scoped)).lineage.at(-1).revision, d,
+    "explicit scope changes retain the pinned tip, not the browsed revision");
+scopeControl.value = "chapter"; scopeControl.listeners.change();
+assert.match(byClass(scoped, "h3cm-output-summary").textContent, /chapter only, scenes 3–3/);
+assert.equal(mutations, 0);
 
 const first = makeNode(), second = makeNode();
 await settle();

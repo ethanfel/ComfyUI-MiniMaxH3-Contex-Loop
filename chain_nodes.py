@@ -8530,9 +8530,11 @@ def _normalize_run_editorial(value: Any, run_name: Any) -> dict[str, Any]:
     document = {
         "format": "h3_chain_editorial_v1",
         "run_name": normalized_run,
-        "updated_at": str(value.get("updated_at") or
-                          datetime.now(timezone.utc).isoformat(
-                              timespec="seconds").replace("+00:00", "Z")),
+        # Normalization is also a read path. Inventing "now" for legacy
+        # sidecars changed chapter/source hashes every second and prevented
+        # an unchanged local upscale from resuming. Actual edit paths stamp
+        # updated_at explicitly; absent historical timestamps stay stable.
+        "updated_at": str(value.get("updated_at") or "1970-01-01T00:00:00Z"),
         "chapters": chapters,
         "scene_order": scene_order,
         "placements": placements,
@@ -18660,7 +18662,9 @@ class MiniMaxH3ChainCheckpointManager:
         "The selected checkpoint lineage as a verified manifest. A partial "
         "generated lineage is valid even when the saved Plan contains later "
         "scenes. Use branch locally pins this output in the workflow without "
-        "changing the project's active branch. Connect to Checkpoint Upscale "
+        "changing the project's active branch. Selected chapter only excludes "
+        "earlier chapters while keeping original scene numbers and timing. "
+        "Connect to Checkpoint Upscale "
         "Adapter; no source Plan connection is required.",
     )
     FUNCTION = "passthrough"
@@ -22376,7 +22380,7 @@ def _persist_chapter_manifest_locked(manifest: dict[str, Any]) -> tuple[
 
 
 def _chapter_manifest_from_manifest(
-        manifest: dict[str, Any], chapter_number: int = 0
+        manifest: dict[str, Any], chapter_number: int = 0, *, persist: bool = True
 ) -> tuple[dict[str, Any], str]:
     """Snapshot the available scenes of one explicitly selectable chapter."""
     if not isinstance(manifest, dict):
@@ -22390,6 +22394,8 @@ def _chapter_manifest_from_manifest(
                 "This input contains only Chapter %d. Connect the full Run "
                 "manifest to select Chapter %d." % (selected, requested))
         _validate_manifest(manifest)
+        if not persist:
+            return _json_document(manifest), ""
         snapshot, path = _persist_chapter_manifest(manifest)
         return snapshot, path
     if manifest.get("format") not in (
@@ -22468,6 +22474,8 @@ def _chapter_manifest_from_manifest(
         "prompt_prefix": str(manifest.get("prompt_prefix") or ""),
         "compatibility": _json_document(manifest.get("compatibility")) or {},
         "clip_count": len(selected),
+        "source_scene_count": int(manifest.get("source_scene_count") or
+                                  manifest.get("planned_clip_count") or planned),
         "scene_start": chapter_start,
         "scene_end": chapter_end,
         "total_delivered_frames": total_frames,
@@ -22488,6 +22496,8 @@ def _chapter_manifest_from_manifest(
         scoped["source_timeline"] = _json_document(
             manifest["source_timeline"])
     _validate_manifest(scoped)
+    if not persist:
+        return scoped, ""
     snapshot, path = _persist_chapter_manifest(scoped)
     return snapshot, path
 
@@ -26966,7 +26976,8 @@ class MiniMaxH3ChainAssemble:
         if upscale_manifest is not None:
             final_dir = upscale_support._profile_paths(
                 upscale_manifest["run_name"],
-                upscale_manifest["profile"], 1)["final"]
+                upscale_manifest["profile"], 1,
+                upscale_manifest.get("source_manifest"))["final"]
         else:
             final_dir = os.path.join(
                 _chapter_delivery_root(manifest), "final")
@@ -27839,7 +27850,7 @@ def _checkpoint_audio_sidecar(
 
 
 def _load_checkpoint_revision(
-        run_name: str, scene: Any, revision: Any
+        run_name: str, scene: Any, revision: Any, *, verify_artifacts: bool = True
 ) -> tuple[dict[str, Any], str]:
     run_name = _strict_run_name(run_name)
     index = int(scene)
@@ -27868,7 +27879,8 @@ def _load_checkpoint_revision(
         raise ValueError("Checkpoint revision belongs to a different scene.")
     if str(segment.get("revision") or "").lower() != token:
         raise ValueError("Checkpoint revision id does not match its metadata.")
-    _verify_segment_artifacts(segment, index)
+    if verify_artifacts:
+        _verify_segment_artifacts(segment, index)
     return metadata, metadata_path
 
 
@@ -27885,6 +27897,10 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
     if output_mode not in (None, "workflow_local"):
         raise ValueError("Checkpoint Manager has an unknown output selection mode.")
     local_output = output_mode == "workflow_local"
+    output_scope = selection.get("output_scope", "project")
+    if output_scope not in ("project", "chapter"):
+        raise ValueError("Checkpoint Manager has an unknown output scope.")
+    chapter_output = output_scope == "chapter"
     run_name = _strict_run_name(selection.get("run_name"))
     lineage = selection.get("lineage")
     if not isinstance(lineage, list) or not lineage:
@@ -27919,12 +27935,26 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
     scope_start_scene = int(selection.get("scope_start_scene", 1))
     scope_end_scene = int(selection.get(
         "scope_end_scene", len(shots)))
+    editorial = _load_run_editorial(run_name)
+    maximum_scene = max([
+        len(shots), *(int(item.get("scene", 0))
+                     for item in editorial.get("scene_order", [])
+                     if isinstance(item, dict))])
     if (scope_start_scene < 1 or scope_start_scene > len(lineage) or
             scope_end_scene < scope_start_scene or
-            scope_end_scene > len(shots)):
+            scope_end_scene > maximum_scene):
         raise ValueError(
             "Checkpoint Manager selection has an invalid chapter scope.")
-    editorial = _load_run_editorial(run_name)
+    selected_chapter = None
+    if chapter_output:
+        selected_chapter = next((chapter for chapter in
+            _editorial_chapter_ranges(editorial, maximum_scene)
+            if int(chapter["start_scene"]) == scope_start_scene
+            and int(chapter["end_scene"]) == scope_end_scene), None)
+        if selected_chapter is None or len(lineage) > scope_end_scene:
+            raise ValueError(
+                "Checkpoint Manager chapter boundaries changed or do not "
+                "match this selection. Select the chapter branch again.")
     chapter_starts = {
         int(chapter.get("start_scene", 0))
         for chapter in editorial.get("chapters", [])
@@ -27952,7 +27982,14 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 "Checkpoint Manager lineage must contain contiguous scenes "
                 "1 through %d." % len(lineage))
         metadata, _metadata_path = _load_checkpoint_revision(
-            run_name, index, item.get("revision"))
+            run_name, index, item.get("revision"),
+            verify_artifacts=not chapter_output or index >= scope_start_scene)
+        if chapter_output and index < scope_start_scene:
+            # The frozen prefix supplies the original timeline clock, not
+            # media for export/upscale. Do not validate or migrate its assets,
+            # or compare another chapter's generation compatibility.
+            loaded.append(metadata)
+            continue
         if str(metadata["segment"].get("take_kind") or "") == \
                 "editorial_alternate":
             raise ValueError(
@@ -27984,7 +28021,9 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 compatibility):
             raise ValueError(
                 "Selected checkpoint revisions use different compatibility "
-                "settings.")
+                "settings." + (" Choose compatible takes within this chapter."
+                if chapter_output else " For differently sized chapters, choose "
+                "Selected chapter only in Checkpoint Manager's output scope."))
         segment = metadata["segment"]
         current_prefix = str(segment.get("prompt_prefix") or "")
         if prompt_prefix is None:
@@ -28016,7 +28055,7 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
                 adopted = local_cache is None
                 if local_cache is None:
                     legacy_cache = _load_reference_cache_descriptor(descriptor)
-                    if local_output:
+                    if local_output or chapter_output:
                         # Local output is read-only, including legacy cache
                         # migration. Keep its verified descriptor in memory.
                         local_cache = legacy_cache
@@ -28072,8 +28111,9 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         manifest["archives"] = archives
     if isinstance(archived_plan.get("prelude"), dict):
         manifest["prelude"] = _json_document(archived_plan["prelude"])
+    output_metadata = loaded[scope_start_scene - 1:] if chapter_output else loaded
     timeline_records = [
-        item.get("source_timeline") for item in loaded
+        item.get("source_timeline") for item in output_metadata
         if isinstance(item.get("source_timeline"), dict)]
     if timeline_records:
         timeline_record = _json_document(timeline_records[0])
@@ -28086,7 +28126,16 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
     elif isinstance(archived_plan.get("source_timeline"), dict):
         manifest["source_timeline"] = _json_document(
             archived_plan["source_timeline"])
-    _validate_manifest(manifest)
+    if chapter_output:
+        # Picture-only alternates cannot change duration. Earlier chapters'
+        # base timing metadata suffices; do not require their alternate media.
+        manifest["editorial"] = {**editorial, "replacements":[
+            item for item in editorial.get("replacements", [])
+            if int(item.get("scene", 0)) >= scope_start_scene]}
+        manifest, _path = _chapter_manifest_from_manifest(
+            manifest, int(selected_chapter["number"]), persist=False)
+    else:
+        _validate_manifest(manifest)
     return manifest
 
 

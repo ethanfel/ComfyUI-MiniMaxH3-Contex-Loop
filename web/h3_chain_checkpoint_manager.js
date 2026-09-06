@@ -14,7 +14,7 @@ import {
     checkpointOutputSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.7.8";
+} from "./h3_checkpoint_manager_core.mjs?v=0.7.9";
 import {
     parsePlanJson,
     planToJson,
@@ -331,13 +331,31 @@ function mount(node) {
     runRow.append(runSelect, refresh, open, deleteRun);
     const outputRow = element("div", "h3cm-output");
     const outputSummary = element("div", "h3cm-output-summary");
+    const outputScope = element("select", "h3cm-output-scope");
+    outputScope.title = "Output scope only; never changes the project's active branch. Chapter output keeps original scene numbers.";
+    outputScope.setAttribute("aria-label", "Checkpoint output scope");
+    for (const [value, label] of [["project", "Through selected scene (all chapters)"], ["chapter", "Selected chapter only"]]) {
+        const option = element("option", "", label);
+        option.value = value;
+        outputScope.append(option);
+    }
+    try { outputScope.value = JSON.parse(selectionWidget?.value || "{}").output_scope || "project"; }
+    catch { outputScope.value = "project"; }
+    outputScope.addEventListener("change", () => {
+        const local = checkpointLocalSelection(selectionWidget?.value);
+        if (local) {
+            // Change only the scope of the existing pin, not its browsed tip.
+            writeOutputSelection(JSON.stringify({...local, output_scope:outputScope.value}));
+        } else persistSelection();
+        render();
+    });
     const useLocal = button("Use branch locally",
         "Pin the browsed lineage to selected_manifest in this workflow only. No project activation or Plan change.",
         () => pinLocalOutput());
     const followSelection = button("Follow browsing",
         "Release the local pin: selected_manifest will follow the browsed revision again. The project's active branch is unchanged.",
         () => releaseLocalOutput());
-    outputRow.append(outputSummary, useLocal, followSelection);
+    outputRow.append(outputSummary, outputScope, useLocal, followSelection);
     const chapterTabs = element("div", "h3cm-chapter-tabs");
     const scenes = element("div", "h3cm-scenes");
     const main = element("div", "h3cm-main");
@@ -462,7 +480,7 @@ function mount(node) {
         if (selectionWidget) {
             const value = checkpointOutputSelectionJson(
                 selectionWidget.value, state.payload, state.runName, state.selected,
-                selectedChapterRange());
+                selectedChapterRange(), outputScope.value);
             if (selectionWidget.value !== value) {
                 selectionWidget.value = value;
                 selectionWidget.callback?.(value);
@@ -483,7 +501,7 @@ function mount(node) {
         if (state.busy || state.attribution || !selectionWidget) return;
         try {
             writeOutputSelection(checkpointLocalSelectionJson(
-                state.payload, state.runName, state.selected, selectedChapterRange()));
+                state.payload, state.runName, state.selected, selectedChapterRange(), outputScope.value));
             status.className = "h3cm-status";
             status.textContent = "Output pinned to this workflow. Project active branch and connected Plan unchanged.";
             render();
@@ -496,7 +514,7 @@ function mount(node) {
     function releaseLocalOutput() {
         if (state.busy || !checkpointLocalSelection(selectionWidget?.value)) return;
         writeOutputSelection(checkpointSelectionJson(
-            state.payload, state.runName, state.selected, selectedChapterRange()));
+            state.payload, state.runName, state.selected, selectedChapterRange(), outputScope.value));
         status.className = "h3cm-status";
         status.textContent = "Output follows browsing again. Project active branch unchanged.";
         render();
@@ -505,21 +523,27 @@ function mount(node) {
     function localRevisionKeys() {
         const local = checkpointLocalSelection(selectionWidget?.value);
         return new Set(local?.run_name === state.runName
-            ? (local.lineage ?? []).map((item) => checkpointRevisionKey(item.scene, item.revision)) : []);
+            ? (local.lineage ?? []).filter((item) => local.output_scope !== "chapter" || item.scene >= local.scope_start_scene)
+                .map((item) => checkpointRevisionKey(item.scene, item.revision)) : []);
     }
 
     function renderOutputSelection() {
         const local = checkpointLocalSelection(selectionWidget?.value);
+        outputScope.disabled = state.busy;
+        if (local) outputScope.value = local.output_scope || "project";
         useLocal.disabled = state.busy || Boolean(state.attribution) || !selectionWidget || !canLoadSelected();
         followSelection.disabled = state.busy || !local;
         outputSummary.className = "h3cm-output-summary";
         if (local) {
             const tip = local.lineage?.at(-1);
             outputSummary.textContent = `Local output · ${local.run_name} · through scene ${tip?.scene ?? "?"} / ${String(tip?.revision ?? "").slice(0, 8)} · saved with this workflow`;
+            if (local.output_scope === "chapter") outputSummary.textContent += ` · chapter only, scenes ${local.scope_start_scene}–${tip?.scene ?? "?"}`;
             if (state.payload && local.run_name === state.runName) {
                 const available = new Set((state.payload.revisions ?? []).filter((item) => item.ready)
                     .map((item) => checkpointRevisionKey(item.scene, item.revision)));
-                if ((local.lineage ?? []).some((item) => !available.has(checkpointRevisionKey(item.scene, item.revision)))) {
+                if ((local.lineage ?? []).some((item) =>
+                    (local.output_scope !== "chapter" || item.scene >= local.scope_start_scene) &&
+                    !available.has(checkpointRevisionKey(item.scene, item.revision)))) {
                     outputSummary.className += " h3cm-error";
                     outputSummary.textContent += " · pinned checkpoint unavailable; reselect explicitly (no fallback)";
                 }
@@ -636,6 +660,8 @@ function mount(node) {
         const maximum = Math.max(
             1,
             ...(state.payload?.scenes ?? []).map(
+                (item) => Number(item.scene) || 0),
+            ...(state.payload?.editorial?.scene_order ?? []).map(
                 (item) => Number(item.scene) || 0),
         );
         return {id:"all", title:"All scenes", text:"", start:1, end:maximum};

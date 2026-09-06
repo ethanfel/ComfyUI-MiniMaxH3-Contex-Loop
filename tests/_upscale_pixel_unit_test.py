@@ -233,6 +233,94 @@ def main():
         assert any(s["codec_type"] == "audio" for s in streams)
         # No original prompt, checkpoint, audio or selection metadata changed.
         assert all(path.read_bytes() == content for path, content in original_files.items())
+        # A chapter is a non-1-based view. Exercise scenes 8..10 through the
+        # actual CPU decode/conditioning/save/resume/assembly path, reusing the
+        # tiny immutable artifacts above as source fixtures.
+        chapter_source = copy.deepcopy(manifest)
+        chapter_source.update({
+            "format":chain.CHAPTER_MANIFEST_FORMAT,
+            "scene_start":8, "scene_end":10, "clip_count":3,
+            "source_scene_count":12,
+            "chapter":{"number":2, "id":"two", "title":"Chapter 2",
+                       "start_scene":8, "end_scene":10, "planned_end_scene":12,
+                       "complete":False, "source_start_frame":120,
+                       "editorial_origin_frame":100},
+            "segments":[copy.deepcopy(manifest["segments"][offset]) for offset in (0, 1, 1)],
+        })
+        for index, segment in enumerate(chapter_source["segments"], start=8):
+            segment.update(index=index, id=f"chapter_scene_{index}")
+            if index > 8:
+                segment["visual_context_blocks"] = [{"source_scene":index - 1}]
+        chapter_source["total_delivered_frames"] = sum(s["delivered_frames"] for s in chapter_source["segments"])
+        chapter_source["duration_seconds"] = chapter_source["total_delivered_frames"] / 24
+        chapter_source["editorial"] = chain._normalize_run_editorial({
+            "scene_order":[{"scene":i,"scene_id":f"chapter_scene_{i}"} for i in (8, 9, 10)],
+            "chapters":[{"id":"two","start_scene_id":"chapter_scene_8"}],
+        }, manifest["run_name"])
+        before_chapter = {p:p.read_bytes() for p in Path(temporary).rglob("*") if p.is_file()}
+        _, scoped_state, _, _ = adapter.adapt(chapter_source, "pixel", "pixel", "{}", 1, 0, False, 18)
+        assert scoped_state["index"] == 8 and scoped_state["end_clip"] == 10
+        assert upscale._derope_state_view(scoped_state)[1:3] == (8, 10)
+        assert upscale._source_scene_count(chapter_source) == 12
+        assert upscale.MiniMaxH3ChainUpscaleCurrent().current(scoped_state)[4:6] == (8, 12)
+        assert upscale._derope_future_visual_consumers(scoped_state, 8) == [9]
+        with patch.object(chain, "_compile_tagged_reference_prompt",
+                          wraps=chain._compile_tagged_reference_prompt) as compile_prompt:
+            conditioner.condition(scoped_state, Clip(), target, VideoVAE(),
+                tagged_references=refs, prompt_override="@detail in a quiet room.")
+            assert compile_prompt.call_args.args[1:3] == (8, 12)
+        drift_chapter = copy.deepcopy(scoped_state)
+        drift_chapter["profile_config"]["backend"] = "h3_latent"
+        drift_chapter["source_manifest"]["segments"][1].update(
+            raw_frames=44, delivered_frames=5, continuation_mode="drift_control_av")
+        assert upscale._next_drift_context_steps(drift_chapter, 8) > 0
+        assert upscale._next_drift_context_steps(drift_chapter, 10) == 0
+        fails(lambda: adapter.adapt(chapter_source, "pixel", "pixel", "{}", 2, 0, False, 18), "start_clip")
+        for index in (8, 9, 10):
+            assert scoped_state["index"] == index
+            decoded = reader.current(scoped_state, VideoVAE())
+            assert decoded[5] == index
+            hq = decoded[1].repeat_interleave(2, dim=1).repeat_interleave(3, dim=2)
+            conditioned = conditioner.condition(scoped_state, Clip(), hq, VideoVAE())
+            assert conditioned[2:4] == (96, 64)
+            saved_chapter = saver.save(scoped_state, hq)["result"][0]
+            assert saved_chapter["index"] == index
+            assert f"chapters/02_two/upscaled/pixel/segments/clip_{index:04d}." in saved_chapter["segment"]
+            assert saved_chapter["delivered_frames"] == chapter_source["segments"][index - 8]["delivered_frames"]
+            if index == 10:
+                chapter_final = end.end(flow, scoped_state, hq, saved_chapter)[0]
+            else:
+                with patch.object(end, "_recurse", side_effect=lambda flow, next_state, *a: next_state):
+                    next_state = end.end(flow, scoped_state, hq, saved_chapter)
+                _, scoped_state, _, _ = adapter.adapt(chapter_source, "pixel", "pixel", "{}", index + 1, 0, False, 18)
+                assert scoped_state["index"] == next_state["index"]
+                assert scoped_state["segments"] == next_state["segments"]
+        assert chapter_final["format"] == "h3_chain_upscale_manifest_v1"
+        assert chapter_final["completed_clip_count"] == 3
+        assert (chapter_final["scene_start"], chapter_final["scene_end"]) == (8, 10)
+        upscale._validate_upscale_manifest(chapter_final)
+        broken = copy.deepcopy(chapter_final)
+        broken["segments"][1]["index"] = 2
+        fails(lambda: upscale._validate_upscale_manifest(broken), "wrong scene index")
+        chapter_assembly = upscale._assembly_manifest(chapter_final, chapter_final["segments"])
+        assert chapter_assembly["chapter"]["source_start_frame"] == 120
+        assert chapter_assembly["chapter"]["editorial_origin_frame"] == 100
+        assert chapter_assembly["chapter"]["complete"] is False
+        assert chapter_assembly["chapter"]["resolution"] == {"width":96,"height":64}
+        assert chapter_assembly["editorial"] == chapter_source["editorial"]
+        # Pixel export geometry need not be a multiple of the H3 latent grid.
+        arbitrary = [{**s, "width":1920, "height":1080} for s in chapter_final["segments"]]
+        assert upscale._assembly_manifest(chapter_final, arbitrary)["chapter"]["resolution"] == {"width":1920,"height":1080}
+        assembled_chapter = chain.MiniMaxH3ChainAssemble().assemble(
+            chapter_final, "plan", "chapter_test_final", 128, False, "")
+        final_path = assembled_chapter["result"][0]
+        assert "chapters/02_two/upscaled/pixel/final/" in final_path
+        streams = json.loads(subprocess.check_output([
+            "ffprobe", "-v", "error", "-show_streams", "-of", "json", final_path]))["streams"]
+        video = next(s for s in streams if s["codec_type"] == "video")
+        assert int(video["nb_frames"]) == chapter_source["total_delivered_frames"]
+        assert (video["width"], video["height"]) == (96, 64)
+        assert all(path.read_bytes() == content for path, content in before_chapter.items())
     print("Pixel upscale: exact/nonuniform target geometry, cache/override/max/keyframes/audio, RAW trim, Drift-Control isolation, save/resume/assembly and immutable source pass")
 
 

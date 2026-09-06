@@ -384,6 +384,28 @@ Use a separate adapter **profile** name for each upscale experiment. Results
 live under `output/h3_chains/<run>/upscaled/<profile>/`; a local source pin is
 not a separate output folder and does not isolate experiments sharing a profile.
 
+To upscale or export just one chapter, set the manager's output scope to
+**Selected chapter only**, select that chapter's generated tip, and click
+**Use branch locally**. Changing the scope of an existing local pin keeps its
+pinned tip; browsing another take does not move it. Earlier chapters may have
+different resolutions: only the selected chapter's media and compatibility are
+validated. Earlier pinned revision metadata is still read to preserve exact
+source-audio and editorial timing. Selecting output does not seal a chapter or
+change project-wide active branches.
+
+Chapter output keeps original scene numbers: a Chapter 2 containing saved
+scenes 8–10 outputs scenes 8–10, even if scenes 11–12 are still planned.
+On Upscale Adapter, `start_clip=1` starts at the first selected scene (8 here),
+`end_clip=0` means the last selected scene (10), and `start_clip=9` resumes after
+verifying scene 8's saved HQ output. No HQ prefix from Chapter 1 is required.
+Reference schedules retain their original Plan scene numbering.
+
+Chapter upscale profiles and finals are isolated under
+`output/h3_chains/<run>/chapters/<number>_<chapter_id>/upscaled/<profile>/`.
+Connect the upscale manifest to **H3 Chain Assemble**; no Chapter Delivery
+filter is needed after a chapter-only selection. Use Chapter Delivery separately
+if you also want to seal an immutable original-quality chapter snapshot.
+
 ```text
 Checkpoint Manager → Upscale Adapter → Upscale Current Scene
                                       → backend graph
@@ -618,7 +640,7 @@ output/h3_chains/<run_name>/
 │   ├── manifests/<snapshot_id>.json
 │   ├── final/
 │   ├── frames/
-│   └── upscaled/seedvr2/source/
+│   └── upscaled/<profile>/  (including seedvr2/source/)
 ├── upscaled/<profile>/
 └── final/<filename>.mp4
 ```
