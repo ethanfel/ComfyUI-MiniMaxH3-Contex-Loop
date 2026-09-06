@@ -315,8 +315,10 @@ function injectStyles() {
         .h3studio-grid-marker.h3studio-grid-warning { color:#ffd08a; border-color:#a47738; }
         .h3studio-grid-marker.h3studio-grid-experimental { border-style:dashed; }
         .h3studio-scene-label { color:var(--hs-muted); }
-        .h3studio-form { align-items:end; display:grid;
-            grid-template-columns:minmax(130px,1.3fr) minmax(175px,1.3fr) minmax(65px,.5fr) minmax(135px,1.1fr) minmax(120px,.85fr) minmax(140px,1fr); margin-bottom:8px; }
+        /* Reflow against the node's width, not the browser viewport. Each cell
+           must also fit the multi-part seed and editorial controls. */
+        .h3studio-form { align-items:end; display:grid; gap:8px;
+            grid-template-columns:repeat(auto-fit,minmax(min(100%,300px),1fr)); margin-bottom:8px; }
         .h3studio-audio-overrides { display:grid; grid-template-columns:repeat(3,minmax(160px,1fr));
             gap:7px; margin:0 0 8px; align-items:end; }
         .h3studio-field { display:flex; min-width:0; flex-direction:column; gap:3px; color:var(--hs-muted); }
@@ -336,9 +338,10 @@ function injectStyles() {
         .h3studio-plan-settings-section { grid-column:1 / -1; margin-top:5px; padding-top:7px;
             border-top:1px solid var(--hs-border); color:var(--hs-accent); font-weight:750; }
         .h3studio-plan-defaults-help { grid-column:1 / -1; color:var(--hs-muted); font-size:10px; }
-        .h3studio-length { display:grid; grid-template-columns:112px minmax(80px,1fr); gap:5px; }
-        .h3studio-prompt-seed { display:grid;
-            grid-template-columns:132px minmax(90px,1fr) auto; gap:5px; }
+        .h3studio-length { display:grid; min-width:0; grid-template-columns:minmax(0,1fr) auto; gap:5px; }
+        .h3studio-duration { grid-template-columns:minmax(0,1fr) minmax(0,1fr); }
+        .h3studio-prompt-seed { display:grid; min-width:0;
+            grid-template-columns:minmax(0,160px) minmax(0,1fr) auto; gap:5px; }
         .h3studio-context-pair { display:grid; grid-template-columns:1fr 1fr; gap:5px; }
         .h3studio-prompt { min-height:250px; width:100%; font:15px/1.55 ui-monospace,SFMono-Regular,Consolas,monospace !important; }
         .h3studio-prompt-tools { display:flex; align-items:center; gap:6px; margin:7px 0; flex-wrap:wrap; }
@@ -459,7 +462,7 @@ function injectStyles() {
             gap:8px; align-items:start; color:var(--hs-muted); }
         .h3studio-ref-preview img,.h3studio-ref-preview video { width:100%; max-height:150px; object-fit:contain; background:#08090c; }
         .h3studio-ref-preview audio { width:100%; height:36px; }
-        @media(max-width:760px) { .h3studio-form,.h3studio-plan-settings,.h3studio-alternate-grid,
+        @media(max-width:760px) { .h3studio-plan-settings,.h3studio-alternate-grid,
             .h3studio-audio-overrides { grid-template-columns:1fr 1fr; }
             .h3studio-defaults,.h3studio-context-blocks { grid-template-columns:1fr; } }
     `;
@@ -3006,7 +3009,7 @@ function mount(node) {
             writePlan(); renderShell();
         });
         refreshLength();
-        const lengthControl = element("span", "h3studio-length"); lengthControl.append(mode, length);
+        const lengthControl = element("span", "h3studio-length h3studio-duration"); lengthControl.append(mode, length);
         const steps = element("input"); steps.type = "number"; steps.min = "1"; steps.max = "10000";
         steps.placeholder = String(settings().defaultSteps); steps.value = shot.steps ?? "";
         steps.addEventListener("change", () => { if (steps.value) shot.steps = Number(steps.value); else delete shot.steps; writePlan(); });
