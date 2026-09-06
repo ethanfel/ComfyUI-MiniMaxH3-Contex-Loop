@@ -1,0 +1,134 @@
+{
+  "nodes": [
+    {
+      "key": "n1",
+      "type": "MiniMaxH3ChainCheckpointManager",
+      "settings": {
+        "selection_json": ""
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n2",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n3",
+      "type": "MiniMaxH3ChainLatentVideoAdapter",
+      "settings": {
+        "audio_source": "plan",
+        "blend_schedule": "plan",
+        "decode_buffer": "disk-backed",
+        "reuse_cache": true,
+        "audio_bitrate": 256
+      },
+      "inputs": {
+        "manifest": [
+          "n1",
+          "selected_manifest"
+        ],
+        "video_vae": [
+          "n2",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n4",
+      "type": "SeedVR2LoadDiTModel",
+      "settings": {
+        "model": "seedvr2_ema_3b_fp16.safetensors",
+        "device": "cuda:0",
+        "blocks_to_swap": 32,
+        "swap_io_components": false,
+        "offload_device": "cpu",
+        "cache_model": false,
+        "attention_mode": "sdpa"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n5",
+      "type": "SeedVR2LoadVAEModel",
+      "settings": {
+        "model": "ema_vae_fp16.safetensors",
+        "device": "cuda:0",
+        "encode_tiled": true,
+        "encode_tile_size": 1024,
+        "encode_tile_overlap": 128,
+        "decode_tiled": true,
+        "decode_tile_size": 768,
+        "decode_tile_overlap": 128,
+        "tile_debug": "false",
+        "offload_device": "cpu",
+        "cache_model": false
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n6",
+      "type": "SeedVR2VideoPathUpscaler",
+      "settings": {
+        "seed": 42,
+        "control_after_generate": "fixed",
+        "resolution": 1080,
+        "max_resolution": 0,
+        "batch_size": 5,
+        "chunk_size": 21,
+        "color_correction": "lab",
+        "chunk_overlap": 2,
+        "uniform_batch_size": false,
+        "temporal_overlap": 0,
+        "prepend_frames": 0,
+        "input_noise_scale": 0,
+        "latent_noise_scale": 0,
+        "offload_device": "cpu",
+        "temporary_video_crf": 18,
+        "enable_debug": false
+      },
+      "inputs": {
+        "video": [
+          "n3",
+          "video"
+        ],
+        "dit": [
+          "n4",
+          "SEEDVR2_DIT"
+        ],
+        "vae": [
+          "n5",
+          "SEEDVR2_VAE"
+        ]
+      }
+    },
+    {
+      "key": "n7",
+      "type": "SaveVideo",
+      "settings": {
+        "filename_prefix": "video/h3_seedvr2_%date:yyyy-MM-dd%",
+        "format": "auto",
+        "format.codec": "auto",
+        "codec": "auto"
+      },
+      "inputs": {
+        "video": [
+          "n6",
+          "video"
+        ]
+      }
+    },
+    {
+      "key": "n8",
+      "type": "Note",
+      "settings": {
+        "text": "WHOLE-CHAIN SEEDVR2 FINISH\n\n1. In Checkpoint Manager select the final scene of a COMPLETE branch.\n2. Use the original H3 VIDEO VAE. Do not select minimax_h3_audio_vae: it has 32 latent channels and cannot decode the 24-channel video latent.\n3. Keep decode_buffer=disk-backed. MiniMax's temporal VAE writes the active scene to a temporary mmap; only boundary frames stay in ordinary RAM.\n4. The adapter trims saved context, resolves the Plan's boundary blends, embeds the saved final audio policy, and caches one continuous lossless movie under output/h3_chains/<run>/upscaled/seedvr2/source/.\n5. SeedVR2 Direct reads that movie in chunk_size batches. chunk_size=21 and overlap=2 are conservative defaults; its batching is independent of H3 scene boundaries.\n6. The ethanfel SeedVR2 fork preserves input audio in its returned VIDEO, so it connects directly to core Save Video.\n\nNo Plan, Source Timeline, source media, per-scene upscale loop, IMAGE batch, or manual intermediate path is required. Legacy source-audio runs without a saved Source Timeline are the only case that may need source_audio on the adapter.\n\nRequired SeedVR2 fork: https://github.com/ethanfel/ComfyUI-SeedVR2_VideoUpscaler"
+      },
+      "inputs": {}
+    }
+  ],
+  "compatibility_note": "Adapted for **nightly** from the released **0.6 workflow catalog**. H3 settings and sockets are validated against nightly."
+}

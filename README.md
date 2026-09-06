@@ -48,7 +48,7 @@ specialized fallback for loop-only modes.
 
 ## Make your first video
 
-1. Open [T2V Normal](<example_workflows/T2V Normal - MiniMax H3.json>) in
+1. Open [T2V Normal](<example_workflows/T2V Normal - MiniMax H3 0.6.json>) in
    ComfyUI.
 2. Select the H3 diffusion model, text encoder, video VAE, and audio VAE.
 3. In **Plan**, give the run a unique `run_name` and edit the scene prompts.
@@ -65,19 +65,22 @@ problems, use the [Getting started guide](docs/GETTING_STARTED.md).
 
 | I want to… | Open this workflow |
 |---|---|
-| Generate from text | [T2V Normal](<example_workflows/T2V Normal - MiniMax H3.json>) |
-| Animate an opening image | [I2V Normal](<example_workflows/I2V Normal - MiniMax H3.json>) |
-| Move from a first image to a last image | [FL2V Normal](<example_workflows/FL2V Normal - MiniMax H3.json>) |
-| Use prompt-selected image/video/audio references | [Ref2V Tagged](<example_workflows/Ref2V Tagged - MiniMax H3.json>) |
-| Use a source soundtrack | [Ref2V Studio Tagged Source Audio](<example_workflows/Ref2V Studio Tagged Source Audio - MiniMax H3.json>) |
-| Inpaint part of a video | [Masked Video Inpaint](<example_workflows/Masked Video Inpaint - MiniMax H3.json>) |
-| Continue an existing clip | [Masked AV Extension — Single Clip](<example_workflows/Masked AV Extension - Single Clip - MiniMax H3.json>) |
-| Continue a reviewed chain | [Masked AV Extension — Chain](<example_workflows/Masked AV Extension - Chain + Reference Image - MiniMax H3.json>) |
-| Generate the gap between two clips | [Two-Clip Masked AV Bridge](<example_workflows/Masked AV Bridge - Two Clips - MiniMax H3.json>) |
+| Generate from text | [T2V Normal](<example_workflows/T2V Normal - MiniMax H3 0.6.json>) |
+| Animate an opening image | [I2V Normal](<example_workflows/I2V Normal - MiniMax H3 0.6.json>) |
+| Move from a first image to a last image | [FL2V Normal](<example_workflows/FL2V Normal - MiniMax H3 0.6.json>) |
+| Use prompt-selected image/video/audio references | [Ref2V Tagged](<example_workflows/Ref2V Tagged - MiniMax H3 0.6.json>) |
+| Use a source soundtrack | [Ref2V Studio Tagged Source Audio](<example_workflows/Ref2V Studio Source Audio - MiniMax H3 0.6.json>) |
+| Inpaint part of a video | [Masked Video Inpaint](<example_workflows/Masked Video Inpaint - MiniMax H3 0.6.json>) |
+| Continue an existing clip | [Masked AV Extension — Single Clip](<example_workflows/Masked AV Extension - Single Clip - MiniMax H3 0.6.json>) |
+| Continue a reviewed chain | [Masked AV Extension — Chain](<example_workflows/Masked AV Extension - Chain + Reference Image - MiniMax H3 0.6.json>) |
+| Generate the gap between two clips | [Two-Clip Masked AV Bridge](<example_workflows/Masked AV Bridge - Two Clips - MiniMax H3 0.6.json>) |
 | Upscale a saved run | [Deferred upscale workflows](example_workflows/README.md#deferred-upscale) |
 
-Choose **Normal** for the standard Plan and Scene Prompt Editor. **Studio** adds
-an experimental timeline interface; it does not change the generation graph.
+Nightly now uses the clean **0.6 workflow catalog**, serialized for nightly's
+nodes. Choose **Normal** for Production Plan and Scene Prompt Editor. **Studio**
+adds Plan Studio, Project Asset Carousel, the rich prompt editor, and Checkpoint
+Manager; it does not change the generation graph. The previous nightly examples
+remain in [the archive](example_workflows/Archive/pre-0.6-nightly/).
 
 ## How the graph is organized
 

@@ -24,11 +24,11 @@ audio VAE. They are not included in this repository.
 
 | Your starting material | Recommended first workflow |
 |---|---|
-| Text only | [T2V Normal](<../example_workflows/T2V Normal - MiniMax H3.json>) |
-| One opening image | [I2V Normal](<../example_workflows/I2V Normal - MiniMax H3.json>) |
-| First and last images | [FL2V Normal](<../example_workflows/FL2V Normal - MiniMax H3.json>) |
-| Prompt-selected references | [Ref2V Tagged](<../example_workflows/Ref2V Tagged - MiniMax H3.json>) |
-| Existing video | [Masked AV Extension — Single Clip](<../example_workflows/Masked AV Extension - Single Clip - MiniMax H3.json>) |
+| Text only | [T2V Normal](<../example_workflows/T2V Normal - MiniMax H3 0.6.json>) |
+| One opening image | [I2V Normal](<../example_workflows/I2V Normal - MiniMax H3 0.6.json>) |
+| First and last images | [FL2V Normal](<../example_workflows/FL2V Normal - MiniMax H3 0.6.json>) |
+| Prompt-selected references | [Ref2V Tagged](<../example_workflows/Ref2V Tagged - MiniMax H3 0.6.json>) |
+| Existing video | [Masked AV Extension — Single Clip](<../example_workflows/Masked AV Extension - Single Clip - MiniMax H3 0.6.json>) |
 
 Open or drag the JSON into ComfyUI. Start with a **Normal** workflow. Studio is
 an optional editorial interface, not a simpler sampler.

@@ -1,0 +1,397 @@
+{
+  "nodes": [
+    {
+      "key": "n1",
+      "type": "MiniMaxH3ChainCheckpointManager",
+      "settings": {
+        "selection_json": ""
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n2",
+      "type": "MiniMaxH3ChainUpscaleAdapter",
+      "settings": {
+        "profile": "h3_lbh_3d",
+        "backend": "h3_latent",
+        "recipe_json": "{\"upscaler\":\"LBH 3D\",\"target_megapixels\":1.5,\"pass2_steps\":2,\"denoise\":0.24,\"conditioning\":\"latent_sync\",\"audio_denoise\":0}",
+        "start_clip": 1,
+        "end_clip": 0,
+        "save_latent": false,
+        "segment_crf": 18
+      },
+      "inputs": {
+        "source_manifest": [
+          "n1",
+          "selected_manifest"
+        ]
+      }
+    },
+    {
+      "key": "n3",
+      "type": "MiniMaxH3ChainUpscaleCurrent",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n2",
+          "state"
+        ]
+      }
+    },
+    {
+      "key": "n4",
+      "type": "UNETLoader",
+      "settings": {
+        "unet_name": "minimax_h3_fl2va_pruned_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n5",
+      "type": "ModelAttentionBackend",
+      "settings": {
+        "attention": "pytorch attention"
+      },
+      "inputs": {
+        "model": [
+          "n4",
+          "MODEL"
+        ]
+      },
+      "mode": 4
+    },
+    {
+      "key": "n6",
+      "type": "MiniMaxH3SigmaShift",
+      "settings": {
+        "shift_video": 12,
+        "shift_audio": 3
+      },
+      "inputs": {
+        "model": [
+          "n5",
+          "MODEL"
+        ]
+      }
+    },
+    {
+      "key": "n7",
+      "type": "CLIPLoader",
+      "settings": {
+        "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "type": "minimax",
+        "device": "default"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n8",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n9",
+      "type": "MiniMaxH3UpscaleReferencePromptOverride",
+      "settings": {
+        "prompt_override": "",
+        "disabled_tags": ""
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n10",
+      "type": "MiniMaxH3ChainUpscaleReferenceConditioning",
+      "settings": {
+        "missing_cache": "text_only",
+        "motion_ref_mode": "exclude_video_keep_audio",
+        "prompt_override": "",
+        "override_ref_image_size": "inherit",
+        "override_reference_policy": "strict"
+      },
+      "inputs": {
+        "state": [
+          "n3",
+          "state"
+        ],
+        "clip": [
+          "n7",
+          "CLIP"
+        ],
+        "video_vae": [
+          "n8",
+          "VAE"
+        ],
+        "prompt_override": [
+          "n9",
+          "prompt_override"
+        ],
+        "tagged_references": [
+          "n9",
+          "references"
+        ]
+      }
+    },
+    {
+      "key": "n11",
+      "type": "RandomNoise",
+      "settings": {
+        "noise_seed": 0,
+        "control_after_generate": "fixed"
+      },
+      "inputs": {
+        "noise_seed": [
+          "n3",
+          "seed"
+        ]
+      }
+    },
+    {
+      "key": "n12",
+      "type": "BasicScheduler",
+      "settings": {
+        "scheduler": "simple",
+        "steps": 20,
+        "denoise": 0.24
+      },
+      "inputs": {
+        "model": [
+          "n6",
+          "MODEL"
+        ]
+      }
+    },
+    {
+      "key": "n13",
+      "type": "MinimaxH3LatentUpscaler3D",
+      "settings": {
+        "model_name": "minimax_h3_latent_upscaler_3d_fp16.safetensors",
+        "mode": "megapixels",
+        "mode.megapixels": 1.5,
+        "align": 32,
+        "enable_temporal_chunking": true,
+        "force_unload": true,
+        "device": "cuda",
+        "precision": "fp16"
+      },
+      "inputs": {
+        "latent": [
+          "n3",
+          "source_video_latent"
+        ]
+      }
+    },
+    {
+      "key": "n14",
+      "type": "H3ConditioningSyncFromLatents",
+      "settings": {
+        "method": "bilinear",
+        "motion_ref_mode": "conditioning_policy"
+      },
+      "inputs": {
+        "original_latent": [
+          "n3",
+          "source_video_latent"
+        ],
+        "upscaled_latent": [
+          "n13",
+          "latent"
+        ],
+        "positive": [
+          "n10",
+          "positive"
+        ]
+      }
+    },
+    {
+      "key": "n15",
+      "type": "MiniMaxH3ChainPass2Prepare",
+      "settings": {},
+      "inputs": {
+        "upscaled_video": [
+          "n13",
+          "latent"
+        ],
+        "source_audio": [
+          "n3",
+          "source_audio_latent"
+        ],
+        "model": [
+          "n6",
+          "MODEL"
+        ],
+        "noise": [
+          "n11",
+          "NOISE"
+        ],
+        "sigmas": [
+          "n12",
+          "SIGMAS"
+        ],
+        "state": [
+          "n3",
+          "state"
+        ]
+      }
+    },
+    {
+      "key": "n16",
+      "type": "BasicGuider",
+      "settings": {},
+      "inputs": {
+        "model": [
+          "n6",
+          "MODEL"
+        ],
+        "conditioning": [
+          "n14",
+          "positive"
+        ]
+      }
+    },
+    {
+      "key": "n17",
+      "type": "DisableNoise",
+      "settings": {},
+      "inputs": {}
+    },
+    {
+      "key": "n18",
+      "type": "KSamplerSelect",
+      "settings": {
+        "sampler_name": "res_multistep"
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n19",
+      "type": "SamplerCustomAdvanced",
+      "settings": {},
+      "inputs": {
+        "noise": [
+          "n17",
+          "NOISE"
+        ],
+        "guider": [
+          "n16",
+          "GUIDER"
+        ],
+        "sampler": [
+          "n18",
+          "SAMPLER"
+        ],
+        "sigmas": [
+          "n12",
+          "SIGMAS"
+        ],
+        "latent_image": [
+          "n15",
+          "latent"
+        ]
+      }
+    },
+    {
+      "key": "n20",
+      "type": "VAEDecode",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n19",
+          "output"
+        ],
+        "vae": [
+          "n8",
+          "VAE"
+        ]
+      }
+    },
+    {
+      "key": "n21",
+      "type": "MiniMaxH3ChainUpscaleSegmentSave",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n3",
+          "state"
+        ],
+        "images": [
+          "n20",
+          "IMAGE"
+        ],
+        "upscaled_latent": [
+          "n19",
+          "output"
+        ]
+      }
+    },
+    {
+      "key": "n22",
+      "type": "MiniMaxH3ChainUpscaleLoopEnd",
+      "settings": {},
+      "inputs": {
+        "flow": [
+          "n2",
+          "flow"
+        ],
+        "state": [
+          "n3",
+          "state"
+        ],
+        "images": [
+          "n20",
+          "IMAGE"
+        ],
+        "segment": [
+          "n21",
+          "segment"
+        ],
+        "upscaled_latent": [
+          "n19",
+          "output"
+        ]
+      }
+    },
+    {
+      "key": "n23",
+      "type": "MiniMaxH3ChainAssemble",
+      "settings": {
+        "audio_source": "plan",
+        "filename": "h3_upscaled_%date:yyyy-MM-dd%",
+        "audio_bitrate": 256,
+        "copy_to_output": false,
+        "output_subfolder": "",
+        "blend_schedule": "plan",
+        "boundary_tone_match": "off",
+        "color_stabilization": "off"
+      },
+      "inputs": {
+        "manifest": [
+          "n22",
+          "manifest"
+        ]
+      }
+    },
+    {
+      "key": "n24",
+      "type": "Note",
+      "settings": {
+        "text": "STANDALONE H3 CHECKPOINT UPSCALE\n\n1. Open Checkpoint Manager and select the right-hand tip you want to finish. A partial generated branch is valid; no ungenerated scenes are required.\n2. The selected_manifest cable is the complete parent-chain contract. No Plan, Source Timeline, source audio, or external context enters the upscale loop. Original reference media is unnecessary unless you deliberately connect a new Tagged Ref line to the override node.\n3. Choose a unique profile in Upscale Adapter. start_clip=1/end_clip=0 processes every generated scene in the selection.\n4. Set LBH target megapixels. The default is 1.5 MP with grid-32 alignment.\n5. Queue. Each HQ scene is saved before the loop advances; Assemble writes under output/h3_chains/<run>/upscaled/<profile>/final/.\n\nsave_latent is OFF by default. Enable it only when you need to reopen the complete HQ latent later. Drift-Control compatibility still saves only the small 12-step HQ context tail needed by the following scene and by interrupted-run resume.\n\nUpscale Reference Conditioning restores the scene's original Ref2VA conditioning from its automatic cache. Upscale Reference + Prompt Override stays inline on the normal H3 Tagged Ref line: leave its references input empty for automatic cache restore, or connect a new Tagged registry to replace the cached refs for pass 2. Use disabled_tags to omit selected connected refs. Its prompt override is blank by default, so pass 2 uses the exact compiled source prompt.\n\nOPTIONAL NEUTRAL REPLACEMENT PROMPT — copy this into the override only for a controlled comparison:\nPreserve the existing video's identity, appearance, composition, framing, lighting, color, action, motion timing, and audio. Use the supplied picture references only to maintain the identities and appearance already present. Improve only fine spatial detail and high-resolution texture fidelity. Do not introduce new motion, objects, cuts, camera moves, or scene changes.\n\nThe default motion policy excludes both the Qwen motion-video presentation and native motion-reference latent because the source latent already contains the generated motion; paired reference audio is retained. H3 Conditioning Sync From Latents follows that policy automatically, measures LBH's real X/Y latent scale, and resizes match picture minimax_refs plus minimax_keyframes while keeping max picture refs at their cached geometry. Its positive output creates a fresh pass-2 Basic Guider. Older non-reference runs fall back to text-only by default; choose error when a Ref2VA cache is mandatory."
+      },
+      "inputs": {},
+      "label": "HOW TO RUN"
+    },
+    {
+      "key": "n25",
+      "type": "Note",
+      "settings": {
+        "text": "REQUIRES\nhttps://github.com/LBH-123-AI/Comfyui_Minimax_h3_latent_Upscaler\nDownload minimax_h3_latent_upscaler_3d_fp16.safetensors into ComfyUI/models/latent_upscale_models/.\n\nLBH receives only the saved clean 24-channel VIDEO x0. MiniMax H3 Pass-2 AV Prepare rejoins the untouched 32-channel audio and reads the current upscale state. For Drift-Control AV scene 2+, it replaces the 12-step pass-2 prefix with the previous HQ latent tail, gives that prefix zero added noise and a zero denoise mask, refines only the new video region, and keeps audio locked. Other continuation modes retain the open-video behavior. H3 Conditioning Sync From Latents follows the community pass-2 method: original latent + LBH latent + original conditioning -> spatially synchronized conditioning -> new Guider -> sampler 2. Choose motion policy once on Upscale Reference Conditioning: exclude_video_keep_audio is the upscale default; keep_video_native and resize_video remain available for controlled comparisons. Leave the sync node on conditioning_policy. The default interpolation is bilinear.\n\nConservative defaults: 1.5 MP, align 32, FP16, 2 pass-2 steps, denoise 0.24, simple schedule, Euler. Raise denoise only after checking identity and scene boundaries. The Comfy Kitchen attention override remains bypassed because large H3 target sequences can exceed Sage prequantized int32 stride limits; this graph uses ComfyUI's PyTorch attention path. Functional nodes intentionally retain their original display names."
+      },
+      "inputs": {},
+      "label": "DEPENDENCY / PASS-2 NOTES"
+    }
+  ],
+  "compatibility_note": "Adapted for **nightly** from the released **0.6 workflow catalog**. H3 settings and sockets are validated against nightly."
+}

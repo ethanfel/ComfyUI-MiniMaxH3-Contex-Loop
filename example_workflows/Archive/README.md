@@ -3,8 +3,8 @@
 These are the previous mixed and experimental examples retained unchanged for
 compatibility and reference. The recommended type-based workflow pairs now
 live one level above this folder, beginning with
-[`T2V Normal - MiniMax H3.json`](<../T2V Normal - MiniMax H3.json>) and
-[`T2V Studio - MiniMax H3.json`](<../T2V Studio - MiniMax H3.json>).
+[`T2V Normal - MiniMax H3 0.6.json`](<../T2V Normal - MiniMax H3 0.6.json>) and
+[`T2V Studio - MiniMax H3 0.6.json`](<../T2V Studio - MiniMax H3 0.6.json>).
 
 `Ref2V Legacy Scheduled - MiniMax H3.json` and
 `Ref2V Studio Legacy Scheduled - MiniMax H3.json` preserve the former active

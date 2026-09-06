@@ -1,5 +1,36 @@
 # Example assets
 
+## `h3_v06_courier_greenhouse_arrival.png`
+
+Fresh landscape opening reference for the 0.6 I2V, FL2V, and Ref2V examples.
+It shows one adult bicycle courier arriving at a glass greenhouse with a parcel.
+The image was generated specifically for this repository's release examples;
+it contains no logo, watermark, or embedded text.
+
+SHA-256:
+`1e7b02dbf5d4f3d51f6e65e1c8cbf6f35b542995a7b27f278889efa32ef9462c`
+
+Copy it to `ComfyUI/input/` for Normal workflows. For Studio, import it through
+Project Asset Carousel, use tag `courier_arrival`, and assign **Picture**.
+
+## `h3_v06_courier_greenhouse_delivery.png`
+
+Matching destination reference: the same courier and bicycle inside the same
+greenhouse, placing the parcel on a potting table. It was generated from the
+arrival image specifically for coherent A→B and tagged-reference examples.
+
+SHA-256:
+`d225b876063e9fe7c611f8b0217dc961f2ed34eaee4445a0c895d9b6e30b5b76`
+
+Copy it beside the arrival image for FL2V and Basic Ref2V. For Studio, import
+it through the Carousel as `greenhouse_delivery` with the **Picture** role.
+
+## Legacy 0.5 reference assets
+
+The following Jigen images remain available because workflows preserved in
+`example_workflows/Archive/pre-0.6-nightly/` still reference them. They are no longer used
+by the maintained 0.6 catalog.
+
 ## `jigen_market_garden_doom_opening.png`
 
 Opening image for the paired MiniMax H3 I2V example workflows. It was shared

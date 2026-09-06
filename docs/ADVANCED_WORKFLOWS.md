@@ -225,7 +225,7 @@ scene-local image, video, or audio anchors.
 
 ## Re-film a synchronized performance
 
-The [three-angle guitar workflow](<../example_workflows/Three-Angle Guitar Ref2VA - EXPERIMENTAL - MiniMax H3.json>)
+The [three-angle guitar workflow](<../example_workflows/Archive/Three-Angle Guitar Ref2VA - EXPERIMENTAL - MiniMax H3.json>)
 uses **Reference Video Prep** to convert native VIDEO or decoded IMAGE/AUDIO
 into exact 24 fps Ref2VA input. Its soundtrack is copied without padding or
 time-stretching, allowing one performance to be generated from multiple camera

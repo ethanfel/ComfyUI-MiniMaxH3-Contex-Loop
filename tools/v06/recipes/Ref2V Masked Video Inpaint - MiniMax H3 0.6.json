@@ -1,0 +1,808 @@
+{
+  "nodes": [
+    {
+      "key": "core_source_note",
+      "type": "Note",
+      "settings": {
+        "text": "CORE SOURCE VIDEO\n\nLoad Video feeds Get Video Components. Keep all three images, audio, and fps outputs connected to Loop Source AV Target: that node converts the native source rate to H3's 24 fps and fits each scene to the Plan canvas. Do not replace the fps connection with a fixed 24 for non-24-fps input. The included single-frame mask is broadcast across the scene; if using a tracked mask video, supply that mask's actual source frame rate to Mask Slice."
+      },
+      "inputs": {}
+    },
+    {
+      "key": "n1",
+      "type": "UNETLoader",
+      "settings": {
+        "unet_name": "minimax_h3_ref2va_pruned_int8_convrot.safetensors",
+        "weight_dtype": "default"
+      },
+      "inputs": {},
+      "label": "Load Diffusion Model — H3 MODEL — REQUIRED"
+    },
+    {
+      "key": "n2",
+      "type": "CLIPLoader",
+      "settings": {
+        "clip_name": "qwen3vl_32b_minimax_h3_int8_convrot.safetensors",
+        "type": "minimax",
+        "device": "default"
+      },
+      "inputs": {},
+      "label": "Load CLIP — H3 TEXT ENCODER"
+    },
+    {
+      "key": "n3",
+      "type": "KSamplerSelect",
+      "settings": {
+        "sampler_name": "res_multistep"
+      },
+      "inputs": {},
+      "label": "KSamplerSelect — Sampler algorithm"
+    },
+    {
+      "key": "n4",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_video_vae_fp16.safetensors"
+      },
+      "inputs": {},
+      "label": "Load VAE — H3 Video VAE"
+    },
+    {
+      "key": "n5",
+      "type": "VAELoader",
+      "settings": {
+        "vae_name": "minimax_h3_audio_vae_fp32.safetensors"
+      },
+      "inputs": {},
+      "label": "Load VAE — H3 Audio VAE"
+    },
+    {
+      "key": "n6",
+      "type": "Note",
+      "settings": {
+        "text": "SOURCE ASSETS — CC0\n\nLight-blue soldier crabs on Bribie Island, filmed in 2015 by Watermark Resort Caloundra. Wikimedia Commons records the video as CC0 1.0.\n\nhttps://commons.wikimedia.org/wiki/File:Light-blue_soldier_crabs_on_Bribie_Island.webm\n\nCopy soldier_crabs_bribie_island_cc0.webm, soldier_crabs_inpaint_mask.png, and soldier_crabs_reference_cc0.png from example_workflows/assets/ to ComfyUI/input/.\n\nABLEJONES / DROZ V3.1 MAPPING\n\nApply Target Mask in H3 exact mode implements the same H3 auto + max / max causal-token mask contract as MVEx Mask To Latent Space. The pack-native Loop Source AV Target replaces separate VAEEncode, SetLatentNoiseMask, and LTXVConcatAVLatent wiring. Subject Crop / Uncrop remains an optional external efficiency and compositing stage, not a requirement for correct masked H3 sampling."
+      },
+      "inputs": {},
+      "label": "Note — CC0 ASSETS + ABLEJONES V3.1 COMPATIBILITY"
+    },
+    {
+      "key": "n7",
+      "type": "Note",
+      "settings": {
+        "text": "REF2VA MASKED-EDIT PROMPT FORMAT\n\nUse these six fields in order: subject_definitions, summary, retention_analysis, detailed_description, overall_soundscape, and non_diegetic_music.\n\nPicture 1 defines only the replacement appearance. The movie remains the real masked target latent and is intentionally not connected a second time as a Ref2VA video. The source target supplies motion, camera, protected pixels, and synchronized audio; the picture supplies subject appearance."
+      },
+      "inputs": {},
+      "label": "Note — REF2VA MASKED-EDIT PROMPT FORMAT"
+    },
+    {
+      "key": "n10",
+      "type": "MiniMaxH3ChainLoopStart",
+      "settings": {
+        "start_clip": 1,
+        "scene_range": "",
+        "verify_resume_history": true
+      },
+      "inputs": {
+        "plan": [
+          "n33",
+          "plan"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Start — LOOP START — NO EXTERNAL CONTINUATION"
+    },
+    {
+      "key": "n13",
+      "type": "MiniMaxH3ChainCurrent",
+      "settings": {
+        "align_audio_reference": false
+      },
+      "inputs": {
+        "state": [
+          "n10",
+          "state"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Current Shot — CURRENT REF2V EDIT SCENE — PROMPT / SEED / TIMING"
+    },
+    {
+      "key": "n14",
+      "type": "MiniMaxH3ChainAssemble",
+      "settings": {
+        "audio_source": "plan",
+        "filename": "cc0_soldier_crabs_ref2v_inpaint_recovered_%date:yyyy-MM-dd%",
+        "audio_bitrate": 256,
+        "copy_to_output": false,
+        "output_subfolder": "",
+        "blend_schedule": "plan",
+        "boundary_tone_match": "off",
+        "color_stabilization": "off"
+      },
+      "inputs": {
+        "manifest": [
+          "n34",
+          "manifest"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Assemble — RECOVERY: ASSEMBLE WITHOUT RENDERING",
+      "mode": 2
+    },
+    {
+      "key": "n16",
+      "type": "RandomNoise",
+      "settings": {
+        "noise_seed": 0,
+        "control_after_generate": "fixed"
+      },
+      "inputs": {
+        "noise_seed": [
+          "n13",
+          "noise_seed"
+        ]
+      },
+      "label": "RandomNoise — Per-shot noise seed"
+    },
+    {
+      "key": "n17",
+      "type": "MiniMaxH3ReferenceToVideo",
+      "settings": {
+        "prompt": "subject_definitions:\n<Subject 1> is the adult light-blue soldier crab appearance defined by <Picture 1>: a glossy deep cobalt-blue oval carapace, pale sand-tan jointed legs, paired raised claws, small black eye stalks, realistic wet-shell highlights, and natural animal proportions.\n\nsummary:\n[reference generation + video editing + audio reuse] The target video is a spatially masked edit of the supplied source target. Only the crabs inside the editable lower-central beach region are rebuilt as clear, photorealistic instances of <Subject 1>; the protected source picture, performance, environment, and camera remain unchanged, and the synchronized source soundtrack is reused in full.\n\nretention_analysis:\n<Subject 1> (appears in [Shot 1]): fully_preserved - retain the referenced cobalt-blue carapace, sand-tan legs, raised claws, black eye stalks, wet-shell texture, realistic scale, and natural soldier-crab anatomy wherever the masked replacement is visible.\n\ndetailed_description:\nThe target remains live-action natural-history footage with the same cloudy coastal daylight, documentary optics, and realistic color response as the protected source.\n[Shot 1] Treat the supplied source target as the authoritative edit plate. Preserve its original camera trajectory, lens behavior, framing, cloudy lighting, sand, shallow water, distant shoreline, depth of field, source motion timing, and every protected pixel. Inside the editable lower-central beach region only, rebuild the visible moving crabs as coherent instances of <Subject 1> from <Picture 1>. The source frames supply each selected crab's position, grounded lateral movement, action phase, speed, perspective, scale, occlusion timing, and motion blur; <Picture 1> supplies the visible species anatomy, shell color, leg color, claw shape, eyes, and wet surface detail. Keep feet in contact with the sand and water, reproduce plausible contact shadows and tiny reflections, and maintain stable anatomy from frame to frame. Blend the generated animals cleanly into the protected plate without a halo, border flicker, duplicated limbs, or changes to nearby unmasked crabs. Do not introduce sculptures, stylization, text, a new camera move, a new background, or a cut.\n\noverall_soundscape:\nReuse the protected synchronized source soundtrack exactly as the complete final soundtrack. Generate no replacement sound.\n\nnon_diegetic_music:\nN/A",
+        "width": 960,
+        "height": 544,
+        "length": 175,
+        "ref_image_size": "match"
+      },
+      "inputs": {
+        "clip": [
+          "n2",
+          "CLIP"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ],
+        "audio_vae": [
+          "n5",
+          "VAE"
+        ],
+        "ref_images.ref_image_0": [
+          "n47",
+          "IMAGE"
+        ],
+        "prompt": [
+          "n13",
+          "prompt"
+        ],
+        "width": [
+          "n13",
+          "width"
+        ],
+        "height": [
+          "n13",
+          "height"
+        ],
+        "length": [
+          "n13",
+          "length"
+        ]
+      },
+      "label": "MiniMax H3 Reference to Video — CORE H3 REF2VA — PICTURE + MASKED SOURCE TARGET"
+    },
+    {
+      "key": "n18",
+      "type": "MiniMaxH3ChainContext",
+      "settings": {
+        "visual_cond_noise_aug": 0.999,
+        "future_end_anchor": false
+      },
+      "inputs": {
+        "state": [
+          "n13",
+          "state"
+        ],
+        "conditioning": [
+          "n17",
+          "positive"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ],
+        "latent": [
+          "n40",
+          "source_target"
+        ],
+        "audio_vae": [
+          "n5",
+          "VAE"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Context — AUTO CONTEXT — clip 1 bypass / continuation"
+    },
+    {
+      "key": "n19",
+      "type": "MiniMaxH3SigmaShift",
+      "settings": {
+        "shift_video": 12,
+        "shift_audio": 3
+      },
+      "inputs": {
+        "model": [
+          "n30",
+          "MODEL"
+        ]
+      }
+    },
+    {
+      "key": "n22",
+      "type": "BasicGuider",
+      "settings": {},
+      "inputs": {
+        "model": [
+          "n19",
+          "MODEL"
+        ],
+        "conditioning": [
+          "n18",
+          "conditioning"
+        ]
+      },
+      "label": "Basic Guider — Loop guider"
+    },
+    {
+      "key": "n23",
+      "type": "BasicScheduler",
+      "settings": {
+        "scheduler": "simple",
+        "steps": 20,
+        "denoise": 1
+      },
+      "inputs": {
+        "model": [
+          "n19",
+          "MODEL"
+        ],
+        "steps": [
+          "n13",
+          "steps"
+        ]
+      },
+      "label": "BasicScheduler — Per-shot scheduler steps"
+    },
+    {
+      "key": "n24",
+      "type": "SamplerCustomAdvanced",
+      "settings": {},
+      "inputs": {
+        "noise": [
+          "n16",
+          "NOISE"
+        ],
+        "guider": [
+          "n22",
+          "GUIDER"
+        ],
+        "sampler": [
+          "n3",
+          "SAMPLER"
+        ],
+        "sigmas": [
+          "n23",
+          "SIGMAS"
+        ],
+        "latent_image": [
+          "n41",
+          "masked_target"
+        ]
+      },
+      "label": "SamplerCustomAdvanced — H3 sampler — SINGLE LOOP BODY"
+    },
+    {
+      "key": "n25",
+      "type": "VAEDecode",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n24",
+          "output"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ]
+      },
+      "label": "VAE Decode — Decode current clip frames"
+    },
+    {
+      "key": "n26",
+      "type": "VAEDecodeAudio",
+      "settings": {},
+      "inputs": {
+        "samples": [
+          "n24",
+          "output"
+        ],
+        "vae": [
+          "n5",
+          "VAE"
+        ]
+      },
+      "label": "VAE Decode Audio — Decode current clip audio"
+    },
+    {
+      "key": "n27",
+      "type": "MiniMaxH3LoopTrim",
+      "settings": {
+        "trim_frames": 0,
+        "fps": 24,
+        "match_tail": true,
+        "retain_overlap_frames": 5
+      },
+      "inputs": {
+        "images": [
+          "n25",
+          "IMAGE"
+        ],
+        "audio": [
+          "n26",
+          "AUDIO"
+        ],
+        "trim_frames": [
+          "n18",
+          "trim_frames"
+        ],
+        "state": [
+          "n13",
+          "state"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Trim — TRIM CONTEXT / AUTO-RESOLVE SCENE BLEND"
+    },
+    {
+      "key": "n28",
+      "type": "MiniMaxH3ChainSegmentSave",
+      "settings": {},
+      "inputs": {
+        "state": [
+          "n13",
+          "state"
+        ],
+        "images": [
+          "n27",
+          "images"
+        ],
+        "sampled_latent": [
+          "n24",
+          "output"
+        ],
+        "audio": [
+          "n27",
+          "audio"
+        ],
+        "images_with_overlap": [
+          "n27",
+          "images_with_overlap"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Segment + Checkpoint — SAVE DELIVERED + BLEND-READY SEGMENTS"
+    },
+    {
+      "key": "n29",
+      "type": "MiniMaxH3ChainAssemble",
+      "settings": {
+        "audio_source": "plan",
+        "filename": "cc0_soldier_crabs_ref2v_inpaint_%date:yyyy-MM-dd%",
+        "audio_bitrate": 256,
+        "copy_to_output": false,
+        "output_subfolder": "",
+        "blend_schedule": "plan",
+        "boundary_tone_match": "off",
+        "color_stabilization": "off"
+      },
+      "inputs": {
+        "manifest": [
+          "n36",
+          "manifest"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Assemble — FINAL ASSEMBLY — 5-FRAME VISUAL BLEND"
+    },
+    {
+      "key": "n30",
+      "type": "ModelAttentionBackend",
+      "settings": {
+        "attention": "pytorch attention"
+      },
+      "inputs": {
+        "model": [
+          "n1",
+          "MODEL"
+        ]
+      },
+      "label": "ModelAttentionBackend — COMFY KITCHEN ATTENTION"
+    },
+    {
+      "key": "n31",
+      "type": "MiniMaxH3ChainRichScenePromptEditor",
+      "settings": {},
+      "inputs": {
+        "plan": [
+          "n33",
+          "plan"
+        ]
+      }
+    },
+    {
+      "key": "n32",
+      "type": "MiniMaxH3ChainPlanModern",
+      "settings": {
+        "plan_json": "{\n  \"defaults\": {\n    \"length\": 175,\n    \"steps\": 20\n  },\n  \"shots\": [\n    {\n      \"id\": \"ref2v_masked_inpaint_a\",\n      \"prompt\": \"subject_definitions:\\n<Subject 1> is the adult light-blue soldier crab appearance defined by <Picture 1>: a glossy deep cobalt-blue oval carapace, pale sand-tan jointed legs, paired raised claws, small black eye stalks, realistic wet-shell highlights, and natural animal proportions.\\n\\nsummary:\\n[reference generation + video editing + audio reuse] The target video is a spatially masked edit of the supplied source target. Only the crabs inside the editable lower-central beach region are rebuilt as clear, photorealistic instances of <Subject 1>; the protected source picture, performance, environment, and camera remain unchanged, and the synchronized source soundtrack is reused in full.\\n\\nretention_analysis:\\n<Subject 1> (appears in [Shot 1]): fully_preserved - retain the referenced cobalt-blue carapace, sand-tan legs, raised claws, black eye stalks, wet-shell texture, realistic scale, and natural soldier-crab anatomy wherever the masked replacement is visible.\\n\\ndetailed_description:\\nThe target remains live-action natural-history footage with the same cloudy coastal daylight, documentary optics, and realistic color response as the protected source.\\n[Shot 1] Treat the supplied source target as the authoritative edit plate. Preserve its original camera trajectory, lens behavior, framing, cloudy lighting, sand, shallow water, distant shoreline, depth of field, source motion timing, and every protected pixel. Inside the editable lower-central beach region only, rebuild the visible moving crabs as coherent instances of <Subject 1> from <Picture 1>. The source frames supply each selected crab's position, grounded lateral movement, action phase, speed, perspective, scale, occlusion timing, and motion blur; <Picture 1> supplies the visible species anatomy, shell color, leg color, claw shape, eyes, and wet surface detail. Keep feet in contact with the sand and water, reproduce plausible contact shadows and tiny reflections, and maintain stable anatomy from frame to frame. Blend the generated animals cleanly into the protected plate without a halo, border flicker, duplicated limbs, or changes to nearby unmasked crabs. Do not introduce sculptures, stylization, text, a new camera move, a new background, or a cut.\\n\\noverall_soundscape:\\nReuse the protected synchronized source soundtrack exactly as the complete final soundtrack. Generate no replacement sound.\\n\\nnon_diegetic_music:\\nN/A\",\n      \"length\": 175,\n      \"steps\": 20,\n      \"seed\": \"24051621\"\n    },\n    {\n      \"id\": \"ref2v_masked_inpaint_b\",\n      \"prompt\": \"subject_definitions:\\n<Subject 1> is the same adult light-blue soldier crab appearance defined by <Picture 1> and established in the protected incoming overlap: a glossy deep cobalt-blue oval carapace, pale sand-tan jointed legs, paired raised claws, small black eye stalks, realistic wet-shell highlights, and natural animal proportions.\\n\\nsummary:\\n[reference generation + video editing + audio reuse] The target video continues the spatially masked edit of the supplied source target directly from the protected incoming overlap. Keep the same <Subject 1> identity inside the editable lower-central beach region while the protected source picture, performance, environment, and camera remain unchanged, and the synchronized source soundtrack is reused in full.\\n\\nretention_analysis:\\n<Subject 1> (appears in [Shot 1]): fully_preserved - carry forward the exact crab anatomy, cobalt-blue shell, sand-tan legs, claws, eyes, wet texture, scale, and frame-to-frame identity already visible at the incoming boundary.\\n\\ndetailed_description:\\nThe target continues the same live-action natural-history shot without a cut or visual reset.\\n[Shot 1] Begin from the protected incoming overlap exactly as supplied. Do not alter its crab identities, action phase, camera position, lens behavior, framing, cloudy coastal light, sand, water, shoreline, depth of field, or motion blur. As the supplied source target advances, edit only the lower-central masked region. Continue rendering every selected moving crab as the same coherent <Subject 1> established from <Picture 1> and the incoming frames. The corresponding source frames remain authoritative for position, grounded lateral motion, speed, pose, perspective, scale, occlusion timing, sand contact, and interaction with shallow water. Preserve the referenced cobalt-blue carapace, sand-tan legs, raised claws, black eye stalks, realistic shell highlights, and stable anatomy throughout the new frames. Maintain clean contact shadows and reflections and cross the end of the protected overlap with no identity jump, brightness pulse, outline flicker, duplicated limb, temporal stall, or camera change. Preserve every protected pixel and every unmasked crab. Do not introduce a new background, stylization, text, or a cut.\\n\\noverall_soundscape:\\nReuse the protected synchronized source soundtrack exactly as the complete final soundtrack. Generate no replacement sound.\\n\\nnon_diegetic_music:\\nN/A\",\n      \"length\": 175,\n      \"steps\": 20,\n      \"seed\": \"24051622\"\n    }\n  ]\n}",
+        "run_name": "ref2v_masked_video_inpaint_minimax_h3_0_6_json",
+        "generation_fingerprint": "h3-v06-release-example",
+        "width": 960,
+        "height": 544,
+        "encode_mode": "video",
+        "crop": "center",
+        "default_duration_seconds": 8,
+        "default_steps": 20,
+        "base_seed": 0,
+        "segment_crf": 20,
+        "video_blend_frames": 5
+      },
+      "inputs": {
+        "chain_policy": [
+          "n48",
+          "chain_policy"
+        ],
+        "project_assets": [
+          "n49",
+          "project_assets"
+        ]
+      },
+      "label": "MiniMax H3 Production Plan — 0.6 SCENE COLUMNS"
+    },
+    {
+      "key": "n33",
+      "type": "MiniMaxH3ChainPlanStudio",
+      "settings": {
+        "start_clip": 1,
+        "scene_range": "",
+        "verify_resume_history": true,
+        "plan_json": "{\n  \"shots\": [\n    {\n      \"id\": \"intro\",\n      \"prompt\": \"Describe the opening shot.\"\n    },\n    {\n      \"id\": \"continuation\",\n      \"prompt\": \"Continue the same take.\"\n    }\n  ]\n}",
+        "run_name": "h3_chain",
+        "generation_fingerprint": "",
+        "width": 960,
+        "height": 544,
+        "context_length": 22,
+        "encode_mode": "video",
+        "anchor_mode": "head",
+        "crop": "disabled",
+        "audio_mode": "generated_audio",
+        "audio_context_length": 22,
+        "default_duration_seconds": 15,
+        "default_steps": 20,
+        "base_seed": 0,
+        "segment_crf": 18,
+        "video_blend_frames": 0,
+        "continuation_mode": "guide",
+        "alternate_take_json": ""
+      },
+      "inputs": {
+        "plan": [
+          "n32",
+          "plan"
+        ],
+        "tagged_references": [
+          "n49",
+          "references"
+        ],
+        "project_assets": [
+          "n49",
+          "project_assets"
+        ]
+      },
+      "label": "MiniMax H3 Plan Studio — TIMELINE / TAKES / TRIMS"
+    },
+    {
+      "key": "n34",
+      "type": "MiniMaxH3ChainManifestLoad",
+      "settings": {},
+      "inputs": {
+        "plan": [
+          "n33",
+          "plan"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Load Manifest — RECOVERY: LOAD ALL SAVED CLIPS",
+      "mode": 2
+    },
+    {
+      "key": "n35",
+      "type": "Note",
+      "settings": {
+        "text": "The two amber recovery nodes are MUTED by default.\n\nIf all segments finished but final assembly did not, mute the main green Assemble node, enable both recovery nodes, and queue. They validate every SHA-256 checkpoint pair and assemble without rerendering the completed clips.\n\nFor an interrupted generation, leave recovery muted and set Loop Start's start_clip to the first unfinished clip."
+      },
+      "inputs": {},
+      "label": "Note — RECOVERY / ASSEMBLE LATER"
+    },
+    {
+      "key": "n36",
+      "type": "MiniMaxH3ChainLoopEnd",
+      "settings": {
+        "between_scene_cleanup": "off"
+      },
+      "inputs": {
+        "flow": [
+          "n10",
+          "flow"
+        ],
+        "state": [
+          "n13",
+          "state"
+        ],
+        "images": [
+          "n27",
+          "images"
+        ],
+        "sampled_latent": [
+          "n24",
+          "output"
+        ],
+        "segment": [
+          "n37",
+          "segment"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop End — LOOP END — ADVANCE T2V SCENE"
+    },
+    {
+      "key": "n37",
+      "type": "MiniMaxH3ChainReview",
+      "settings": {
+        "enabled": true,
+        "play_notification_sound": false,
+        "auto_continue_timeout_minutes": 0,
+        "unload_models_while_waiting": false,
+        "assemble_partial_on_stop": true,
+        "partial_audio_source": "checkpointed",
+        "candidate_count": 1,
+        "review_each_candidate": false
+      },
+      "inputs": {
+        "state": [
+          "n13",
+          "state"
+        ],
+        "segment": [
+          "n28",
+          "segment"
+        ],
+        "audio": [
+          "n27",
+          "audio"
+        ]
+      },
+      "label": "MiniMax H3 Context Loop Review Gate — REVIEW GATE — APPROVE / EDIT+RETRY / REROLL / STOP"
+    },
+    {
+      "key": "n38",
+      "type": "Note",
+      "settings": {
+        "text": "REF2V MASKED VIDEO INPAINT — CHAIN LOOP\n\nThis is the picture-conditioned counterpart to the T2VA masked-inpaint demo. Picture 1 supplies the species appearance; the source video is encoded as the actual joint AV target. Do not connect the source video again as ref_video_0.\n\nTwo 175-frame generations share a 39-frame protected overlap and deliver 311 frames. Scene 1 selects source frames 0..174; scene 2 selects 136..310. Loop Source AV Target aligns picture and sound to the stock Ref2VA target grid. Chain Context preserves the accepted edited overlap. Apply Target Mask then intersects that temporal protection with the spatial edit mask, so preservation wins.\n\nThe bundled one-frame mask is broadcast. Replace it with a tracked MASK batch for moving subjects; Loop Mask Slice selects the corresponding source interval automatically. Grid Preview shows the exact H3 causal and 32px token coverage before sampling. Source audio remains protected."
+      },
+      "inputs": {},
+      "label": "Note — REF2V MASKED INPAINT — HOW TO USE"
+    },
+    {
+      "key": "n39",
+      "type": "LoadVideo",
+      "settings": {
+        "file": "soldier_crabs_bribie_island_cc0.webm"
+      },
+      "inputs": {},
+      "label": "Source Video — CC0 Soldier Crabs"
+    },
+    {
+      "key": "source_components",
+      "type": "GetVideoComponents",
+      "settings": {},
+      "inputs": {
+        "video": [
+          "n39",
+          "VIDEO"
+        ]
+      }
+    },
+    {
+      "key": "n40",
+      "type": "MiniMaxH3ContexLoopSourceAVTarget",
+      "settings": {
+        "source_fps": 24,
+        "crop": "center"
+      },
+      "inputs": {
+        "state": [
+          "n13",
+          "state"
+        ],
+        "latent": [
+          "n17",
+          "LATENT"
+        ],
+        "vae": [
+          "n4",
+          "VAE"
+        ],
+        "audio_vae": [
+          "n5",
+          "VAE"
+        ],
+        "source_frames": [
+          "source_components",
+          "images"
+        ],
+        "source_audio": [
+          "source_components",
+          "audio"
+        ],
+        "source_fps": [
+          "source_components",
+          "fps"
+        ]
+      },
+      "label": "MiniMax H3 Masking · Loop Source AV Target — FRAME-LOCK CURRENT LOOP SCENE TO SOURCE AV"
+    },
+    {
+      "key": "n41",
+      "type": "MiniMaxH3ContexMaskedTarget",
+      "settings": {
+        "mask_meaning": "white = generate",
+        "audio_mode": "preserve source audio",
+        "mask_conversion": "H3 exact (causal/token max)"
+      },
+      "inputs": {
+        "target_latent": [
+          "n18",
+          "latent"
+        ],
+        "mask": [
+          "n43",
+          "snapped_mask"
+        ]
+      },
+      "label": "MiniMax H3 Masking · Apply Target Mask — APPLY EXACT SPATIAL MASK — SOURCE AUDIO PRESERVED"
+    },
+    {
+      "key": "n42",
+      "type": "LoadImageMask",
+      "settings": {
+        "image": "soldier_crabs_inpaint_mask.png",
+        "channel": "red"
+      },
+      "inputs": {},
+      "label": "Load Image (as Mask) — STATIC MASK — REPLACE WITH TRACKED MASK BATCH"
+    },
+    {
+      "key": "n43",
+      "type": "MiniMaxH3ContexMaskGridPreview",
+      "settings": {
+        "cell_selection": "runtime exact (latent max)",
+        "cell_adjust": 0,
+        "preview_frame": 0,
+        "overlay_opacity": 0.38,
+        "show_grid": true,
+        "show_source_outline": true,
+        "mask_meaning": "white = generate"
+      },
+      "inputs": {
+        "image": [
+          "n40",
+          "scene_frames"
+        ],
+        "mask": [
+          "n46",
+          "scene_mask"
+        ]
+      },
+      "label": "MiniMax H3 Masking · Grid Preview — PREVIEW EXACT H3 32PX MASK CELLS"
+    },
+    {
+      "key": "n44",
+      "type": "PreviewImage",
+      "settings": {},
+      "inputs": {
+        "images": [
+          "n43",
+          "grid_preview"
+        ]
+      },
+      "label": "Preview Image — Verify generated 32×32 cells"
+    },
+    {
+      "key": "n45",
+      "type": "PreviewAny",
+      "settings": {},
+      "inputs": {
+        "source": [
+          "n40",
+          "status"
+        ]
+      },
+      "label": "Preview as Text — SOURCE AV ALIGNMENT STATUS"
+    },
+    {
+      "key": "n46",
+      "type": "MiniMaxH3ContexLoopMaskSlice",
+      "settings": {
+        "source_fps": 24
+      },
+      "inputs": {
+        "state": [
+          "n13",
+          "state"
+        ],
+        "mask": [
+          "n42",
+          "MASK"
+        ]
+      },
+      "label": "MiniMax H3 Masking · Loop Mask Slice — SLICE TRACKED MASK TO CURRENT LOOP SCENE"
+    },
+    {
+      "key": "n47",
+      "type": "LoadImage",
+      "settings": {
+        "image": "soldier_crabs_reference_cc0.png"
+      },
+      "inputs": {},
+      "label": "Load Image — <Picture 1> — CC0 SOLDIER CRAB APPEARANCE"
+    },
+    {
+      "key": "n48",
+      "type": "MiniMaxH3GenerationProfile",
+      "settings": {
+        "scene_continuity": "Hard picture + protected audio",
+        "audio_profile": "Generate audio"
+      },
+      "inputs": {},
+      "label": "MiniMax H3 Generation Profile — RELEASE DEFAULTS"
+    },
+    {
+      "key": "n49",
+      "type": "MiniMaxH3ProjectAssetManager",
+      "settings": {
+        "run_name": "ref2v_masked_video_inpaint_minimax_h3_0_6_json",
+        "catalog_json": "",
+        "semantic_anchor_size": "512",
+        "semantic_anchor_mode": "timestamped_video",
+        "operation_json": "",
+        "ownership_json": ""
+      },
+      "inputs": {},
+      "label": "MiniMax H3 Project Asset Carousel — IMPORT RELEASE REFERENCES"
+    },
+    {
+      "key": "n50",
+      "type": "MiniMaxH3ChainCheckpointManager",
+      "settings": {
+        "selection_json": ""
+      },
+      "inputs": {
+        "plan": [
+          "n33",
+          "plan"
+        ]
+      },
+      "label": "MiniMax H3 Checkpoint Manager — BRANCHES / PREVIEWS / RESTORE"
+    },
+    {
+      "key": "n51",
+      "type": "Note",
+      "settings": {
+        "text": "0.6 Studio quick start\n\n1. Open the Project Asset Carousel.\n2. Keep the bundled source media selected in the existing loader nodes; use the Carousel for additional project assets.\n3. Edit scenes in Production Plan or Plan Studio.\n4. Queue; inspect, branch, trim, or restore in Checkpoint Manager."
+      },
+      "inputs": {},
+      "label": "0.6 STUDIO QUICK START"
+    }
+  ],
+  "compatibility_note": "Adapted for **nightly** from the released **0.6 workflow catalog**. H3 settings and sockets are validated against nightly."
+}

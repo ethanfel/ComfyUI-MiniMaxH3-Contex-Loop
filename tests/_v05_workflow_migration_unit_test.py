@@ -89,7 +89,7 @@ def main():
     assert migrated == stable
 
     source_demo = load(
-        "example_workflows/"
+        "example_workflows/Archive/pre-0.6-nightly/"
         "Ref2V Studio Tagged Source Audio - MiniMax H3.json")
     migration.migrate(source_demo, migration.SOURCE_AUDIO_DEMO)
     assert_original_names_first(source_demo)
