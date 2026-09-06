@@ -117,6 +117,13 @@ def main():
         flow, state, _, _ = adapter.adapt(manifest, "pixel", "pixel", "{}", 1, 0, False, 18)
         reader = upscale.MiniMaxH3ChainUpscalePixelCurrent()
         conditioner = upscale.MiniMaxH3ChainUpscalePixelConditioning()
+        schema = conditioner.INPUT_TYPES()
+        assert list(schema["optional"])[-2:] == ["conditioning_width", "conditioning_height"]
+        assert list(schema["optional"])[:-2] == [
+            name for name in upscale.MiniMaxH3ChainUpscaleReferenceConditioning.INPUT_TYPES()["optional"]
+            if name not in ("video_vae", "target_video_latent")]
+        for axis in ("width", "height"):
+            assert schema["optional"][f"conditioning_{axis}"][1]["default"] == 0
         current = reader.current(state, VideoVAE())
         assert current[1].shape == (5, 32, 32, 3)
         assert current[2]["sample_rate"] == 8000 and current[4] == 1
@@ -133,6 +140,10 @@ def main():
         for bad, message in ((target[:4], "RAW RGB"), (target[..., :2], "RAW RGB"),
                              (torch.zeros(5, 64, 80, 3), "multiples of 32")):
             fails(lambda: conditioner.condition(state, Clip(), bad, VideoVAE()), message)
+        for axis in ("width", "height"):
+            for invalid in (-32, 1, 1080, 32.5, "64", None, 16416):
+                fails(lambda: conditioner.condition(state, Clip(), target, VideoVAE(),
+                      **{f"conditioning_{axis}":invalid}), f"conditioning_{axis} must be 0")
 
         # Real cache-v2 RGB master rebuild, same canvas as latent counterpart,
         # and no double scaling during the integrated sync step.
@@ -151,6 +162,28 @@ def main():
             assert torch.equal(actual["latent"], expected["latent"])
         assert torch.equal(cached[0][0][1]["tokens"]["presentation"][0]["data"],
                            latent_conditioning[0][0][1]["tokens"]["presentation"][0]["data"])
+        auto = conditioner.condition(state, Clip(), target, VideoVAE(), missing_cache="error",
+                                     conditioning_width=0, conditioning_height=0)
+        assert auto[1] is target and auto[2:] == cached[2:]
+        assert torch.equal(auto[0][0][1]["minimax_refs"][0]["latent"],
+                           cached[0][0][1]["minimax_refs"][0]["latent"])
+        # Each zero is independent: manual dimensions size reference pictures
+        # while all image outputs continue to report the true target canvas.
+        for requested, expected_size in (((32, 32), (32, 32)),
+                                         ((64, 0), (64, 64)),
+                                         ((0, 32), (96, 32))):
+            custom = conditioner.condition(state, Clip(), target, VideoVAE(), missing_cache="error",
+                conditioning_width=requested[0], conditioning_height=requested[1])
+            expected = upscale.MiniMaxH3ChainUpscaleReferenceConditioning().condition(
+                state, Clip(), "error", video_vae=VideoVAE(), _target_size=expected_size)
+            assert custom[1] is target and custom[2:4] == (96, 64)
+            assert "conditioning canvas %dx%d" % expected_size in custom[-1]
+            assert torch.equal(custom[0][0][1]["minimax_refs"][0]["latent"],
+                               expected[0][0][1]["minimax_refs"][0]["latent"])
+            assert torch.equal(custom[0][0][1]["tokens"]["presentation"][0]["data"],
+                               expected[0][0][1]["tokens"]["presentation"][0]["data"])
+        assert custom[0][0][1]["minimax_refs"][0]["latent"].shape != \
+            cached[0][0][1]["minimax_refs"][0]["latent"].shape
         # Connected references follow the same target path, not source size.
         refs = chain.MiniMaxH3TaggedPictureReference().add(torch.ones(1, 64, 128, 3), "detail")[0]
         connected = conditioner.condition(state, Clip(), target, VideoVAE(),
@@ -158,12 +191,26 @@ def main():
         assert "canvas=96x64" in connected[-1]
         assert torch.equal(connected[0][0][1]["minimax_refs"][0]["latent"],
                            cached[0][0][1]["minimax_refs"][0]["latent"])
+        connected_custom = conditioner.condition(state, Clip(), target, VideoVAE(),
+            tagged_references=refs, prompt_override="@detail in a quiet room.",
+            override_ref_image_size="match", conditioning_width=32, conditioning_height=32)
+        cached_custom = conditioner.condition(state, Clip(), target, VideoVAE(), missing_cache="error",
+                                             conditioning_width=32, conditioning_height=32)
+        assert connected_custom[1] is target and connected_custom[2:4] == (96, 64)
+        assert "canvas=32x32" in connected_custom[-1]
+        assert torch.equal(connected_custom[0][0][1]["minimax_refs"][0]["latent"],
+                           cached_custom[0][0][1]["minimax_refs"][0]["latent"])
         maximum = conditioner.condition(state, Clip(), target, VideoVAE(),
             tagged_references=refs, prompt_override="@detail in a quiet room.", override_ref_image_size="max")
         maximum_large = conditioner.condition(state, Clip(), torch.zeros(5, 96, 128, 3), VideoVAE(),
             tagged_references=refs, prompt_override="@detail in a quiet room.", override_ref_image_size="max")
         assert torch.equal(maximum[0][0][1]["minimax_refs"][0]["latent"],
                            maximum_large[0][0][1]["minimax_refs"][0]["latent"])
+        maximum_custom = conditioner.condition(state, Clip(), target, VideoVAE(),
+            tagged_references=refs, prompt_override="@detail in a quiet room.", override_ref_image_size="max",
+            conditioning_width=32, conditioning_height=32)
+        assert torch.equal(maximum[0][0][1]["minimax_refs"][0]["latent"],
+                           maximum_custom[0][0][1]["minimax_refs"][0]["latent"])
         # Keyframes/motion scale once; native audio tensor and time stay intact.
         audio_ref = torch.ones(1, 32, 2, 9)
         keyframe = torch.ones(1, 24, 2, 2, 2)
@@ -171,7 +218,8 @@ def main():
             "minimax_refs": [{"kind": "audio", "latent": audio_ref}]}]]
         with patch.object(upscale.MiniMaxH3ChainUpscaleReferenceConditioning, "condition",
                           return_value=(conditioning, "test", False, "test")):
-            synced = conditioner.condition(state, Clip(), target, VideoVAE())[0][0][1]
+            synced = conditioner.condition(state, Clip(), target, VideoVAE(),
+                conditioning_width=32, conditioning_height=32)[0][0][1]
         assert synced["minimax_keyframes"][0]["latent"].shape == (1, 24, 2, 4, 6)
         assert synced["minimax_keyframes"][0]["frame"] == 3
         assert synced["minimax_refs"][0]["latent"] is audio_ref

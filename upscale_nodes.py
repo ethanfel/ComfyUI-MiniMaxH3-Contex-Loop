@@ -1782,7 +1782,7 @@ class MiniMaxH3ChainUpscaleReferenceConditioning:
 
 
 class MiniMaxH3ChainUpscalePixelConditioning:
-    """Rebuild and synchronize in one step using real IMAGE dimensions."""
+    """Rebuild references with optional sizing; sync spatial inputs to IMAGE."""
 
     EXPERIMENTAL = True
 
@@ -1793,7 +1793,7 @@ class MiniMaxH3ChainUpscalePixelConditioning:
         schema["required"]["video_vae"] = schema["optional"].pop("video_vae")
         schema["required"]["images"] = ("IMAGE", {
             "tooltip": "Actual upscaled RAW images BEFORE USDU/refinement. "
-                       "Their width/height drive reference rebuilding. Connect "
+                       "Their width/height drive automatic reference sizing. Connect "
                        "the same images to the image refiner; no latent encode "
                        "or guessed scale multiplier is needed."})
         schema["required"]["method"] = (CONDITIONING_SYNC_METHODS, {
@@ -1801,30 +1801,44 @@ class MiniMaxH3ChainUpscalePixelConditioning:
             "tooltip": "Interpolation for eligible cached video/keyframe "
                        "latents. Match picture refs are rebuilt from RGB "
                        "masters; max pictures and audio remain unchanged."})
+        for axis in ("width", "height"):
+            schema["optional"][f"conditioning_{axis}"] = ("INT", {
+                "default": 0, "min": 0, "max": 16384, "step": 32,
+                "tooltip": f"Reference-conditioning canvas {axis}. 0 uses the "
+                           f"actual image {axis}; a positive multiple of 32 "
+                           "overrides only this axis. Sizes cached or connected "
+                           "match picture refs, not output images or keyframes. "
+                           "Max picture policy remains unchanged. Use a new "
+                           "upscale profile when changing this setting."})
         return schema
 
     RETURN_TYPES = ("CONDITIONING", "IMAGE", "INT", "INT", "STRING", "BOOLEAN", "STRING")
     RETURN_NAMES = ("positive", "images", "width", "height", "compiled_prompt",
                     "reference_cache_used", "status")
     OUTPUT_TOOLTIPS = (
-        "Target-sized positive conditioning. Connect to a fresh Basic Guider.",
+        "Positive conditioning with automatic or custom reference sizing. "
+        "Connect to a fresh Basic Guider.",
         "Unchanged upscaled RAW images for the pixel refiner.",
         "Measured target width.", "Measured target height.",
         "Actual encoded pass-2 prompt.", "Whether an automatic cache was restored.",
-        "Target size, scale, cache and motion-reference policy.",
+        "Actual image size, reference size, scale, cache and motion-reference policy.",
     )
     FUNCTION = "condition"
     CATEGORY = "conditioning/minimax/context_loop/upscale"
     DESCRIPTION = (
         "Experimental IMAGE-driven pass-2 conditioning. Combines reference "
         "restore and spatial synchronization without an upscaled latent. "
+        "conditioning_width/height=0 follow the images; positive values "
+        "override only the reference-conditioning canvas. Output images and "
+        "keyframes stay aligned to the actual canvas. "
         "The actual image canvas must be H3-aligned (multiples of 32); no "
         "silent resize, video encoding, audio sampling or prefix masking occurs.")
 
     def condition(self, state, clip, images, video_vae, method="bilinear",
                   missing_cache="text_only", motion_ref_mode="exclude_video_keep_audio",
                   prompt_override="", tagged_references=None, audio_vae=None,
-                  override_ref_image_size="inherit", override_reference_policy="strict"):
+                  override_ref_image_size="inherit", override_reference_policy="strict",
+                  conditioning_width=0, conditioning_height=0):
         if method not in CONDITIONING_SYNC_METHODS:
             raise ValueError("Unknown H3 conditioning sync method %r." % method)
         source = _source_segment(state)
@@ -1838,6 +1852,16 @@ class MiniMaxH3ChainUpscalePixelConditioning:
             raise ValueError("Pixel target %dx%d is not H3-aligned. Resize the images "
                              "to multiples of 32 before conditioning and refinement." %
                              (width, height))
+        reference_size = []
+        for axis, value, automatic in (
+                ("width", conditioning_width, width),
+                ("height", conditioning_height, height)):
+            if (not isinstance(value, int) or value < 0 or value > 16384
+                    or value % 32):
+                raise ValueError(
+                    "conditioning_%s must be 0 (auto) or a positive "
+                    "multiple of 32 up to 16384." % axis)
+            reference_size.append(value or automatic)
         compatibility = state["source_manifest"].get("compatibility") or {}
         source_width, source_height = (int(compatibility.get(key, 0))
                                        for key in ("width", "height"))
@@ -1850,12 +1874,20 @@ class MiniMaxH3ChainUpscalePixelConditioning:
                 tagged_references=tagged_references, audio_vae=audio_vae,
                 override_ref_image_size=override_ref_image_size,
                 override_reference_policy=override_reference_policy,
-                _target_size=(width, height)))
+                _target_size=tuple(reference_size)))
+        # Reference pictures have already been rebuilt for the chosen canvas
+        # and are marked to avoid double scaling. Keyframes and eligible
+        # video latents still follow the real images, never the override.
         scale_x, scale_y = width / source_width, height / source_height
         positive = _sync_h3_conditioning(
             positive, scale_x, scale_y, method, "conditioning_policy")
         status += "; pixel target %dx%d (x%.4g/y%.4g); no target latent" % (
             width, height, scale_x, scale_y)
+        if conditioning_width or conditioning_height:
+            status += "; conditioning canvas %dx%d (width=%s, height=%s)" % (
+                *reference_size,
+                "manual" if conditioning_width else "auto",
+                "manual" if conditioning_height else "auto")
         chain._LOG.info("H3 %s", status)
         return positive, images, width, height, compiled, used, status
 
