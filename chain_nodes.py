@@ -26921,8 +26921,12 @@ class MiniMaxH3ChainAssemble:
             elif ffmpeg:
                 with open(concat_path, "w", encoding="utf-8") as handle:
                     for path in segment_paths:
-                        escaped = path.replace("\\", "\\\\").replace(
-                            "'", "'\\''")
+                        # FFmpeg keeps backslashes literal inside single
+                        # quotes. Doubling them corrupts UNC/mapped-drive
+                        # paths (issue #45) and POSIX names containing "\"
+                        # characters. Only apostrophes need an escape outside
+                        # the quoted span.
+                        escaped = path.replace("'", "'\\''")
                         handle.write("file '%s'\n" % escaped)
                 _write_ffmetadata(metadata_tmp, media_metadata)
                 _run_ffmpeg([
