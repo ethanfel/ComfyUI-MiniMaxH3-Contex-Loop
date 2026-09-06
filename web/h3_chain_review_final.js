@@ -891,13 +891,16 @@ function mount(node) {
     captureStatus.className = "h3r-capture-status";
     captureRow.append(captureButton, captureStatus);
 
+    function findAssetCarouselNode() {
+        return findUpstreamNode(node, ASSET_CAROUSEL_NAMES) ??
+            allNodes(app.graph).find((item) => ASSET_CAROUSEL_NAMES.has(nodeType(item)));
+    }
+
     function captureTargetProject() {
         // The Asset Carousel's project can be renamed independently of any
         // upstream Plan's run_name, so prefer reading it directly from a
         // connected (or any on-canvas) Carousel node before falling back.
-        const carouselNode = findUpstreamNode(node, ASSET_CAROUSEL_NAMES) ??
-            allNodes(app.graph).find((item) => ASSET_CAROUSEL_NAMES.has(nodeType(item)));
-        const carouselProject = carouselNode?._h3ProjectAssetCurrentProject?.();
+        const carouselProject = findAssetCarouselNode()?._h3ProjectAssetCurrentProject?.();
         if (carouselProject) return carouselProject;
         return planResumeContext(node).runName;
     }
@@ -1102,6 +1105,10 @@ function mount(node) {
                 if (!response.ok) throw new Error(body.error || `HTTP ${response.status}`);
                 captureStatus.textContent =
                     `Saved @${body.asset?.tag ?? tag} to the ${targetProject} Asset Carousel.`;
+                const carouselNode = findAssetCarouselNode();
+                if (carouselNode?._h3ProjectAssetCurrentProject?.() === targetProject) {
+                    carouselNode._h3ProjectAssetRefresh?.();
+                }
                 overlay.remove();
             } catch (captureError) {
                 error.textContent = captureError.message || String(captureError);
