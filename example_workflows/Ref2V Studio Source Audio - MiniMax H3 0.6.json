@@ -1615,7 +1615,7 @@
       "type": "MiniMaxH3ChainPlanModern",
       "pos": [
         80,
-        862
+        942
       ],
       "size": [
         1000,
@@ -1699,7 +1699,7 @@
       "type": "MiniMaxH3GenerationProfile",
       "pos": [
         80,
-        610
+        690
       ],
       "size": [
         360,
@@ -1855,7 +1855,7 @@
       ],
       "size": [
         1000,
-        330
+        410
       ],
       "flags": {},
       "order": 30,
@@ -1867,7 +1867,7 @@
         "Node name for S&R": "Note"
       },
       "widgets_values": [
-        "NIGHTLY • 0.6 BASELINE • Ref2V Studio Source Audio\n\n1. Install models and extra packs listed in example_workflows/README.md.\n2. Copy the supplied assets to ComfyUI/input; select source media where requested.\n3. Set a unique project run name, then edit scenes and the Generation Profile.\n4. Follow the numbered columns left → right and inspect the saved results.\n\nRecovery is disabled by default. Enable it only to assemble saved clips without sampling.\nWorkflow-specific setup and detailed wiring notes:\nexample_workflows/guides/Ref2V Studio Source Audio - MiniMax H3 0.6.md"
+        "NIGHTLY • 0.6 BASELINE • Ref2V Studio Source Audio\n\nSOURCE AUDIO • IMPORT YOUR SOUNDTRACK HERE\n\n1. In Project Asset Carousel, set a unique run name, then import/drop one audio file.\n2. Select its card: Audio use → Project timeline source.\n3. Keep Generation Profile → Lip-sync to source audio (already selected).\n4. Edit your scenes, then queue the workflow.\n\nThe preset alone does not load an audio file. No separate Load Audio node, AUDIO cable, or @tag is needed:\nCarousel.project_assets already carries the source track to the Plan and loop.\n\nInstall models/packs and set up supplied picture references using example_workflows/README.md.\n\nRecovery is disabled by default. Enable it only to assemble saved clips without sampling.\nWorkflow-specific setup and detailed wiring notes:\nexample_workflows/guides/Ref2V Studio Source Audio - MiniMax H3 0.6.md"
       ]
     }
   ],
