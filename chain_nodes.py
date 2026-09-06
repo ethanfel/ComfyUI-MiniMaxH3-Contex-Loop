@@ -29379,6 +29379,10 @@ def _saved_checkpoint_listing(
         "graph_hash": graph["graph_hash"],
         "summary": graph["summary"],
     })
+    from .checkpoint_variants import saved_checkpoint_variants
+    variants = saved_checkpoint_variants(_output_root(), run_name, graph["revisions"])
+    payload["processing_variants"] = variants["variants"]
+    payload["processing_variant_warnings"] = variants["warnings"]
     return payload
 
 

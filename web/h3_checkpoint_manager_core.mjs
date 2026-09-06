@@ -10,6 +10,30 @@ export function checkpointRevisionKey(scene, revision) {
     return `${Number(scene)}:${String(revision ?? "").toLowerCase()}`;
 }
 
+export const CHECKPOINT_STAGES = [
+    {id:"original", label:"Original"},
+    {id:"derope", label:"DeRoPE"},
+    {id:"latent_upscale", label:"Latent Upscale"},
+    {id:"pixel_upscale", label:"Pixel Upscale"},
+    {id:"other", label:"Other processing"},
+];
+
+export function checkpointStageVariants(payload, stage, original = null, range = null) {
+    const key = original ? checkpointRevisionKey(original.scene, original.revision) : null;
+    return (payload?.processing_variants ?? []).filter((item) => item.stage === stage
+        && (!range || (Number(item.scene) >= range.start && Number(item.scene) <= range.end))
+        && (!key || (item.originals ?? []).some((source) =>
+            checkpointRevisionKey(source.scene, source.revision) === key)));
+}
+
+export function checkpointVariantLatentStatus(record) {
+    if (!record?.latent_saved) return record?.context_steps > 0
+        ? "Continuation tail only — full latent not saved"
+        : "Not saved — preview/assembly only";
+    if (!record.ready) return "Saved latent unavailable — missing artifacts";
+    return `Full latent saved (${record.latent_layout || "unknown layout"}); not yet execution-validated`;
+}
+
 export function checkpointRevisionMap(payload) {
     return new Map((payload?.revisions ?? []).map((item) => [
         checkpointRevisionKey(item.scene, item.revision), item,

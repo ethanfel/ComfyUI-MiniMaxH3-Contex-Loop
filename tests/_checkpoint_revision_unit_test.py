@@ -246,6 +246,8 @@ async def check():
         # Exercise the listing worker synchronously in this fake server; the
         # route's asyncio.to_thread wakeup depends on ComfyUI's real event loop.
         payload = chain._saved_checkpoint_listing("revision_test")
+        assert payload["processing_variants"] == []
+        assert payload["processing_variant_warnings"] == []
         assert payload["editorial"]["chapters"][0]["text"] == "lyrics and notes"
         assert payload["editorial"]["placements"][0]["start_frame"] == 480
         assert payload["editorial"]["locked_scene_ids"] == ["scene_2"]

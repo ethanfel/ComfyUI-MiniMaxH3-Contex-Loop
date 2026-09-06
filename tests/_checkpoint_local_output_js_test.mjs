@@ -298,3 +298,70 @@ assert.equal(attachedOutput.scope_start_scene, 2);
 assert.equal(attachedOutput.lineage.at(-1).revision, attachResponse.revision);
 assert.equal(mutations, 1, "only explicit attachment writes; no automatic project activation");
 console.log("Checkpoint attachment: candidate -> alias -> chapter-only API output passes");
+
+// Processing tabs mount the real extension. Merely inspecting a derivative
+// must not retarget the execution widget, activate a branch, or delete a base.
+currentGraph = structuredClone(payload);
+currentGraph.processing_variants = [
+    {key:"demo/motion/one", scene:2, revision:"1".repeat(32), stage:"derope", profile:"motion",
+        profile_path:"demo/upscaled/motion", originals:[{scene:2, revision:b}], ready:true,
+        width:960, height:544, raw_frames:175, delivered_frames:175, latent_saved:false, context_steps:12,
+        video:{filename:"motion.mp4"}, audio:{filename:"motion.wav"}},
+    {key:"demo/motion/two", scene:2, revision:"2".repeat(32), stage:"derope", profile:"motion2",
+        profile_path:"demo/upscaled/motion2", originals:[{scene:2, revision:b}], ready:true,
+        width:960, height:544, raw_frames:175, delivered_frames:175, latent_saved:true, latent_layout:"joint_av",
+        video:{filename:"motion2.mp4"}},
+    {key:"demo/hq/one", scene:2, revision:"3".repeat(32), stage:"latent_upscale", profile:"hq",
+        profile_path:"demo/upscaled/hq", originals:[{scene:2, revision:b}], ready:true,
+        width:1920, height:1088, latent_saved:true, latent_layout:"single", video:{filename:"hq.mp4"}},
+    {key:"demo/pixel/orphan", scene:2, revision:"4".repeat(32), stage:"pixel_upscale", profile:"pixel",
+        profile_path:"demo/upscaled/pixel", originals:[], ready:false, latent_saved:false,
+        source_status:"original unavailable or source mismatch", video:{filename:"orphan.mp4"}},
+];
+const variants = makeNode();
+await settle();
+select(variants, 2, b);
+await settle();
+const originalOutput = value(variants), mutationsBefore = mutations;
+byText(variants, "DeRoPE · 2").click();
+assert.equal(byClass(variants, "h3cm-stage-tab")["role"], "tab");
+assert.equal(value(variants), originalOutput);
+assert.equal(byClass(variants, "h3cm-preview").dataset.source, "/view?filename=motion.mp4&subfolder=&type=output");
+assert.ok(elements(variants).some(item => /Continuation tail only/.test(item.textContent)));
+assert.ok(byText(variants, "Use branch locally").disabled);
+assert.ok(byText(variants, "Make branch active (project)").disabled);
+assert.ok(byText(variants, "Delete selected revision").disabled);
+select(variants, 2, "2".repeat(32));
+assert.equal(value(variants), originalOutput);
+assert.equal(byClass(variants, "h3cm-audio").hidden, true, "no stale sidecar from another take");
+assert.ok(elements(variants).some(item => /Full latent saved \(joint_av\)/.test(item.textContent)));
+const savedVariantProperties = structuredClone(variants.properties);
+const reopenedVariant = makeNode(originalOutput, savedVariantProperties);
+await settle();
+assert.equal(byClass(reopenedVariant, "h3cm-preview").dataset.source, "/view?filename=motion2.mp4&subfolder=&type=output");
+assert.equal(reopenedVariant.properties.h3_checkpoint_manager_scene, 2,
+    "restoring a processing view must not promote its source selection to the deepest original tip");
+assert.equal(value(reopenedVariant), originalOutput, "reopening a processing tab never rewrites original output");
+byText(variants, "S1 · not saved").click();
+assert.equal(byClass(variants, "h3cm-preview").src, undefined, "missing stage does not impersonate original preview");
+assert.equal(value(variants), originalOutput, "even browsing another scene in a derivative tab leaves output unchanged");
+byText(variants, "Latent Upscale · 1").click();
+select(variants, 2, "3".repeat(32));
+assert.equal(value(variants), originalOutput);
+assert.match(byClass(variants, "h3cm-preview").src, /hq.mp4/);
+byText(variants, "Pixel Upscale · 1").click();
+select(variants, 2, "4".repeat(32));
+assert.ok(elements(variants).some(item => item.textContent === "original unavailable or source mismatch"));
+assert.equal(value(variants), originalOutput);
+byText(reopenedVariant, "Original · 4").click();
+assert.equal(value(reopenedVariant), originalOutput);
+assert.equal(mutations, mutationsBefore, "no processing-tab operation mutates the project");
+byText(reopenedVariant, "DeRoPE · 2").click();
+currentGraph.processing_variants = currentGraph.processing_variants.filter(item => item.key !== "demo/motion/two");
+reopenedVariant._h3CheckpointManagerRefresh();
+await settle();
+assert.equal(byClass(reopenedVariant, "h3cm-preview").src, undefined,
+    "a removed explicitly browsed take does not become another saved take on refresh");
+assert.match(byClass(reopenedVariant, "h3cm-prompt").textContent, /previously browsed processing take is unavailable/);
+assert.equal(value(reopenedVariant), originalOutput);
+console.log("Checkpoint processing tabs: retained takes, previews, missing versions, saved view, and output isolation pass");

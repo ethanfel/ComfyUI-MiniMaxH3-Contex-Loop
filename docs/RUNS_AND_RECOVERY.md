@@ -292,6 +292,33 @@ This first release does not bulk-delete branches. The leaf-first workflow makes
 the exact context consequences visible and avoids silently orphaning later
 checkpoints.
 
+### Saved processing tabs
+
+Checkpoint Manager has **Original**, **DeRoPE**, and **Latent Upscale** tabs.
+**Pixel Upscale** and **Other processing** also appear when those saved profiles
+exist. Chapter filtering applies to the processing views. The original branch
+rows stay in place, with each clip's saved processing takes shown beneath its
+source revision, including retained older takes and multiple profiles.
+
+The catalogue reads the existing `upscaled/<profile>/checkpoints/` directories
+at run and chapter scope. It matches both source revision and checkpoint hash;
+scene number alone never attaches a take to another branch. Attributed aliases
+with matching saved content can share versions. Unresolved sources remain
+visible in a separate section. Stage labels come from the saved recipe/backend,
+not the profile folder name; the bundled combined LBH + DeRoPE recipe appears
+under DeRoPE at its actual saved resolution.
+
+These tabs currently **browse saved versions**, not select a downstream
+processing source. Switching tabs or inspecting a derivative does not rewrite
+`selected_manifest`, move a local pin, activate a branch, restore a Plan, or
+delete an original checkpoint. Those actions remain in Original. Automatic
+DeRoPE-to-latent-upscale source routing is a separate follow-up.
+
+The inspector reports canvas, RAW/delivered frames, audio route, full-latent
+save status, profile and metadata location. A continuation tail is explicitly
+not a full latent. Listing checks file availability without loading tensors or
+hashing every large checkpoint; availability is not execution validation.
+
 ### Alternate final-cut takes
 
 Use an alternate when one accepted scene needs a prompt-level visual correction
@@ -486,6 +513,36 @@ scenes can still become two to three times longer internally. Narrow the
 adapter's scene range or reduce oracle aggressiveness when RAM or wall time is
 too high. Spatial upscale and de-rope remain in the same regeneration pass so
 a later independent upscale cannot undo the recovered motion timing.
+
+#### Saving DeRoPE for a later deferred pass
+
+The current combined example already wires recovered frames through VAE Encode
+and **Chain Recovered AV**, and sends that recovered latent to Upscale Segment
+Save and Loop End. However, the example's Adapter has **save_latent OFF**: the
+video/audio output and any required continuation tail are saved, not the entire
+reusable latent. Existing preview-only results do not gain a latent by opening
+their new DeRoPE tab.
+
+For a separate later latent-upscale pass, a DeRoPE save needs:
+
+- `save_latent` enabled **before rendering**, with Recovered AV connected to
+  Segment Save's `upscaled_latent`. Enabling it changes the profile configuration;
+  use a new profile instead of resuming a prefix saved with the old setting.
+- A full video latent re-encoded **after Exact Recover** on the original RAW
+  clock, including the continuation head (the saver trims delivered pixels
+  separately). Recovered AV checks the H3 temporal length; a stretched pass-2
+  intermediate is not a recovered output.
+- Aligned recovered audio where appropriate. A deferred video-only latent is
+  allowed today, so a future source loader must distinguish that layout from
+  joint AV and explicitly obtain its audio stream from the matching source.
+- Source revision/hash and reference-cache provenance retained through each
+  stage. Saved child tensors use `upscaled_video`/`upscaled_audio` or
+  `upscaled_samples`, while Current Scene's original loader expects
+  `denoised_video`/`denoised_audio` or `video`/`audio`. Browsing these files does
+  not yet adapt that storage/layout contract into a new source manifest.
+
+This is the saving audit for deferred stage chaining, not a change to existing
+workflow defaults or a claim that the automatic source fallback is implemented.
 
 When pass 2 should use a different reference set, insert **Upscale Reference +
 Prompt Override** on the normal `H3_TAGGED_REFERENCES` line and connect its
