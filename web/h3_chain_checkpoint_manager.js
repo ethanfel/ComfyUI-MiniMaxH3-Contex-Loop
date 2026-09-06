@@ -6,6 +6,7 @@ import {
     checkpointVariantLatentStatus,
     checkpointBranchRows,
     checkpointChapterBranchRows,
+    checkpointOutputBranchTip,
     checkpointActivationMode,
     checkpointDeletionTitle,
     checkpointDependencyText,
@@ -17,7 +18,7 @@ import {
     checkpointOutputSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.7.10";
+} from "./h3_checkpoint_manager_core.mjs?v=0.7.11";
 import {
     parsePlanJson,
     planToJson,
@@ -319,7 +320,7 @@ function mount(node) {
                 ? node.properties[COLLAPSED_CHAPTERS_PROPERTY].map(String) : [],
         ),
         previewHeight:previewHeight(node.properties[PREVIEW_HEIGHT_PROPERTY]),
-        selected:null, deletion:null, busy:false, requestToken:0,
+        selected:null, outputTip:null, previewTip:null, deletion:null, busy:false, requestToken:0,
         initialRefresh:true, attribution:null, attributionButton:null,
     };
     const root = element("div", "h3cm-root");
@@ -344,7 +345,7 @@ function mount(node) {
     const outputScope = element("select", "h3cm-output-scope");
     outputScope.title = "Output scope only; never changes the project's active branch. Chapter output keeps original scene numbers.";
     outputScope.setAttribute("aria-label", "Checkpoint output scope");
-    for (const [value, label] of [["project", "Through selected scene (all chapters)"], ["chapter", "Selected chapter only"]]) {
+    for (const [value, label] of [["project", "Selected branch + earlier chapters"], ["chapter", "Selected chapter only"]]) {
         const option = element("option", "", label);
         option.value = value;
         outputScope.append(option);
@@ -360,10 +361,10 @@ function mount(node) {
         render();
     });
     const useLocal = button("Use branch locally",
-        "Pin the browsed lineage to selected_manifest in this workflow only. No project activation or Plan change.",
+        "Use the entire browsed branch in this workflow. Previewing an earlier clip does not trim it. Set the processing range downstream. No project activation or Plan change.",
         () => pinLocalOutput());
-    const followSelection = button("Follow browsing",
-        "Release the local pin: selected_manifest will follow the browsed revision again. The project's active branch is unchanged.",
+    const followSelection = button("Follow branch selection",
+        "Release the local pin: output follows branch selections, not clip previews. The project's active branch is unchanged.",
         () => releaseLocalOutput());
     outputRow.append(outputSummary, outputScope, useLocal, followSelection);
     const chapterTabs = element("div", "h3cm-chapter-tabs");
@@ -531,8 +532,8 @@ function mount(node) {
             previousChapter !== state.chapterTab || previousScope !== outputScope.value;
         if (selectionWidget && state.stage === "original") {
             const value = checkpointOutputSelectionJson(
-                selectionWidget.value, state.payload, state.runName, state.selected,
-                selectedChapterRange(), outputScope.value);
+                selectionWidget.value, state.payload, state.runName, state.outputTip,
+                chapterRangeFor(state.outputTip), outputScope.value);
             if (selectionWidget.value !== value) {
                 selectionWidget.value = value;
                 selectionWidget.callback?.(value);
@@ -553,10 +554,13 @@ function mount(node) {
     function pinLocalOutput() {
         if (state.stage !== "original" || state.busy || state.attribution || !selectionWidget) return;
         try {
+            const tip = state.previewTip;
+            if (!tip) throw new Error("Choose a branch heading first; this clip belongs to more than one branch.");
             writeOutputSelection(checkpointLocalSelectionJson(
-                state.payload, state.runName, state.selected, selectedChapterRange(), outputScope.value));
+                state.payload, state.runName, tip, chapterRangeFor(tip), outputScope.value));
+            state.outputTip = tip;
             status.className = "h3cm-status";
-            status.textContent = "Output pinned to this workflow. Project active branch and connected Plan unchanged.";
+            status.textContent = "Whole branch saved for this workflow. Set start/end on the downstream range selector. Project active branch and connected Plan unchanged.";
             render();
         } catch (error) {
             status.className = "h3cm-status h3cm-error";
@@ -566,10 +570,12 @@ function mount(node) {
 
     function releaseLocalOutput() {
         if (state.stage !== "original" || state.busy || !checkpointLocalSelection(selectionWidget?.value)) return;
+        if (!state.previewTip) return;
+        state.outputTip = state.previewTip;
         writeOutputSelection(checkpointSelectionJson(
-            state.payload, state.runName, state.selected, selectedChapterRange(), outputScope.value));
+            state.payload, state.runName, state.outputTip, chapterRangeFor(state.outputTip), outputScope.value));
         status.className = "h3cm-status";
-        status.textContent = "Output follows browsing again. Project active branch unchanged.";
+        status.textContent = "Output follows whole-branch selections. Clip previews do not change the processing range.";
         render();
     }
 
@@ -584,8 +590,11 @@ function mount(node) {
         const local = checkpointLocalSelection(selectionWidget?.value);
         outputScope.disabled = state.busy || state.stage !== "original";
         if (local) restoreOutputScope();
-        useLocal.disabled = state.busy || Boolean(state.attribution) || !selectionWidget || !canLoadSelected();
-        followSelection.disabled = state.busy || !local || state.stage !== "original";
+        useLocal.disabled = state.busy || Boolean(state.attribution) || !selectionWidget || state.stage !== "original" || !state.previewTip?.ready;
+        useLocal.title = state.previewTip
+            ? "Save the entire browsed branch for this workflow; set start/end on the downstream range selector. No project activation or Plan change."
+            : "Choose a branch heading first. A shared clip alone does not identify which branch to use.";
+        followSelection.disabled = state.busy || !local || state.stage !== "original" || !state.previewTip;
         outputSummary.className = "h3cm-output-summary";
         if (local) {
             const tip = local.lineage?.at(-1);
@@ -602,7 +611,20 @@ function mount(node) {
                 }
             }
         } else {
-            outputSummary.textContent = "Output follows browsing · use branch locally to pin it; project activation is separate";
+            outputSummary.textContent = state.outputTip
+                ? `Output branch · scenes ${outputScope.value === "chapter" ? chapterRangeFor(state.outputTip).start : 1}–${state.outputTip.scene} · clip clicks preview only; set the processing range downstream`
+                : "Choose a branch heading for output · clip clicks preview only";
+        }
+        let saved = local;
+        try { saved ??= JSON.parse(selectionWidget?.value || "null"); } catch { /* invalid selections fail at execution */ }
+        if (saved && state.payload && saved.run_name === state.runName) {
+            const tip = saved.lineage?.at(-1);
+            const range = {start:saved.scope_start_scene, end:saved.scope_end_scene};
+            const fullTip = checkpointOutputBranchTip(state.payload, tip, range);
+            if (!fullTip || Number(fullTip.scene) > Number(tip?.scene)) {
+                outputSummary.textContent += " · old partial selection: choose the desired branch heading"
+                    + (local ? ", then Use branch locally" : "") + " to include its later clips";
+            }
         }
         if (state.stage !== "original") outputSummary.textContent += " · processing preview only; original manifest output unchanged";
     }
@@ -647,17 +669,27 @@ function mount(node) {
             state.payload, state.selected, selectedChapterRange());
     }
 
-    function selectRevision(record, requestDeletion = true, variantKey = "") {
+    function selectRevision(record, requestDeletion = true, variantKey = "", branchTip = null) {
         state.attribution = null;
         state.variantKey = variantKey;
         node.properties[VARIANT_PROPERTY] = variantKey;
         state.selected = record;
         state.scene = record ? Number(record.scene) : null;
         state.revision = record ? String(record.revision) : "";
+        if (state.stage === "original") {
+            state.previewTip = branchTip ?? checkpointOutputBranchTip(
+                state.payload, record, chapterRangeFor(record), state.previewTip ?? state.outputTip);
+        }
         state.deletion = null;
         persistSelection();
         render();
         if (record && requestDeletion && state.stage === "original") void refreshDeletionPreview();
+    }
+
+    function selectOutputBranch(tip) {
+        if (state.stage !== "original") return;
+        state.outputTip = tip;
+        selectRevision(tip, true, "", tip);
     }
 
     function stageLabel() {
@@ -687,6 +719,8 @@ function mount(node) {
         state.deletion = null;
         state.requestToken += 1;
         node.properties[STAGE_PROPERTY] = stage;
+        if (stage === "original") state.previewTip = checkpointOutputBranchTip(
+            state.payload, state.selected, chapterRangeFor(state.selected));
         node.graph?.setDirtyCanvas?.(true, true);
         // A view switch never writes selection_json or promotes a branch.
         render();
@@ -765,7 +799,11 @@ function mount(node) {
     }
 
     function selectedChapterRange() {
-        const scene = Number(state.selected?.scene);
+        return chapterRangeFor(state.selected);
+    }
+
+    function chapterRangeFor(record) {
+        const scene = Number(record?.scene);
         const ranges = chapterRanges();
         const selected = ranges.find((range) =>
             scene >= range.start && scene <= range.end);
@@ -882,18 +920,18 @@ function mount(node) {
             const header = element("div", "h3cm-branch-head");
             const tip = branch.revisions.at(-1) ?? null;
             const selectedTip = Boolean(tip &&
-                Number(state.selected?.scene) === Number(tip.scene) &&
-                String(state.selected?.revision) === String(tip.revision));
+                Number(state.previewTip?.scene) === Number(tip.scene) &&
+                String(state.previewTip?.revision) === String(tip.revision));
             if (selectedTip) row.classList.add("h3cm-branch-selected");
             if (tip) {
                 header.role = "button";
                 header.tabIndex = 0;
-                header.title = `Select this branch through scene ${tip.scene}`;
-                header.addEventListener("click", () => selectRevision(tip));
+                header.title = `Select this whole branch (ends at scene ${tip.scene}); set start/end downstream`;
+                header.addEventListener("click", () => selectOutputBranch(tip));
                 header.addEventListener("keydown", (event) => {
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
-                    selectRevision(tip);
+                    selectOutputBranch(tip);
                 });
             }
             const name = element("span", branch.active ? "h3cm-branch-active" : "", branch.active ? "Project active branch" : branch.label);
@@ -907,7 +945,7 @@ function mount(node) {
                 const card = button(
                     `S${revision.scene} · ${revision.revision.slice(0, 8)}`,
                     revision.prompt_preview || revision.scene_id,
-                    () => selectRevision(revision), "h3cm-revision",
+                    () => selectRevision(revision, true, "", tip), "h3cm-revision",
                 );
                 const selected = state.selected?.scene === revision.scene &&
                     state.selected?.revision === revision.revision;
@@ -1347,6 +1385,17 @@ function mount(node) {
                 `/minimax_h3_context_loop/checkpoints?${query}`,
                 {cache:"no-store"},
             );
+            // Output is a branch selection, independent of the preview cursor.
+            // Preserve old snapshots on reload; never guess a descendant of a
+            // shared ancestor. The output row explains how to replace an old
+            // partial pin with an explicitly chosen whole branch.
+            let savedOutput = null;
+            try { savedOutput = JSON.parse(selectionWidget?.value || "null"); } catch { /* validated at execution */ }
+            const savedTip = savedOutput?.run_name === state.runName ? savedOutput.lineage?.at(-1) : null;
+            state.outputTip = savedTip
+                ? (state.payload.revisions ?? []).find(item => checkpointRevisionKey(item.scene, item.revision)
+                    === checkpointRevisionKey(savedTip.scene, savedTip.revision)) ?? savedTip
+                : selectedCheckpointRevision(state.payload);
             let selected = selectedCheckpointRevision(
                 state.payload, state.scene, state.revision);
             if (state.stage === "original" && state.initialRefresh && !checkpointLocalSelection(selectionWidget?.value)) {
@@ -1615,6 +1664,11 @@ function mount(node) {
             state.scene = Number(payload.scene);
             state.revision = String(payload.revision);
             await refreshCheckpoints();
+            // Attachment is an explicit branch edit, unlike a preview click.
+            const attached = (state.payload?.revisions ?? []).find(item =>
+                Number(item.scene) === Number(payload.scene) && item.revision === payload.revision);
+            if (attached) selectOutputBranch(checkpointOutputBranchTip(
+                state.payload, attached, chapterRangeFor(attached)) ?? attached);
             status.className = "h3cm-status";
             status.textContent = payload.message;
         } catch (error) {
@@ -1802,6 +1856,7 @@ function mount(node) {
         state.runName = runSelect.value;
         state.payload = null;
         state.selected = null;
+        state.outputTip = state.previewTip = null;
         state.scene = null;
         state.revision = "";
         persistSelection();

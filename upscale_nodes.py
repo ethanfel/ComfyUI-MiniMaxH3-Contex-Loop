@@ -871,6 +871,38 @@ def _load_previous_upscaled_context(
     return {"samples": context}, route
 
 
+def _upscale_source_contract(source: dict[str, Any]) -> str:
+    """Per-scene inputs; selection endpoints/editorial bookkeeping aren't inputs."""
+    return chain._fingerprint({key: source.get(key) for key in (
+        "index", "id", "revision", "checkpoint_sha256", "segment_sha256",
+        "raw_frames", "delivered_frames", "sample_rate", "prompt", "prompt_hash",
+        "seed", "steps", "width", "height", "resolution", "audio_mode",
+        "continuation_mode", "context_length", "audio_context_length",
+        "visual_context_blocks", "source_audio", "source_audio_timing",
+        "reference_cache", "generation_fingerprint",
+    )})
+
+
+def _verify_upscale_source(metadata: dict[str, Any], source: dict[str, Any],
+                           index: int) -> None:
+    segment = metadata["segment"]
+    for saved_key, source_key in (
+            ("source_revision", "revision"),
+            ("source_checkpoint_sha256", "checkpoint_sha256"),
+            ("source_segment_sha256", "segment_sha256")):
+        if not source.get(source_key) or segment.get(saved_key) != source[source_key]:
+            raise ValueError("Upscale scene %d points to a different source revision or media." % index)
+    # These fields were persisted before per-scene contracts existed, so old
+    # HQ saves can resume an extended branch without rewriting their metadata.
+    for key in ("raw_frames", "delivered_frames", "prompt", "prompt_hash", "seed", "steps"):
+        expected = str(source.get(key) or "") if key in ("prompt", "prompt_hash") else source.get(key)
+        if segment.get(key) != expected:
+            raise ValueError("Upscale scene %d used different source timing or settings (%s)." % (index, key))
+    saved_contract = metadata.get("source_scene_contract")
+    if saved_contract and saved_contract != _upscale_source_contract(source):
+        raise ValueError("Upscale scene %d used different source scene settings." % index)
+
+
 def _load_upscale_prefix(state: dict[str, Any], start_clip: int
                          ) -> list[dict[str, Any]]:
     values = []
@@ -883,8 +915,9 @@ def _load_upscale_prefix(state: dict[str, Any], start_clip: int
         metadata = chain._read_json(paths["metadata"])
         if metadata.get("format") != "h3_chain_upscale_segment_v1":
             raise ValueError("Upscale scene %d metadata has an unknown format." % index)
-        if metadata.get("source_manifest_hash") != state["source_manifest_hash"]:
-            raise ValueError("Upscale scene %d belongs to a different source branch." % index)
+        if (metadata.get("run_name") != state["run_name"] or
+                metadata.get("profile") != state["profile"]):
+            raise ValueError("Upscale scene %d belongs to a different run or profile." % index)
         if metadata.get("profile_config_hash") != state["profile_config"]["config_hash"]:
             raise ValueError("Upscale scene %d used different profile settings." % index)
         segment = metadata.get("segment")
@@ -892,10 +925,7 @@ def _load_upscale_prefix(state: dict[str, Any], start_clip: int
             raise ValueError("Upscale scene %d metadata has no segment." % index)
         _verify_upscale_segment(segment, index)
         source = _source_segment(state, index)
-        if (segment.get("source_revision") != source.get("revision") or
-                segment.get("source_checkpoint_sha256") !=
-                source.get("checkpoint_sha256")):
-            raise ValueError("Upscale scene %d points to a different source revision." % index)
+        _verify_upscale_source(metadata, source, index)
         values.append(_public_upscale_segment(segment))
     return values
 
@@ -1036,7 +1066,11 @@ class MiniMaxH3ChainUpscaleAdapter:
             start = first if int(start_clip) == 1 else int(start_clip)
             stop = last if int(end_clip) == 0 else int(end_clip)
             if start < first or start > last:
-                raise ValueError("start_clip must be 1 (first selected scene) or between %d and %d." % (first, last))
+                raise ValueError(
+                    "start_clip must be 1 (first selected scene) or between %d and %d. "
+                    "Use original scene numbers, not chapter-relative positions. "
+                    "Checkpoint Manager supplied scenes %d–%d; choose the whole branch "
+                    "there if later scenes are missing." % (first, last, first, last))
             if stop < start or stop > last:
                 raise ValueError("end_clip must be between start_clip and %d." % last)
             state = {
@@ -2352,6 +2386,7 @@ class MiniMaxH3ChainUpscaleSegmentSave:
                 "run_name": state["run_name"],
                 "profile": state["profile"],
                 "source_manifest_hash": state["source_manifest_hash"],
+                "source_scene_contract": _upscale_source_contract(source),
                 "profile_config_hash": state["profile_config"]["config_hash"],
                 "profile_config": state["profile_config"],
                 "segment": segment,

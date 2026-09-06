@@ -143,8 +143,18 @@ assert.equal(mutations, 0);
 const first = makeNode(), second = makeNode();
 await settle();
 assert.equal(JSON.parse(value(first)).lineage.at(-1).revision, d, "legacy default still follows selection");
+const wholeActive = value(first);
+select(first, 2, b); await settle();
+assert.equal(value(first), wholeActive, "previewing an earlier clip cannot truncate output");
+select(first, 1, a); await settle();
+assert.equal(value(first), wholeActive, "even a shared ancestor is preview-only");
+byText(first, "Use branch locally").click();
+assert.equal(JSON.parse(value(first)).lineage.at(-1).revision, d,
+    "Use branch locally chooses the clicked row's full branch, not the previewed ancestor");
+byText(first, "Follow branch selection").click();
 select(first, 2, c);
 await settle();
+assert.equal(value(first), wholeActive, "previewing a different branch alone does not change output");
 byText(first, "Use branch locally").click();
 const pin = value(first), otherBefore = value(second);
 assert.equal(pin, local);
@@ -214,7 +224,7 @@ assert.equal(JSON.parse(value(first)).run_name, "other");
 select(second, 2, c); await settle();
 byText(second, "Use branch locally").click();
 select(second, 3, d); await settle();
-byText(second, "Follow browsing").click();
+byText(second, "Follow branch selection").click();
 assert.equal(core.checkpointLocalSelection(value(second)), null);
 assert.equal(JSON.parse(value(second)).lineage.at(-1).revision, d);
 assert.equal(mutations, 0, "local use, release, browsing and reload never call project mutation APIs");
@@ -365,3 +375,49 @@ assert.equal(byClass(reopenedVariant, "h3cm-preview").src, undefined,
 assert.match(byClass(reopenedVariant, "h3cm-prompt").textContent, /previously browsed processing take is unavailable/);
 assert.equal(value(reopenedVariant), originalOutput);
 console.log("Checkpoint processing tabs: retained takes, previews, missing versions, saved view, and output isolation pass");
+
+// Reproduce the reported Chapter 2 pin at scene 8, shared with another branch.
+currentGraph = structuredClone(payload);
+currentGraph.revisions.forEach(item => {
+    item.scene += 7;
+    if (item.parent) item.parent.scene += 7;
+});
+currentGraph.scenes = [8, 9, 10].map(scene => ({scene}));
+currentGraph.branches.forEach(branch => branch.path.forEach(item => item.scene += 7));
+// Earlier chapters are immutable timing metadata in a chapter-only selection.
+const previous = Array.from({length:7}, (_, index) => ({
+    scene:index + 1, revision:String(index + 1).repeat(32), active:true, ready:false,
+}));
+currentGraph.revisions.unshift(...previous);
+currentGraph.editorial = {chapters:[{id:"two", title:"Chapter 2", start_scene:8}]};
+const partialPin = core.checkpointLocalSelectionJson(currentGraph, "demo",
+    currentGraph.revisions[7], {start:8, end:10}, "chapter");
+const repair = makeNode(partialPin);
+await settle();
+assert.equal(value(repair), partialPin, "never guess which descendant of an old shared pin was intended");
+assert.match(byClass(repair, "h3cm-output-summary").textContent, /old partial selection/);
+const activeHeading = elements(repair).find(item => item.className.includes("h3cm-branch-head")
+    && item.children.some(child => child.textContent === "Project active branch"));
+activeHeading.click(); await settle();
+select(repair, 8, a); await settle();
+byText(repair, "Use branch locally").click();
+const fullPin = value(repair);
+assert.deepEqual(JSON.parse(fullPin).lineage.slice(-3).map(item => item.scene), [8, 9, 10]);
+assert.equal(JSON.parse(fullPin).lineage.at(-1).revision, d);
+assert.equal(JSON.parse(fullPin).scope_start_scene, 8);
+assert.equal(JSON.parse(fullPin).output_scope, "chapter");
+select(repair, 9, b); await settle();
+assert.equal(value(repair), fullPin);
+repair._h3CheckpointManagerRefresh(); await settle();
+assert.equal(value(repair), fullPin, "full branch remains selected through previews and refresh");
+assert.equal(core.checkpointOutputBranchTip(currentGraph, currentGraph.revisions[7], {start:8, end:10}), null,
+    "a shared ancestor alone cannot decide between two descendant branches");
+// Selecting a branch header explicitly also chooses full output in follow mode.
+const following = makeNode(); await settle();
+const alternateHeading = elements(following).find(item => item.className.includes("h3cm-branch-head")
+    && item.children.some(child => child.textContent === "Branch cccccccc"));
+alternateHeading.click(); await settle();
+assert.equal(JSON.parse(value(following)).lineage.at(-1).revision, c);
+select(following, 8, a); await settle();
+assert.equal(JSON.parse(value(following)).lineage.at(-1).revision, c);
+console.log("Checkpoint branch range: previews never trim output; explicit full-branch selection repairs legacy scene-8 pins");

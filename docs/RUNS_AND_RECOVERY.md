@@ -166,15 +166,28 @@ The node outputs only `selected_manifest`; it is not a Plan pass-through and is
 normally kept beside the generation route. Its run selector can inspect any
 other folder under `output/h3_chains`.
 
-For an experiment, select a generated branch tip and click **Use branch
-locally**. This pins the exact lineage on `selected_manifest` in this workflow
+Select a **branch heading** to choose the whole generated branch for output.
+Clicking an individual clip only previews it; it does not shorten the output
+or switch its branch. Use the downstream upscale/export range controls to
+choose which scenes to process.
+
+For an experiment, click **Use branch locally**. This saves the entire browsed
+branch (the row containing the previewed clip), not just its prefix through
+that clip. It pins the exact lineage on `selected_manifest` in this workflow
 only, including the earlier chapters included in that selection. Browsing
 other takes, refreshing, reopening the workflow, or activating another branch
 in a different tab cannot move this pin. Saved files are still verified on
 execution: a missing or corrupt pinned take fails instead of falling back to
 the project's active branch. The output row and **local output** badges show
-which revisions are pinned. **Follow browsing** releases the pin; an explicit
+which revisions are pinned. **Follow branch selection** releases the pin;
+output then follows branch-heading selections, never clip previews. An explicit
 run switch asks before releasing it. Save the workflow to keep the pin on disk.
+
+Older workflows can contain a partial pin saved while previewing an ancestor.
+The output row flags this. Choose the intended branch heading and click
+**Use branch locally** once to replace that old selection. Shared ancestors
+can lead to multiple branches, so reopening a workflow never guesses which
+descendant you intended or silently switches an existing snapshot.
 
 **Make branch active (project)**, **Roll active branch back (project)** and
 **Load selected branch** remain project-wide actions. Local selection neither
@@ -400,7 +413,7 @@ alternate muxing graphs.
 
 ### Deferred H3 upscale child runs
 
-Select the right-hand generated tip you want in Checkpoint Manager and click
+Select the generated branch heading you want in Checkpoint Manager and click
 **Use branch locally** to keep that source fixed while experimenting,
 then connect its **selected_manifest** output to **MiniMax H3 Checkpoint Upscale
 Adapter**. The manager verifies the immutable lineage and embeds recovery-only
@@ -412,7 +425,7 @@ live under `output/h3_chains/<run>/upscaled/<profile>/`; a local source pin is
 not a separate output folder and does not isolate experiments sharing a profile.
 
 To upscale or export just one chapter, set the manager's output scope to
-**Selected chapter only**, select that chapter's generated tip, and click
+**Selected chapter only**, select that chapter's branch heading, and click
 **Use branch locally**. Changing the scope of an existing local pin keeps its
 pinned tip; browsing another take does not move it. Earlier chapters may have
 different resolutions: only the selected chapter's media and compatibility are
@@ -426,6 +439,15 @@ On Upscale Adapter, `start_clip=1` starts at the first selected scene (8 here),
 `end_clip=0` means the last selected scene (10), and `start_clip=9` resumes after
 verifying scene 8's saved HQ output. No HQ prefix from Chapter 1 is required.
 Reference schedules retain their original Plan scene numbering.
+
+Extending the selected branch from scene 8 to scenes 8–10 does not invalidate
+an unchanged scene 8 upscale. Resume validates every completed scene's source
+revision and media hashes, RAW/delivered frame clock, saved prompt/sampling
+settings, and upscale profile, plus its saved output artifacts. New saves also
+record a per-scene source contract. Older saves use their existing source
+provenance without rewriting the files. The whole-manifest hash remains
+provenance, not a reason to reject an unchanged prefix when later clips are
+added. Changed completed sources or profile settings still require a new pass.
 
 Chapter upscale profiles and finals are isolated under
 `output/h3_chains/<run>/chapters/<number>_<chapter_id>/upscaled/<profile>/`.

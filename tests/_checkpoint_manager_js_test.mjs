@@ -160,7 +160,7 @@ assert.match(source, /selection_json/);
 assert.match(source, /checkpointRevisionLineage/);
 assert.match(source, /selectionWidget\.callback\?\.\(value\)/);
 assert.match(source, /node\.graph\?\.setDirtyCanvas\?\.\(true, true\)/);
-assert.match(source, /Select this branch through scene/);
+assert.match(source, /Select this whole branch/);
 assert.match(source, /checkpoint-revisions\/delete-preview/);
 assert.match(source, /checkpoint-revisions\/delete/);
 assert.match(source, /run-folder\/delete-preview/);

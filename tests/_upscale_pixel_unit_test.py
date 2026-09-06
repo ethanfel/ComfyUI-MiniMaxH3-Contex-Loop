@@ -56,6 +56,68 @@ class Clip:
         return [[torch.zeros(1, 1, 4), {"tokens": tokens}]]
 
 
+def assert_extended_selection_resume(chain, upscale, chapter_source, frames):
+    """Save only scene 8, extend to 8..10, resume 9 without redoing 8."""
+    adapter = upscale.MiniMaxH3ChainUpscaleAdapter()
+    short = copy.deepcopy(chapter_source)
+    short.update(scene_end=8, clip_count=1, segments=short["segments"][:1])
+    short["chapter"]["end_scene"] = 8
+    short["total_delivered_frames"] = short["segments"][0]["delivered_frames"]
+    short["duration_seconds"] = short["total_delivered_frames"] / 24
+    _, state, _, _ = adapter.adapt(short, "extended-prefix", "pixel", "{}", 1, 0, False, 18)
+    saved = upscale.MiniMaxH3ChainUpscaleSegmentSave().save(state, frames)["result"][0]
+    metadata_path = chain._absolute_output_path(saved["metadata"])
+    metadata = chain._read_json(metadata_path)
+    assert metadata["source_scene_contract"]
+    artifacts = {Path(chain._absolute_output_path(saved[key])) for key in (
+        "checkpoint", "segment", "revision_metadata")}
+    original = {path:path.read_bytes() for path in artifacts}
+
+    def resume(source=chapter_source, backend="pixel", recipe="{}", crf=18):
+        return adapter.adapt(source, "extended-prefix", backend, recipe, 9, 0, False, crf)[1]
+
+    extended = resume()
+    assert extended["index"] == 9 and extended["end_clip"] == 10
+    assert extended["source_manifest_hash"] != state["source_manifest_hash"]
+    assert extended["segments"][0]["revision"] == saved["revision"]
+    assert all(path.read_bytes() == data for path, data in original.items())
+    # Only completed sources matter; later scenes can be added/replaced.
+    future_changed = copy.deepcopy(chapter_source)
+    future_changed["segments"][2]["revision"] = "f" * 32
+    assert resume(future_changed)["segments"][0]["revision"] == saved["revision"]
+    for key, changed in (("revision", "f" * 32), ("checkpoint_sha256", "f" * 64),
+                         ("segment_sha256", "f" * 64), ("prompt", "Changed prompt"),
+                         ("seed", 123456), ("raw_frames", 22),
+                         ("delivered_frames", 4), ("context_length", 17)):
+        source = copy.deepcopy(chapter_source["segments"][0])
+        source[key] = changed
+        fails(lambda: upscale._verify_upscale_source(metadata, source, 8), "source")
+    fails(lambda: resume(backend="h3_latent"), "different profile settings")
+    fails(lambda: resume(recipe='{"denoise":0.5}'), "different profile settings")
+    fails(lambda: resume(crf=20), "different profile settings")
+
+    # Existing saves have no per-scene contract; the retained source hashes,
+    # frame clock, prompt, seed and steps are sufficient for this migration.
+    legacy = copy.deepcopy(metadata)
+    legacy.pop("source_scene_contract")
+    chain._atomic_json(metadata_path, legacy)
+    assert resume()["segments"][0]["revision"] == saved["revision"]
+    changed = copy.deepcopy(chapter_source)
+    changed["segments"][0]["revision"] = "f" * 32
+    fails(lambda: resume(changed), "different source revision")
+    for key, value in (("run_name", "other"), ("profile", "other")):
+        chain._atomic_json(metadata_path, {**legacy, key:value})
+        fails(resume, "different run or profile")
+    chain._atomic_json(metadata_path, legacy)
+    # Existing artifact integrity checks still run, even on an extended range.
+    damaged = copy.deepcopy(legacy)
+    damaged["segment"]["checkpoint_sha256"] = "f" * 64
+    chain._atomic_json(metadata_path, damaged)
+    fails(resume, "checkpoint")
+    chain._atomic_json(metadata_path, legacy)
+    assert all(path.read_bytes() == data for path, data in original.items())
+
+
 def assert_loop_releases_pixels(package, chain, upscale, manifest, ram_cache=False):
     """Run the real recursive Comfy executor, without models or a live server.
 
@@ -494,6 +556,7 @@ def main():
             "scene_order":[{"scene":i,"scene_id":f"chapter_scene_{i}"} for i in (8, 9, 10)],
             "chapters":[{"id":"two","start_scene_id":"chapter_scene_8"}],
         }, manifest["run_name"])
+        assert_extended_selection_resume(chain, upscale, chapter_source, target)
         before_chapter = {p:p.read_bytes() for p in Path(temporary).rglob("*") if p.is_file()}
         _, scoped_state, _, _ = adapter.adapt(chapter_source, "pixel", "pixel", "{}", 1, 0, False, 18)
         assert scoped_state["index"] == 8 and scoped_state["end_clip"] == 10

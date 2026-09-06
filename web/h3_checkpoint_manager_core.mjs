@@ -143,6 +143,21 @@ export function checkpointChapterBranchRows(payload, range) {
             - Number(left.revisions.at(-1)?.scene ?? 0));
 }
 
+// Resolve a whole branch, never use a previewed ancestor as an output range.
+// Shared ancestors are ambiguous unless the caller supplies the clicked row.
+export function checkpointOutputBranchTip(payload, selected, range = null, preferred = null) {
+    if (!selected || selected.take_kind === "editorial_alternate") return null;
+    const key = checkpointRevisionKey(selected.scene, selected.revision);
+    const rows = checkpointChapterBranchRows(payload, range).filter(branch =>
+        branch.revisions.some(item => checkpointRevisionKey(item.scene, item.revision) === key));
+    const tips = new Map(rows.map(branch => {
+        const tip = branch.revisions.at(-1);
+        return [checkpointRevisionKey(tip.scene, tip.revision), tip];
+    }));
+    const preferredKey = preferred ? checkpointRevisionKey(preferred.scene, preferred.revision) : null;
+    return tips.get(preferredKey) ?? tips.get(key) ?? (tips.size === 1 ? [...tips.values()][0] : null);
+}
+
 export function checkpointRevisionLineage(payload, selected, range = null) {
     const records = checkpointRevisionMap(payload);
     const start = Math.max(1, Number(range?.start) || 1);
