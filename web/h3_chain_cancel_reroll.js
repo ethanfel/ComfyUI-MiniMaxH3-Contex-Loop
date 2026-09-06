@@ -8,7 +8,12 @@ import {
 } from "./h3_chain_cancel_reroll_core.mjs?v=0.7.0";
 import {refreshRestoredPlanEditors} from "./h3_plan_restore_core.mjs?v=0.7.0";
 
-const CURRENT_TYPE = "MiniMaxH3ChainCurrent";
+// The compact scene expands Current Shot internally. ComfyUI routes that
+// internal node's active-scene event to the compact node's display id.
+const CURRENT_TYPES = new Set([
+    "MiniMaxH3ChainCurrent",
+    "MiniMaxH3CurrentTaggedReferenceScene",
+]);
 const PLAN_TYPE = "MiniMaxH3ChainPlan";
 const PLAN_TYPES = new Set([PLAN_TYPE, "MiniMaxH3ChainPlanModern"]);
 const START_TYPE = "MiniMaxH3ChainLoopStart";
@@ -242,7 +247,7 @@ function requireVisibleWorkflow(record) {
         throw new Error("Return to the running H3 workflow before requeueing the scene.");
     }
     const currentNode = findNodeByDisplayId(record.displayNode);
-    if (nodeType(currentNode) !== CURRENT_TYPE) {
+    if (!CURRENT_TYPES.has(nodeType(currentNode))) {
         throw new Error("Return to the running H3 workflow before requeueing the scene.");
     }
     const startNode = findUpstreamNode(currentNode, START_TYPE);
@@ -362,7 +367,7 @@ function onCurrentExecuted(data) {
     const scene = activeSceneFromOutput(data?.output);
     if (!scene || !data?.prompt_id || data?.display_node == null) return;
     const currentNode = findNodeByDisplayId(data.display_node);
-    if (nodeType(currentNode) !== CURRENT_TYPE) return;
+    if (!CURRENT_TYPES.has(nodeType(currentNode))) return;
     const startNode = findUpstreamNode(currentNode, START_TYPE);
     const planNode = findUpstreamNode(currentNode, PLAN_TYPES);
     if (!startNode || !planNode) return;
