@@ -4681,14 +4681,15 @@ def _load_reference_cache_descriptor(value: Any) -> dict[str, Any]:
     return metadata
 
 
-def _find_reference_cache(
+def _reference_cache_candidates(
         fingerprint: str, scene: int, scene_count: int, prompt: str,
-        width: int, height: int, length: int) -> dict[str, Any] | None:
-    if not str(fingerprint or "").strip():
-        return None
+        width: int, height: int, length: int,
+        semantic_contract: dict[str, str] | None = None
+        ) -> list[tuple[float, dict[str, Any]]]:
+    """Read exact scene matches from one fingerprint directory only."""
     root = _reference_cache_paths(fingerprint, scene, "lookup")["root"]
     if not os.path.isdir(root):
-        return None
+        return []
     candidates = []
     prefix = "scene_%04d." % int(scene)
     for filename in os.listdir(root):
@@ -4697,21 +4698,60 @@ def _find_reference_cache(
         path = os.path.join(root, filename)
         try:
             metadata = _read_json(path)
-        except (OSError, ValueError, json.JSONDecodeError):
+            if (not isinstance(metadata, dict)
+                    or not _is_reference_cache_format(metadata.get("format"))
+                    or metadata.get("reference_fingerprint") != str(fingerprint)
+                    or int(metadata.get("scene", -1)) != int(scene)
+                    or int(metadata.get("scene_count", -1)) != int(scene_count)
+                    or metadata.get("prompt") != str(prompt)
+                    or int(metadata.get("width", -1)) != int(width)
+                    or int(metadata.get("height", -1)) != int(height)
+                    or int(metadata.get("length", -1)) != int(length)):
+                continue
+            if semantic_contract is not None:
+                presentation = metadata.get("presentation_contract")
+                if (not isinstance(presentation, dict)
+                        or any(presentation.get(key) != value
+                               for key, value in semantic_contract.items())):
+                    continue
+            metadata.setdefault("metadata", _relative_output_path(path))
+            candidates.append((os.path.getmtime(path), metadata))
+        except (OSError, TypeError, ValueError, json.JSONDecodeError):
             continue
-        if (not _is_reference_cache_format(metadata.get("format"))
-                or metadata.get("reference_fingerprint") != str(fingerprint)
-                or int(metadata.get("scene", -1)) != int(scene)
-                or int(metadata.get("scene_count", -1)) != int(scene_count)
-                or metadata.get("prompt") != str(prompt)
-                or int(metadata.get("width", -1)) != int(width)
-                or int(metadata.get("height", -1)) != int(height)
-                or int(metadata.get("length", -1)) != int(length)):
-            continue
-        metadata.setdefault("metadata", _relative_output_path(path))
-        candidates.append((os.path.getmtime(path), metadata))
+    return candidates
+
+
+def _find_reference_cache(
+        fingerprint: str, scene: int, scene_count: int, prompt: str,
+        width: int, height: int, length: int) -> dict[str, Any] | None:
+    if not str(fingerprint or "").strip():
+        return None
+    args = (scene, scene_count, prompt, width, height, length)
+    candidates = _reference_cache_candidates(fingerprint, *args)
+    if candidates:
+        return max(candidates, key=lambda item: item[0])[1]
+
+    # Project Assets / Plan may retain the base Tagged registry fingerprint,
+    # while Tagged Ref2VA wraps it with its semantic presentation settings.
+    # Probe only hashes derived from that exact registry, never a global scan
+    # or prompt-only match. Existing checkpoints may lack a cache descriptor
+    # because Segment Save previously searched just the base directory.
+    for mode in SEMANTIC_ANCHOR_MODES:
+        for size in SEMANTIC_ANCHOR_SIZES:
+            contract = {"semantic_anchor_mode": mode,
+                        "semantic_anchor_size": size}
+            wrapped = _fingerprint({
+                "tagged_reference_fingerprint": str(fingerprint), **contract})
+            candidates.extend(_reference_cache_candidates(
+                wrapped, *args, semantic_contract=contract))
     if not candidates:
         return None
+    if len({item[1]["reference_fingerprint"] for item in candidates}) > 1:
+        raise ValueError(
+            "Multiple H3 reference caches match source scene %d with "
+            "different semantic-anchor settings, but this checkpoint has "
+            "no exact cache link. Connect explicit Tagged references to "
+            "select the intended pass-2 conditioning." % int(scene))
     return max(candidates, key=lambda item: item[0])[1]
 
 
@@ -20784,14 +20824,14 @@ class MiniMaxH3ChainSegmentSave:
                     shot["source_audio_target"])
             elif _audio_policy_locks_source_audio(plan, shot):
                 segment["source_audio_target"] = "locked"
-            cache_metadata = _find_reference_cache(
-                str(plan["compatibility"].get(
-                    "generation_fingerprint") or ""),
-                index, len(plan["shots"]), str(shot["prompt"]),
-                scene_resolution(plan, index)["width"],
-                scene_resolution(plan, index)["height"],
-                int(shot["raw_frames"]))
             try:
+                cache_metadata = _find_reference_cache(
+                    str(plan["compatibility"].get(
+                        "generation_fingerprint") or ""),
+                    index, len(plan["shots"]), str(shot["prompt"]),
+                    scene_resolution(plan, index)["width"],
+                    scene_resolution(plan, index)["height"],
+                    int(shot["raw_frames"]))
                 if cache_metadata is not None:
                     cache_metadata = _adopt_reference_cache_for_run(
                         plan, cache_metadata)
