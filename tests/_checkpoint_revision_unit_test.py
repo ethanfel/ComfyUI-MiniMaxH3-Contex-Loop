@@ -543,7 +543,7 @@ async def check():
             "scene": 1, "revision": parent_b}
         assert alias_record["adopted_from_revision"] == candidate_token
         assert not any(
-            branch.get("attribution_slot")
+            (branch.get("attribution_slot") or {}).get("candidates")
             for branch in attached_graph["branches"]
             if branch["leaf_revision"] == parent_b)
 

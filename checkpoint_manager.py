@@ -389,6 +389,66 @@ class CheckpointGraphManager:
                 adopted, "" if adopted == 1 else "s", run)
         return adopted
 
+    @classmethod
+    def select_active_lineage(
+            cls, segments: dict[int, dict[str, Any]], chapter_starts=()
+            ) -> tuple[dict[int, dict[str, Any]], dict[int, str]]:
+        """Select coherent chapter prefixes, without modifying saved pointers.
+
+        A single-scene rerender can leave canonical pointers belonging to the
+        old branch. Their files remain recoverable, but they are not selected
+        until that lineage is explicitly activated or attributed again.
+        """
+        active, stale = {}, {}
+        roots = {1, *chapter_starts}
+        for scene, segment in sorted(segments.items()):
+            reason = ""
+            if scene not in roots:
+                parent = active.get(scene - 1)
+                if parent is None:
+                    reason = "The preceding scene is not on the active chapter branch."
+                else:
+                    expected = str(
+                        segment.get("predecessor_revision") or "").lower()
+                    digest = str(
+                        segment.get("predecessor_checkpoint_sha256") or "")
+                    if expected and expected != checkpoint_revision_token(
+                            scene - 1, parent):
+                        reason = "This take belongs to a different predecessor revision."
+                    elif digest and digest != str(
+                            parent.get("checkpoint_sha256") or ""):
+                        reason = "This take belongs to a different predecessor checkpoint."
+            if reason:
+                stale[scene] = reason
+            else:
+                active[scene] = segment
+        return active, stale
+
+    def active_selection(
+            self, run_name: Any) -> tuple[dict[int, str], dict[int, str]]:
+        """Cheap, read-only selection shared by recovery and the UI."""
+        run_dir, _run = self._run_dir(run_name)
+        checkpoint_dir = os.path.join(run_dir, "checkpoints")
+        segments = {}
+        if os.path.isdir(checkpoint_dir):
+            for filename in os.listdir(checkpoint_dir):
+                match = _ACTIVE.fullmatch(filename)
+                if match is None:
+                    continue
+                try:
+                    segment = self._read_json(os.path.join(
+                        checkpoint_dir, filename)).get("segment")
+                    scene = int(match.group(1))
+                    if (isinstance(segment, dict) and
+                            int(segment.get("index", -1)) == scene):
+                        segments[scene] = segment
+                except (OSError, TypeError, ValueError, AttributeError):
+                    continue
+        active, stale = self.select_active_lineage(
+            segments, self._chapter_starts(run_dir))
+        return {scene: checkpoint_revision_token(scene, segment)
+                for scene, segment in active.items()}, stale
+
     def _active_revisions(self, checkpoint_dir: str) -> dict[int, str]:
         active: dict[int, str] = {}
         if not os.path.isdir(checkpoint_dir):
@@ -494,6 +554,7 @@ class CheckpointGraphManager:
         chapter_starts = self._chapter_starts(run_dir)
         self._adopt_legacy_active_revisions(checkpoint_dir, run)
         active = self._active_revisions(checkpoint_dir)
+        selected, stale = self.active_selection(run)
         records: dict[tuple[int, str], dict[str, Any]] = {}
         if os.path.isdir(checkpoint_dir):
             for filename in sorted(os.listdir(checkpoint_dir)):
@@ -530,7 +591,11 @@ class CheckpointGraphManager:
                         "scene_id": str(
                             segment.get("id") or "clip_%04d" % scene),
                         "revision": revision,
-                        "active": active.get(scene) == revision,
+                        "active": selected.get(scene) == revision,
+                        "pointer_active": active.get(scene) == revision,
+                        "inactive_reason": (
+                            stale.get(scene, "")
+                            if active.get(scene) == revision else ""),
                         "ready": (os.path.isfile(segment_path) and
                                   os.path.isfile(checkpoint_path)),
                         "raw_frames": self._integer(
@@ -712,16 +777,22 @@ class CheckpointGraphManager:
         scopes = dependency.get("scopes") if isinstance(dependency, dict) else None
         incoming = (scopes.get("incoming_boundary")
                     if isinstance(scopes, dict) else None)
-        if isinstance(incoming, dict):
-            visual = max(0, self._integer(incoming.get("context_length")))
-            generated = str(
-                incoming.get("generated_continuity") or "off").lower()
-            audio = max(0, self._integer(
-                incoming.get("audio_context_length")))
-            return visual == 0 and not (generated == "on" and audio > 0)
-        # Legacy metadata cannot prove that a non-zero boundary was unused.
-        return (int(record.get("context_length") or 0) == 0 and
-                int(record.get("audio_context_length") or 0) == 0)
+        segment = record["_segment"]
+        incoming = incoming if isinstance(incoming, dict) else {}
+        # Resolved values describe the saved take; old scope snapshots can
+        # still contain inherited defaults. Never consult today's edited Plan.
+        visual = segment.get("resolved_context_length", incoming.get(
+            "context_length", record.get("context_length")))
+        audio = segment.get("resolved_audio_context_length", incoming.get(
+            "audio_context_length", record.get("audio_context_length")))
+        generated = str(segment.get("generated_continuity", incoming.get(
+            "generated_continuity", ""))).lower()
+        try:
+            visual, audio = int(visual), int(audio)
+        except (TypeError, ValueError):
+            return False
+        # Unknown legacy audio policy must not silently mean 'off'.
+        return visual == 0 and (audio == 0 or (audio > 0 and generated == "off"))
 
     def _artifacts(self, scan: dict[str, Any], record: dict[str, Any]
                    ) -> list[dict[str, Any]]:
@@ -835,6 +906,7 @@ class CheckpointGraphManager:
             for key in leaf["_children"] if key in records
         }
         candidates: dict[str, dict[str, Any]] = {}
+        blocked = []
         for key, candidate in records.items():
             if key[0] != scene or key == leaf_key or not candidate["ready"]:
                 continue
@@ -843,6 +915,12 @@ class CheckpointGraphManager:
             if candidate["_parent"] == leaf_key:
                 continue
             if not self._attributable_without_predecessor(candidate):
+                blocked.append({
+                    "scene": scene, "revision": candidate["revision"],
+                    "reason": "Saved predecessor video/audio context is in use, "
+                              "or the saved metadata cannot prove it was unused. "
+                              "Changing the current Plan does not change a saved take.",
+                })
                 continue
             source = self._attribution_source(candidate)
             if not source or source in already_attached:
@@ -850,7 +928,7 @@ class CheckpointGraphManager:
             previous = candidates.get(source)
             if previous is None or candidate["revision"] == source:
                 candidates[source] = candidate
-        if not candidates:
+        if not candidates and not blocked:
             return None
         ordered = sorted(candidates.values(), key=lambda item: (
             str(item.get("created_at") or ""), item["revision"]), reverse=True)
@@ -858,6 +936,7 @@ class CheckpointGraphManager:
             "scene": scene,
             "parent_scene": leaf["scene"],
             "parent_revision": leaf["revision"],
+            "blocked_candidates": blocked,
             "candidates": [
                 {"scene": item["scene"], "revision": item["revision"]}
                 for item in ordered
@@ -923,6 +1002,9 @@ class CheckpointGraphManager:
             key for key in lineage_keys
             if not any(child in lineage_keys
                        for child in records[key]["_children"])
+            or (records[key]["active"] and not any(
+                child in lineage_keys and records[child]["active"]
+                for child in records[key]["_children"]))
         ]
         branch_paths = []
         memberships: dict[tuple[int, str], list[dict[str, Any]]] = defaultdict(list)
@@ -995,6 +1077,7 @@ class CheckpointGraphManager:
                 })
             item = {name: record[name] for name in (
                 "scene", "scene_id", "revision", "active", "ready",
+                "pointer_active", "inactive_reason",
                 "raw_frames", "delivered_frames", "seed", "steps",
                 "created_at", "branch_id", "forked_from_branch_id",
                 "adopted_from_revision",
@@ -1398,6 +1481,10 @@ class CheckpointGraphManager:
                 item["scene"] for item in scan["records"].values()
                 if (item["active"] and item["scene"] > scene_number and
                     item["scene"] <= chapter_end))
+            if record.get("pointer_active") and not record["active"]:
+                blockers.append(
+                    "This saved take has a stale active pointer. Make the desired "
+                    "chapter branch active before deleting it; its files are retained.")
             if dependents:
                 blockers.append(
                     "%d later checkpoint revision%s depend%s on it." %

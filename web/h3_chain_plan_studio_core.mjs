@@ -4,6 +4,7 @@ export function studioCheckpointSignature(runName, records) {
         checkpoints: (Array.isArray(records) ? records : []).map((item) => ({
             scene: item?.scene,
             scene_id: item?.scene_id,
+            revision: item?.revision,
             ready: item?.ready,
             continuation_stale: item?.continuation_stale,
             continuation_stale_reason: item?.continuation_stale_reason,

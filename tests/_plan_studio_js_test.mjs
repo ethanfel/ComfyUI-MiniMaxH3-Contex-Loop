@@ -593,4 +593,8 @@ assert.match(source, /17n\+5 temporal latent grid/);
 assert.match(source, /Exact aligned choices are 39, 90, 141, 192/);
 assert.match(source, /Experimental only: nearest reported four-frame 17n−3 cut window/);
 
+assert.notEqual(
+    studioCheckpointSignature("run", [{scene:1, revision:"old", video:"shared.mp4"}]),
+    studioCheckpointSignature("run", [{scene:1, revision:"new", video:"shared.mp4"}]),
+    "metadata-only attribution must invalidate the cached checkpoint map");
 console.log("H3 Plan Studio: separate timeline editor contract passes");
