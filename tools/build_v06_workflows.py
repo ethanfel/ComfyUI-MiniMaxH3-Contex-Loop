@@ -204,14 +204,17 @@ def build(recipe,filename,schemas):
         project_step='Check both source intervals and the bridge target length; this standalone graph does not use a Plan.'
     recovery_note=('Recovery is disabled by default. Enable it only to assemble saved clips without sampling.\n'
                    if any(n['mode']==2 for n in nodes) else '')
-    note_text=('0.6 RELEASE • '+filename.removesuffix(' - MiniMax H3 0.6.json')+'\n\n'
+    setup_steps=recipe.get('setup_steps',
         '1. Install models and extra packs listed in example_workflows/README.md.\n'
         '2. Copy the supplied assets to ComfyUI/input; select source media where requested.\n'
         '3. '+project_step+'\n'
-        '4. Follow the numbered columns left → right and inspect the saved results.\n\n'
+        '4. Follow the numbered columns left → right and inspect the saved results.')
+    note_text=('0.6 RELEASE • '+filename.removesuffix(' - MiniMax H3 0.6.json')+'\n\n'
+        +setup_steps+'\n\n'
         +recovery_note+
         'Workflow-specific setup and detailed wiring notes:\nexample_workflows/guides/'+filename.removesuffix('.json')+'.md')
-    nodes.append(dict(id=len(nodes)+1,type='Note',pos=[0,0],size=list(SIZES['Note']),flags={},order=len(nodes),mode=0,
+    note_size=[SIZES['Note'][0],max(SIZES['Note'][1],70+20*len(note_text.splitlines()))]
+    nodes.append(dict(id=len(nodes)+1,type='Note',pos=[0,0],size=note_size,flags={},order=len(nodes),mode=0,
         inputs=[],outputs=[],title='START HERE • 0.6',properties={'Node name for S&R':'Note'},widgets_values=[note_text]))
     identity=str(uuid.uuid5(NAMESPACE,filename))
     workflow=dict(id=identity,revision=0,last_node_id=len(nodes),last_link_id=len(links),nodes=nodes,links=links,

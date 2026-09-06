@@ -269,6 +269,13 @@ def validate_studio(workflow: dict, path: Path) -> None:
         wrapper = one(workflow, "MiniMaxH3TaggedReferenceToVideo")
         assert origin(workflow, wrapper, "references") == carousel
     if "Source Audio" in path.name:
+        note = one(workflow, "Note")
+        instructions = note["widgets_values"][0]
+        for required in ("IMPORT YOUR SOUNDTRACK HERE", "Project Asset Carousel",
+                         "Audio use → Project timeline source", "Lip-sync to source audio",
+                         "preset alone does not load an audio file", "Carousel.project_assets"):
+            assert required in instructions, f"Missing source-audio setup note: {required}"
+        assert note["size"][1] >= 70 + 20 * len(instructions.splitlines())
         profile = one(workflow, "MiniMaxH3GenerationProfile")
         assert profile["widgets_values"][1] == "Lip-sync to source audio"
         assert not nodes(workflow, "LoadAudio")

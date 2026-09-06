@@ -26,9 +26,11 @@ Keep subject_definitions, summary, retention_analysis, detailed_description, ove
 
 0.6 Studio quick start
 
-1. Open the Project Asset Carousel.
+1. Open the Project Asset Carousel and set a unique run name before importing assets.
 2. Import h3_v06_courier_greenhouse_arrival.png; tag courier_arrival (Picture).
 3. Import h3_v06_courier_greenhouse_delivery.png; tag greenhouse_delivery (Picture).
-4. Import one audio file and assign Source track.
-5. Edit scenes in Production Plan or Plan Studio.
+4. Import/drop one audio file into the Carousel. Select its card and set Audio use → Project timeline source.
+5. Keep Generation Profile → Lip-sync to source audio (already selected), then edit scenes in Production Plan or Plan Studio.
 6. Queue; inspect, branch, trim, or restore in Checkpoint Manager.
+
+The preset alone does not load an audio file. Carousel.project_assets already carries the source track to the Plan and loop; no separate Load Audio node, AUDIO cable, or @tag is needed.

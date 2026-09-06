@@ -1,4 +1,5 @@
 {
+  "setup_steps": "SOURCE AUDIO • IMPORT YOUR SOUNDTRACK HERE\n\n1. In Project Asset Carousel, set a unique run name, then import/drop one audio file.\n2. Select its card: Audio use → Project timeline source.\n3. Keep Generation Profile → Lip-sync to source audio (already selected).\n4. Edit your scenes, then queue the workflow.\n\nThe preset alone does not load an audio file. No separate Load Audio node, AUDIO cable, or @tag is needed:\nCarousel.project_assets already carries the source track to the Plan and loop.\n\nInstall models/packs and set up supplied picture references using example_workflows/README.md.",
   "nodes": [
     {
       "key": "n1",
@@ -513,7 +514,7 @@
       "key": "n35",
       "type": "Note",
       "settings": {
-        "text": "0.6 Studio quick start\n\n1. Open the Project Asset Carousel.\n2. Import h3_v06_courier_greenhouse_arrival.png; tag courier_arrival (Picture).\n3. Import h3_v06_courier_greenhouse_delivery.png; tag greenhouse_delivery (Picture).\n4. Import one audio file and assign Source track.\n5. Edit scenes in Production Plan or Plan Studio.\n6. Queue; inspect, branch, trim, or restore in Checkpoint Manager."
+        "text": "0.6 Studio quick start\n\n1. Open the Project Asset Carousel and set a unique run name before importing assets.\n2. Import h3_v06_courier_greenhouse_arrival.png; tag courier_arrival (Picture).\n3. Import h3_v06_courier_greenhouse_delivery.png; tag greenhouse_delivery (Picture).\n4. Import/drop one audio file into the Carousel. Select its card and set Audio use → Project timeline source.\n5. Keep Generation Profile → Lip-sync to source audio (already selected), then edit scenes in Production Plan or Plan Studio.\n6. Queue; inspect, branch, trim, or restore in Checkpoint Manager.\n\nThe preset alone does not load an audio file. Carousel.project_assets already carries the source track to the Plan and loop; no separate Load Audio node, AUDIO cable, or @tag is needed."
       },
       "inputs": {},
       "label": "0.6 STUDIO QUICK START"
