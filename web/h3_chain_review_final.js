@@ -217,8 +217,14 @@ function injectStyles() {
             border:1px solid #343b4b; border-radius:6px; background:#08090c; }
         .h3r-capture-title { font-weight:700; color:#a9c2ff; }
         .h3r-capture-field { display:flex; flex-direction:column; gap:4px; color:#aeb5c5; }
-        .h3r-capture-tag { width:100%; padding:6px 7px; border:1px solid #56637e;
-            border-radius:5px; background:#101218; color:#eef1f7; }
+        .h3r-capture-tag-row { display:flex; gap:0; }
+        .h3r-capture-tag { flex:1 1 auto; min-width:0; width:100%; padding:6px 7px;
+            border:1px solid #56637e; border-right:0; border-radius:5px 0 0 5px;
+            background:#101218; color:#eef1f7; }
+        .h3r-capture-tag-picker { flex:0 0 auto; width:28px; padding:6px 0;
+            border:1px solid #56637e; border-radius:0 5px 5px 0; background:#232837;
+            color:#eef1f7; cursor:pointer; }
+        .h3r-capture-tag-picker:hover { background:#343b4b; }
         .h3r-capture-hint { color:#8b93a6; font-size:11px; }
         .h3r-capture-error { color:#ff9a9a; }
         .h3r-capture-actions { display:flex; justify-content:flex-end; gap:7px; }
@@ -941,14 +947,34 @@ function mount(node) {
         const tagInput = document.createElement("input");
         tagInput.className = "h3r-capture-tag";
         tagInput.placeholder = "e.g. hero_pose";
-        tagInput.setAttribute("list", "h3r-capture-tag-options");
+        const tagOptionsId = `h3r-capture-tag-options-${node.id ?? Math.random().toString(36).slice(2)}`;
+        tagInput.setAttribute("list", tagOptionsId);
         const tagOptions = document.createElement("datalist");
-        tagOptions.id = "h3r-capture-tag-options";
-        tagField.append(tagInput, tagOptions);
+        tagOptions.id = tagOptionsId;
+        const tagPickerRow = document.createElement("div");
+        tagPickerRow.className = "h3r-capture-tag-row";
+        const tagPickerButton = document.createElement("button");
+        tagPickerButton.type = "button";
+        tagPickerButton.className = "h3r-capture-tag-picker";
+        tagPickerButton.textContent = "▾";
+        tagPickerButton.title = "Choose from existing tags";
+        tagPickerButton.addEventListener("click", () => {
+            tagInput.focus();
+            if (typeof tagInput.showPicker === "function") {
+                try { tagInput.showPicker(); return; } catch (_error) { /* fall through */ }
+            }
+            // showPicker() on a list-bound input isn't supported everywhere;
+            // a synthetic keystroke still reopens the browser's own suggestion
+            // dropdown for text inputs bound to a <datalist>.
+            tagInput.dispatchEvent(new KeyboardEvent("keydown", {key: "ArrowDown"}));
+        });
+        tagPickerRow.append(tagInput, tagPickerButton, tagOptions);
+        tagField.append(tagPickerRow);
         const hint = document.createElement("div");
         hint.className = "h3r-capture-hint";
-        hint.textContent = "Pick an existing tag to save this as an updated take — " +
-            "a number is appended automatically (e.g. hero_pose_2) so both stay in the Carousel.";
+        hint.textContent = "Choose an existing tag (or type a new one) to save this as an " +
+            "updated take — a number is appended automatically (e.g. char-sammy1, " +
+            "char-sammy2, ...) so every take stays in the Carousel.";
         const error = document.createElement("div");
         error.className = "h3r-capture-error";
         error.hidden = true;

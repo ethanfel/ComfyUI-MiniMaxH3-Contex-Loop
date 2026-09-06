@@ -27340,8 +27340,9 @@ def _project_asset_capture_frame_sync(
     temporary = store.upload_path(project, "frame_capture.png")
     try:
         _capture_video_frame(source, float(time_seconds or 0.0), temporary)
+        resolved_tag = store.resolve_capture_tag(project, tag, "frame_capture")
         result = store.import_file(
-            project, temporary, role=role or "", tag=tag or "",
+            project, temporary, role=role or "", tag=resolved_tag,
             original_name="frame_capture.png", source_kind="frame_capture")
         if folder_id not in (None, ""):
             asset_id = result["asset"]["id"]
