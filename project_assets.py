@@ -23,6 +23,11 @@ from datetime import datetime, timezone
 from fractions import Fraction
 from typing import Any
 
+if __package__:
+    from .audio_track_contract import audio_track_bindings
+else:  # Standalone catalog tools and storage tests.
+    from audio_track_contract import audio_track_bindings
+
 try:
     import av
 except ImportError:  # ComfyUI normally includes PyAV.
@@ -541,6 +546,14 @@ class ProjectAssetStore:
             raise ValueError("Every asset folder must have a unique ID.")
         known_folders = set(folder_ids)
         for asset in assets:
+            options = asset.get("options") or {}
+            if options.get("audio_tracks") is not None:
+                if asset.get("kind") != "audio":
+                    raise ValueError("Only audio assets can group audio tracks.")
+                asset["options"] = {
+                    **options, "audio_tracks": audio_track_bindings(
+                        options["audio_tracks"], assets),
+                }
             folder_id = str(asset.get("folder_id") or "")
             if folder_id and folder_id not in known_folders:
                 asset["folder_id"] = ""
@@ -1039,6 +1052,10 @@ class ProjectAssetStore:
         if source.get("role") == "source_track":
             clone["enabled"] = False
         clone["options"] = dict(source.get("options") or {})
+        if clone["options"].get("audio_tracks") is not None:
+            clone["options"]["audio_tracks"] = {
+                role: clone["id"] if value == wanted else value
+                for role, value in clone["options"]["audio_tracks"].items()}
         clone["metadata"] = dict(source.get("metadata") or {})
         catalog["assets"].append(clone)
         return {"catalog": self._save_catalog(catalog), "asset": dict(clone)}
@@ -1252,6 +1269,12 @@ class ProjectAssetStore:
         if entry is None:
             raise FileNotFoundError("Project asset %s was not found." % wanted)
         removed = dict(entry)
+        for owner in catalog["assets"]:
+            bindings = (owner.get("options") or {}).get("audio_tracks") or {}
+            if str(owner.get("id") or "") != wanted and wanted in bindings.values():
+                raise ValueError(
+                    "This audio is part of %s's track group. Detach it there "
+                    "before deleting it." % (owner.get("tag") or owner["id"]))
         catalog["assets"] = [
             item for item in catalog["assets"]
             if str(item.get("id") or "") != wanted]
@@ -1425,6 +1448,15 @@ class ProjectAssetStore:
                 "this Carousel.")
         source_entry, source_path = self.asset(source_name, asset_id)
         wanted_slot = str(slot_id or "")
+        options = dict(source_entry.get("options") or {})
+        bindings = audio_track_bindings(
+            options.pop("audio_tracks", None), self.load(source_name)["assets"])
+        # Resolve every dependency before copying anything. Track bindings are
+        # project-local IDs; they cannot be copied verbatim to another Run.
+        dependencies = {
+            value: self.asset(source_name, value)
+            for value in (bindings or {}).values()
+            if value and value != str(source_entry["id"])} if not wanted_slot else {}
         if wanted_slot:
             result = self.bind_reference_slot(
                 target_name, wanted_slot, source_path,
@@ -1437,9 +1469,24 @@ class ProjectAssetStore:
                 tag=source_entry.get("tag", ""),
                 original_name=source_entry.get("original_name", ""),
                 source_kind="project",
-                options=(dict(source_entry.get("options") or {})
-                         if isinstance(source_entry.get("options"), dict)
-                         else None))
+                options=options)
+        if bindings and not wanted_slot:
+            mapped = {str(source_entry["id"]): result["asset"]["id"]}
+            for value, (entry, path) in dependencies.items():
+                track_options = dict(entry.get("options") or {})
+                track_options.pop("audio_tracks", None)
+                imported = self.import_file(
+                    target_name, path, role="audio_reference",
+                    tag=entry.get("tag", ""),
+                    original_name=entry.get("original_name", ""),
+                    source_kind="project", options=track_options)
+                mapped[value] = imported["asset"]["id"]
+                self.update(target_name, mapped[value], {
+                    "enabled": False, "lyrics": str(entry.get("lyrics") or "")})
+            result = self.update(target_name, result["asset"]["id"], {
+                "options": {"audio_tracks": {
+                    role: mapped[value] if value else ""
+                    for role, value in bindings.items()}}})
         lyrics = str(source_entry.get("lyrics") or "")
         if lyrics and result.get("asset", {}).get("kind") == "audio":
             bound_slot_id = result.get("bound_slot_id")

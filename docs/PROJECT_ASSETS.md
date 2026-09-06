@@ -91,6 +91,24 @@ Run's saved workflow, API-prompt, Plan, and deferred-review archives. An older
 project remains compatible and becomes protected the first time the nightly
 Carousel opens it.
 
+## Group a song and its stems
+
+On an audio **Source track** card, **Synchronized audio tracks** assigns the
+project's full mix, isolated vocals and optional instrumental. Import the stems
+as audio assets first; they need not be available to prompts. All tracks must
+start together and retain the complete song duration, including silent gaps.
+Only one Source track card needs to be enabled.
+
+The full mix supplies delivery; vocals supply source-locked lip-sync. If no
+full mix is assigned, the stems are mixed automatically without doubling an
+existing mix. Use each scene's **Lip-sync** selector to turn guidance on/off
+without changing the final soundtrack. **Reset to single track** restores the
+old behavior. See [audio routing details](AUDIO_AND_CONTINUITY.md#grouped-songs-full-mix-vocals-and-instrumental).
+
+Copying a grouped Source track from **Other Run** also copies its assigned
+tracks and remaps their IDs. Deleting a referenced stem is blocked until you
+detach it from the group.
+
 ## Edit a picture
 
 **Edit / upscale** creates a new PNG variant; it never overwrites the source.

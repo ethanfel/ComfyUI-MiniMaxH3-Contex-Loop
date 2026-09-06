@@ -18,6 +18,8 @@ scene can be reviewed, retried, checkpointed, resumed, and assembled later.
 
 ## What this pack does
 
+- Groups full mix, vocals and instrumental tracks: vocals drive lip-sync while
+  the full mix stays the soundtrack, with a per-scene On/Off control.
 - Runs one scene at a time through the same H3 sampler body.
 - Carries visual motion, generated sound, or protected source audio between
   scenes according to a simple Generation Profile.

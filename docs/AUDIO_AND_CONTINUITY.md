@@ -9,7 +9,7 @@ audio switches with explicit intent:
 |---|---|
 | Generate audio | H3 generates sound and carries it between scenes |
 | Generate fresh audio per scene | H3 generates sound without carrying the preceding scene's audio latent |
-| Lip-sync to source audio | The exact Source Timeline window drives generation and remains the final soundtrack |
+| Lip-sync to source audio | The exact source window drives generation; with grouped tracks, vocals drive generation and the full mix remains the final soundtrack |
 | Generate audio from source guide | Source audio is a loose reference while H3 creates the final sound |
 | Use source soundtrack only | The source track is used for assembly without guiding generation |
 | No final audio | The assembled MP4 is silent |
@@ -38,6 +38,48 @@ the established hard-cut/full-freeze behavior remains unchanged.
 The deprecated **Manual Chain Policy (Legacy)** remains loadable for existing
 workflows and unusual combinations that do not fit a named profile. Its legacy
 controls are described below.
+
+## Grouped songs: full mix, vocals and instrumental
+
+For songs, import the full mix and aligned stems into **Project Asset Carousel**.
+Keep one card as the **Source track**, then use its **Synchronized audio tracks**
+selectors to assign the full mix, vocals, and optional instrumental. Stem cards
+can have **Available to prompts** disabled and still serve the group. No prompt
+tag is required for source-locked lip-sync.
+
+Alternatively, connect AUDIO loaders to **H3 Audio Tracks** and feed its
+`source_timeline` output to the existing Source Timeline inputs on Run Manager
+or Loop Start. Use Generation Profile → **Lip-sync to source audio**.
+
+- **Full mix supplied:** used unchanged as the final soundtrack; stems are not
+  layered over it. Vocals alone supply the locked generation-audio target.
+- **No full mix:** supplied stems are summed once, matching sample rate and
+  mono/stereo channels. Gain is reduced only if their sum would clip. The
+  synthesized mix is cached for Studio playback; enable Run Manager's audio
+  archive for durable recovery together with the original stems.
+- **Missing vocals in a group:** lip-sync reports an error rather than using
+  instrumental music as its driver.
+- **Existing single track:** retains its previous routing; use **Reset to
+  single track** to remove a Carousel group.
+
+All tracks must have the same start and full duration, including silence during
+instrumental sections. They are aligned on the 24 fps source timeline, not
+automatically beat-matched, stretched or offset. Source routing does not perform
+stem separation; provide your own aligned stems.
+
+The **Lip-sync** selector in each scene's Studio/editor settings offers
+**Inherit**, **On** and **Off**. On locks that scene to vocals (or the original
+single source). Off disables the source target, loose source reference and
+generated-audio carry for that scene, while leaving the final soundtrack alone.
+Inherit restores the Plan's three audio defaults. Existing unusual combinations
+appear as **Custom** and remain editable with the advanced audio controls.
+
+This is a **per-scene** control, not an arbitrary timed on/off lane within one
+scene. Split scenes where you need explicit changes. Vocal silence avoids
+feeding instrumental notes to the lip-sync target, but neither silence nor Off
+guarantees that the model will animate a closed mouth; describe the desired
+action in the prompt. The separate Lip-Sync Options voice input remains an
+optional timing mask, independent of the group's vocal driver.
 
 ## Manual policy axes
 

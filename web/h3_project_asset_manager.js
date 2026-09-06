@@ -2,10 +2,13 @@ import {app} from "/scripts/app.js";
 import {api} from "/scripts/api.js";
 import {
     coupledOutputDimensions,
+    AUDIO_TRACK_ROLES,
+    projectAudioTrackBindings,
+    setProjectAudioTrack,
     dimensionsForMegapixels,
     formatMegapixels,
     imageMegapixels,
-} from "./h3_project_asset_editor_core.mjs?v=0.7.0";
+} from "./h3_project_asset_editor_core.mjs?v=0.7.9";
 import {
     publishProjectAssetCatalogChanged,
     serializedProjectAssetCatalog,
@@ -1528,6 +1531,47 @@ function mount(node) {
             }
             role.addEventListener("change", () => updateAsset(asset, {role: role.value}));
             roleLabel.append(role); editor.append(roleLabel);
+        }
+        if (isAudio && isSourceTrack) {
+            const tracks = el("div", "h3pa-audio-tracks");
+            tracks.append(el("strong", "", "Synchronized audio tracks"));
+            tracks.append(el("small", "h3pa-status",
+                "Keep every stem at the full song length, including silence. "
+                + "The full mix is exported unchanged. Without it, vocals and "
+                + "instrumental are mixed; stems are never layered over a full mix. "
+                + "Use the scene Lip-sync control in Plan Studio."));
+            const bindings = projectAudioTrackBindings(asset);
+            for (const [role, title] of AUDIO_TRACK_ROLES) {
+                const label = el("label", "", title);
+                const select = el("select");
+                const empty = el("option", "", role === "full_mix" ? "Auto mix supplied stems" : "Not supplied");
+                empty.value = ""; select.append(empty);
+                const audioAssets = (state.catalog.assets ?? []).filter((item) => item.kind === "audio" && !item._unresolved);
+                for (const item of audioAssets) {
+                    const option = el("option", "", `${item.id === asset.id ? "This file · " : ""}${item.original_name || item.tag}`);
+                    option.value = item.id; select.append(option);
+                }
+                if (bindings[role] && !audioAssets.some((item) => item.id === bindings[role])) {
+                    const missing = el("option", "", `Missing track · ${bindings[role]}`);
+                    missing.value = bindings[role]; select.append(missing);
+                }
+                select.value = bindings[role];
+                select.addEventListener("change", () => {
+                    try {
+                        void updateAsset(asset, {options: {
+                            audio_tracks: setProjectAudioTrack(asset, role, select.value),
+                        }});
+                    } catch (error) {
+                        select.value = bindings[role];
+                        status.textContent = String(error.message || error);
+                    }
+                });
+                label.append(select); tracks.append(label);
+            }
+            tracks.append(button("Reset to single track", () => updateAsset(
+                asset, {options: {audio_tracks: null}},
+            ), "Use this file alone, with the original source-track behavior"));
+            editor.append(tracks);
         }
         const tagLabel = el("label", "", isSourceTrack ? "Catalog tag" : "Prompt tag");
         tagLabel.title = isSourceTrack

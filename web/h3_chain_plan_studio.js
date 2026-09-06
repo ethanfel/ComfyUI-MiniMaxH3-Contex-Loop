@@ -64,18 +64,20 @@ import {
 } from "./h3_reference_preview_core.mjs?v=0.7.3";
 import {
     applySceneAudioOverride,
+    applySceneLipSync,
+    sceneLipSyncMode,
     applySceneTransitionPreset,
     primaryTransitionOptions,
     sceneAudioOverride,
     sceneAudioPolicy,
     sceneTransitionPreset,
     transitionPresetLabel,
-} from "./h3_policy_core.mjs?v=0.7.0";
+} from "./h3_policy_core.mjs?v=0.7.9";
 import {
     resolveAudioContextLength,
     resolveAudioPolicy,
     resolveTransitionPolicy,
-} from "./h3_socket_presentation_core.mjs?v=0.7.0";
+} from "./h3_socket_presentation_core.mjs?v=0.7.9";
 import {
     availableLoRARoutes,
     loraRouteLabel,
@@ -3327,6 +3329,29 @@ function mount(node) {
         );
         const planAudioPolicy = settings().audioPolicy;
         const effectiveAudioPolicy = sceneAudioPolicy(shot, planAudioPolicy);
+        const lipSync = element("select");
+        for (const [value, label] of [
+            ["inherit", `Inherit · ${planAudioPolicy.sourceAudioTarget === "locked" ? "On" : "Off"}`],
+            ["on", "On · vocals drive this scene"],
+            ["off", "Off · action / no source-audio guidance"],
+            ["custom", "Custom · advanced audio controls"],
+        ]) {
+            const option = element("option", "", label);
+            option.value = value; option.disabled = value === "custom";
+            lipSync.append(option);
+        }
+        lipSync.value = sceneLipSyncMode(shot);
+        lipSync.title = "Scene-local source lip-sync, not a mouth-motion guarantee. "
+            + "On uses grouped vocals, or the legacy single source. Off disables "
+            + "source locking, source reference, and generated-audio carry. "
+            + "Final soundtrack stays unchanged. Inherit resets these three overrides.";
+        lipSync.addEventListener("change", () => {
+            applySceneLipSync(shot, lipSync.value);
+            writePlan();
+            renderScenePanel();
+            renderStatus();
+        });
+        form.append(field("Lip-sync", lipSync));
         function audioOverrideSelect(key, inherited, choices, title) {
             const select = element("select");
             const inheritedOption = element(
@@ -3343,6 +3368,7 @@ function mount(node) {
             select.title = title;
             select.addEventListener("change", () => {
                 applySceneAudioOverride(shot, key, select.value);
+                lipSync.value = sceneLipSyncMode(shot);
                 writePlan();
                 renderStatus();
             });

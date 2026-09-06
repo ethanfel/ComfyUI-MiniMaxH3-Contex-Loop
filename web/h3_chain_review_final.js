@@ -9,7 +9,7 @@ import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.7.2";
 import {
     refreshRestoredPlanEditors,
     restoreConnectedPolicyInputs,
-} from "./h3_plan_restore_core.mjs?v=0.7.0";
+} from "./h3_plan_restore_core.mjs?v=0.7.9";
 import {
     acceptedPreviewDisposition,
     applyCheckpointRevisionSet,

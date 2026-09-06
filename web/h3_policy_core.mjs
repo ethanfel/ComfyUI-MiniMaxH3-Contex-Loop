@@ -268,3 +268,22 @@ export function applySceneAudioOverride(shot, key, value) {
     shot[key] = selected;
     return shot;
 }
+
+export function sceneLipSyncMode(shot) {
+    const keys = ["source_audio_target", "source_reference", "generated_continuity"];
+    if (keys.every((key) => sceneAudioOverride(shot, key) === "inherit")) return "inherit";
+    if (sceneAudioOverride(shot, "source_audio_target") === "locked") return "on";
+    if (keys.every((key) => sceneAudioOverride(shot, key) === "off")) return "off";
+    return "custom";
+}
+
+export function applySceneLipSync(shot, value) {
+    if (!["inherit", "on", "off"].includes(value)) {
+        throw new Error("Choose Inherit, On, or Off for scene lip-sync.");
+    }
+    for (const key of ["source_audio_target", "source_reference", "generated_continuity"]) {
+        applySceneAudioOverride(shot, key, value === "inherit" ? "inherit"
+            : value === "on" && key === "source_audio_target" ? "locked" : "off");
+    }
+    return shot;
+}

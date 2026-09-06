@@ -4,6 +4,11 @@ Newest first. This file keeps release history out of the onboarding README.
 
 ## Unreleased — Deferred checkpoint upscaling
 
+- Added grouped full-mix/vocal/instrumental sources in the Carousel and a
+  reusable Audio Tracks node. Vocals drive source-locked generation; delivery
+  keeps the full mix, or auto-mixes stems if none is supplied. Audio archives
+  preserve each track. Per-scene Lip-sync Inherit/On/Off retains existing
+  single-track behavior and uses the established audio policy fields.
 - Added nightly chapter resolution controls to Plan Studio: inherit the Plan
   default or set chapter-local width/height. Existing locked saved scenes pin
   their chapter's original geometry, including legacy checkpoints, without
