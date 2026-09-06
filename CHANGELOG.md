@@ -3,7 +3,7 @@
 Newest first. The [README](README.md#changelog) keeps a short highlight reel;
 this file records the detailed changes.
 
-## 0.6 updates — Chapter output and authoring polish
+## v0.6.1 — Chapter output and authoring polish
 
 - Ported the standalone Prompt IDE's marker editing, context-aware completions,
   timestamps, and presentation settings while retaining connected Plan editing,

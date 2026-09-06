@@ -6,7 +6,7 @@ import {
     applySceneReroll,
     resumeSelection,
 } from "./h3_chain_cancel_reroll_core.mjs?v=0.6.5";
-import {refreshRestoredPlanEditors} from "./h3_plan_restore_core.mjs?v=0.6.0";
+import {refreshRestoredPlanEditors} from "./h3_plan_restore_core.mjs?v=0.6.1";
 
 // The compact scene expands Current Shot internally. ComfyUI routes that
 // internal node's active-scene event to the compact node's display id.

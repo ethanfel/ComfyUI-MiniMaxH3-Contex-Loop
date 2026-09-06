@@ -15,7 +15,7 @@ result later—without keeping the whole production in memory.
 
 ## Changelog
 
-### Latest 0.6 updates
+### 0.6.1 — Latest updates
 
 - **Chapter output.** Export or recover a chosen chapter, including its already
   generated scenes while it is unfinished. Chapters can use different resolutions;
