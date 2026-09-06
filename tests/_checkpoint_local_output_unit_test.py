@@ -98,6 +98,13 @@ def main():
 
         # Canonical pointers still exist. They must not serve as fallback when
         # an immutable selection is removed or fails integrity verification.
+        prefix_path = root / old1["segment"]["revision_metadata"]
+        prefix_data = prefix_path.read_bytes()
+        prefix_path.unlink()
+        changed = snapshot(root)
+        rejected(lambda: node.passthrough(selection), "no longer available")
+        assert snapshot(root) == changed, "local output recreated a missing prefix"
+        prefix_path.write_bytes(prefix_data)
         metadata_path.unlink()
         changed = snapshot(root)
         rejected(lambda: node.passthrough(selection), "no longer available")

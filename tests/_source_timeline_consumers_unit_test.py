@@ -354,7 +354,7 @@ with tempfile.TemporaryDirectory() as temporary:
     } for index, delivered in ((1, 22), (2, 17))]
     original_load_revision = chain._load_checkpoint_revision
     original_validate_manifest = chain._validate_manifest
-    chain._load_checkpoint_revision = lambda _run, index, _revision: (
+    chain._load_checkpoint_revision = lambda _run, index, _revision, **_kwargs: (
         manager_metadata[index - 1], "metadata.json")
     chain._validate_manifest = lambda value: value["segments"]
     try:

@@ -576,12 +576,13 @@ class CheckpointGraphManager:
                 found.append(parent_key)
         return found
 
-    def _scan(self, run_name: Any) -> dict[str, Any]:
+    def _scan(self, run_name: Any, *, adopt_legacy: bool = True) -> dict[str, Any]:
         run_dir, run = self._run_dir(run_name)
         checkpoint_dir = os.path.join(run_dir, "checkpoints")
         review_dir = os.path.join(run_dir, "reviews")
         chapter_starts = self._chapter_starts(run_dir)
-        self._adopt_legacy_active_revisions(checkpoint_dir, run)
+        if adopt_legacy:
+            self._adopt_legacy_active_revisions(checkpoint_dir, run)
         active = self._active_revisions(checkpoint_dir)
         selected, stale = self.active_selection(run)
         records: dict[tuple[int, str], dict[str, Any]] = {}
@@ -1233,11 +1234,11 @@ class CheckpointGraphManager:
             },
         }
 
-    def graph(self, run_name: Any) -> dict[str, Any]:
+    def graph(self, run_name: Any, *, adopt_legacy: bool = True) -> dict[str, Any]:
         run_dir, run = self._run_dir(run_name)
         if not os.path.isdir(run_dir):
             raise FileNotFoundError("H3 run %r does not exist." % run)
-        return self._public_graph(self._scan(run))
+        return self._public_graph(self._scan(run, adopt_legacy=adopt_legacy))
 
     def attribute(
             self, run_name: Any, parent_scene: Any, parent_revision: Any,

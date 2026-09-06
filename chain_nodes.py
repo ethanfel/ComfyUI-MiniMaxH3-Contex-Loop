@@ -28006,7 +28006,8 @@ def _checkpoint_selection_manifest(value: Any) -> dict[str, Any] | None:
         (int(item.get("scene", 0)), str(item.get("revision") or "").lower()):
             item
         for item in CheckpointGraphManager(_output_root()).graph(
-            run_name).get("revisions", [])
+            run_name, adopt_legacy=not (local_output or chapter_output)
+        ).get("revisions", [])
         if isinstance(item, dict)
     }
 
