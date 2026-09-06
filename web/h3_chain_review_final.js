@@ -900,10 +900,16 @@ function mount(node) {
                 `/minimax_h3_context_loop/project-assets?${new URLSearchParams({project})}`);
             const catalog = await response.json();
             if (!response.ok) throw new Error(catalog.error || `HTTP ${response.status}`);
+            console.log(
+                `[H3 capture] fetched ${catalog.assets?.length ?? 0} asset(s) for ` +
+                `project ${JSON.stringify(project)}`, catalog);
             return (catalog.assets ?? [])
                 .map((item) => String(item.tag || "").trim())
                 .filter(Boolean);
-        } catch (_error) {
+        } catch (error) {
+            console.warn(
+                `[H3 capture] failed to fetch existing tags for project ` +
+                `${JSON.stringify(project)}:`, error);
             return [];
         }
     }
@@ -944,6 +950,9 @@ function mount(node) {
         const title = document.createElement("div");
         title.className = "h3r-capture-title";
         title.textContent = `Save frame at ${captureTime.toFixed(2)}s`;
+        const projectLine = document.createElement("div");
+        projectLine.className = "h3r-capture-hint";
+        projectLine.textContent = `Carousel project: ${project}`;
         const preview = document.createElement("img");
         preview.className = "h3r-capture-preview";
         try { preview.src = canvas.toDataURL("image/png"); } catch (_error) {}
@@ -1024,7 +1033,7 @@ function mount(node) {
         saveButton.className = "h3r-button";
         saveButton.textContent = "Save to Carousel";
         actionsRow.append(cancelButton, saveButton);
-        card.append(title, preview, tagField, hint, error, actionsRow);
+        card.append(title, projectLine, preview, tagField, hint, error, actionsRow);
         overlay.append(card);
         root.append(overlay);
         tagInput.focus();
