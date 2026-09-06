@@ -171,8 +171,8 @@ original predecessor as provenance, but that structural edge does not choose
 the preceding chapter. Explicit visual or audio context recorded by a scene is
 still preserved as a generation dependency.
 
-If a branch ends with an empty next-scene slot and a compatible saved candidate
-exists elsewhere, the graph displays a dashed empty card. Click it to preview
+If a branch ends with an empty next-scene slot and saved candidates
+exist elsewhere, the graph displays **Reuse saved clip**. Click it to preview
 the available candidates and choose **Attach selected candidate**. This is
 offered only when the candidate consumes neither predecessor video context nor
 generated-audio continuity. The manager creates a new immutable lineage record
@@ -180,6 +180,20 @@ pointing at the chosen parent; the original video, audio, prompt, and checkpoint
 files remain shared and are not regenerated or copied. Shared-file deletion is
 reference-aware, so those files are retained until the last lineage record that
 uses them is deleted.
+
+Reuse is checked against the saved take's resolved context and audio policy,
+not the current Plan. Candidates that cannot safely change parents show a
+reason instead of disappearing. A rollback tip still appears as an active
+branch even when its old descendants remain saved.
+
+Rerendering an earlier scene can leave old pointer files on disk. Checkpoint
+Manager, Plan Studio and recovery exclude those disconnected descendants from
+the active chapter branch. They remain available as saved inactive takes; no
+media, checkpoint, prompt, scene slot or chapter export is deleted. Use
+**Make branch active / Roll active branch back** to explicitly reconcile those
+old pointers. Recovery stops at the coherent saved prefix, and resuming through
+an inactive tail requires selecting or attributing a matching lineage first,
+even with history verification disabled.
 
 If deleting the active branch tip rolls the run back while alternate leaf
 revisions remain, select the surviving branch and click **Make branch active**.

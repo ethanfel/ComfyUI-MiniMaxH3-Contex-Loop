@@ -109,7 +109,7 @@ import {
     studioRulerTicks,
     studioWaveformIntervalSamples,
     timedLyricAtSecond,
-} from "./h3_chain_plan_studio_core.mjs?v=0.6.3";
+} from "./h3_chain_plan_studio_core.mjs?v=0.6.4";
 import * as promptCompanionSync from "./h3_prompt_companion_sync.mjs?v=0.6.2";
 
 const {
@@ -1539,7 +1539,7 @@ function mount(node) {
         if (editorialChanged && ["player", "subtitles"].includes(state.view)) {
             renderPanel();
         }
-        if (state.view === "player" && state.player?.paused) {
+        if (state.view === "player" && state.player) {
             const media = playerCheckpoint(state.playerIndex);
             const desired = media?.video ? videoUrl(media.video) : "";
             const desiredAudio = media?.audio ? videoUrl(media.audio) : "";

@@ -91,8 +91,8 @@ def main():
             else:
                 raise AssertionError("empty run was accepted for recovery")
 
-            (checkpoints / "clip_0001.json").write_text("{}")
-            (checkpoints / "clip_0002.json").write_text("{}")
+            (checkpoints / "clip_0001.json").write_text(json.dumps({"segment": fake_segment(plan, 1)}))
+            (checkpoints / "clip_0002.json").write_text(json.dumps({"segment": fake_segment(plan, 2)}))
             partial, partial_json, partial_status = (
                 chain.MiniMaxH3ChainManifestLoad().load(plan))
             assert calls[-1][0] == 3
@@ -109,14 +109,14 @@ def main():
 
             # A later orphan does not cross a gap in the active pointer chain.
             (checkpoints / "clip_0002.json").unlink()
-            (checkpoints / "clip_0003.json").write_text("{}")
+            (checkpoints / "clip_0003.json").write_text(json.dumps({"segment": fake_segment(plan, 3)}))
             gap, _gap_json, gap_status = (
                 chain.MiniMaxH3ChainManifestLoad().load(plan))
             assert calls[-1][0] == 2
             assert gap["clip_count"] == 1
             assert "partial manifest through clip 1/3" in gap_status
 
-            (checkpoints / "clip_0002.json").write_text("{}")
+            (checkpoints / "clip_0002.json").write_text(json.dumps({"segment": fake_segment(plan, 2)}))
             complete, _complete_json, complete_status = (
                 chain.MiniMaxH3ChainManifestLoad().load(plan))
             assert calls[-1][0] == 4

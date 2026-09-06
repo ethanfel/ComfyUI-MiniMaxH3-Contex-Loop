@@ -11,7 +11,7 @@ import {
     checkpointSelectionJson,
     formatCheckpointBytes,
     selectedCheckpointRevision,
-} from "./h3_checkpoint_manager_core.mjs?v=0.6.2";
+} from "./h3_checkpoint_manager_core.mjs?v=0.6.4";
 import {
     parsePlanJson,
     planToJson,
@@ -458,7 +458,9 @@ function mount(node) {
         load.disabled = state.busy || Boolean(state.attribution) || !canLoadSelected();
         activate.disabled = state.busy || Boolean(state.attribution) || !canActivateSelected();
         remove.disabled = state.busy || Boolean(state.attribution) || !state.deletion?.allowed;
-        if (state.attributionButton) state.attributionButton.disabled = state.busy;
+        if (state.attributionButton) {
+            state.attributionButton.disabled = state.busy || !state.attribution?.candidate;
+        }
         if (message) status.textContent = message;
     }
 
@@ -497,7 +499,7 @@ function mount(node) {
 
     function selectAttribution(parent, slot) {
         const candidates = slot?.candidates ?? [];
-        if (!parent || !candidates.length) return;
+        if (!parent || !(candidates.length || slot?.blocked_candidates?.length)) return;
         state.selected = parent;
         state.scene = Number(parent.scene);
         state.revision = String(parent.revision);
@@ -505,7 +507,8 @@ function mount(node) {
             parent,
             scene:Number(slot.scene),
             candidates,
-            candidate:candidates[0],
+            blocked:slot?.blocked_candidates ?? [],
+            candidate:candidates[0] ?? null,
         };
         persistSelection();
         render();
@@ -719,17 +722,19 @@ function mount(node) {
                 }
             });
             const slot = branch.attribution_slot;
-            if (slot?.candidates?.length && tip && sceneVisible(slot.scene)) {
+            if ((slot?.candidates?.length || slot?.blocked_candidates?.length)
+                    && tip && sceneVisible(slot.scene)) {
                 path.append(element("span", "h3cm-arrow", "→"));
                 const count = slot.candidates.length;
                 const empty = button(
-                    `S${slot.scene} · empty`,
+                    `S${slot.scene} · reuse saved clip`,
                     `${count} independent saved candidate${count === 1 ? "" : "s"} can be attributed here`,
                     () => selectAttribution(tip, slot),
                     "h3cm-revision h3cm-revision-empty",
                 );
                 empty.append(element(
-                    "small", "", `${count} attributable candidate${count === 1 ? "" : "s"}`,
+                    "small", "", count ? `${count} available candidate${count === 1 ? "" : "s"}`
+                        : "Check saved context requirements",
                 ));
                 if (state.attribution &&
                         state.attribution.parent.revision === tip.revision) {
@@ -838,14 +843,20 @@ function mount(node) {
                 "Create a metadata-only lineage link; saved media and checkpoint files remain shared",
                 () => void attributeCandidate(),
             );
-            attach.disabled = state.busy;
+            attach.disabled = state.busy || !attribution.candidate;
             state.attributionButton = attach;
             attributionPanel.append(
                 candidates,
                 element("div", "h3cm-muted",
-                    "This candidate uses no predecessor video or generated-audio context. Attribution creates a new lineage link without regeneration or media duplication."),
+                    attribution.candidate
+                        ? "This candidate uses no predecessor video or generated-audio context. Attribution creates a new lineage link without regeneration or media duplication."
+                        : "No reusable candidate is proven independent by its saved metadata."),
                 attach,
             );
+            for (const blocked of attribution.blocked ?? []) {
+                attributionPanel.append(element("div", "h3cm-muted",
+                    `${blocked.revision.slice(0, 8)}: ${blocked.reason}`));
+            }
         }
         const media = record.preview_video ?? record.video;
         const nextVideo = videoUrl(media);
@@ -882,6 +893,7 @@ function mount(node) {
         addInspector("Frames", `${record.raw_frames} raw · ${record.delivered_frames} delivered`);
         addInspector("Sampling", `seed ${record.seed || "unknown"} · ${record.steps || "?"} steps`);
         addInspector("Incoming", `${record.continuation_mode} · Video ${record.context_length}f · Audio ${record.audio_context_length}f`);
+        if (record.inactive_reason) addInspector("Inactive", record.inactive_reason);
         addInspector("Parent", state.attribution
             ? `Will become Scene ${state.attribution.parent.scene} · ${state.attribution.parent.revision.slice(0, 8)}`
             : record.parent ? `Scene ${record.parent.scene} · ${record.parent.revision.slice(0, 8)}` : record.lineage_status);

@@ -174,7 +174,7 @@ assert.match(source, /checkpoint-revisions\/restore/);
 assert.match(source, /checkpoint-revisions\/attribute/);
 assert.match(source, /Load selected branch/);
 assert.match(source, /Make branch active/);
-assert.match(source, /S\$\{slot\.scene\} · empty/);
+assert.match(source, /S\$\{slot\.scene\} · reuse saved clip/);
 assert.match(source, /Attach selected candidate/);
 assert.match(source, /async function attributeCandidate/);
 assert.match(source, /Nothing is regenerated or copied/);
@@ -252,4 +252,24 @@ assert.doesNotMatch(
     /ExecutionBlocker/,
 );
 
+const staleTail = {
+    revisions:[
+        {scene:1, revision:a, active:true, pointer_active:true, ready:true},
+        {scene:2, revision:b, active:false, pointer_active:true, ready:true,
+            parent:{scene:1, revision:c}},
+    ],
+};
+assert.equal(checkpointActivationMode(staleTail, staleTail.revisions[0]),
+    "rollback", "a stale physical pointer can still be explicitly cleared");
+const blockedSlot = checkpointBranchRows({
+    revisions:payload.revisions,
+    branches:[{path:[{scene:2, revision:c}], attribution_slot:{
+        scene:3, parent_scene:2, parent_revision:c, candidates:[],
+        blocked_candidates:[{scene:3, revision:d, reason:"Saved audio context"}],
+    }}],
+})[0].attribution_slot;
+assert.equal(blockedSlot.blocked_candidates[0].reason, "Saved audio context");
+assert.equal(blockedSlot.blocked_candidates[0].scene_id, "room");
+assert.match(source, /state\.busy \|\| !state\.attribution\?\.candidate/);
+assert.match(source, /attribution\.blocked \?\? \[\]/);
 console.log("H3 Checkpoint Manager frontend: branches, manifest selection, inspection and guarded deletion pass");

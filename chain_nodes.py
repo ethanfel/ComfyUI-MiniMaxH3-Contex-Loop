@@ -10561,6 +10561,15 @@ def _load_resume_state(
         source_audio: Any = None) -> dict[str, Any]:
     previous_index = start_clip - 1
     context_sources = _resume_context_predecessors(plan, int(start_clip))
+    _active, stale = CheckpointGraphManager(_output_root()).active_selection(
+        plan["run_name"])
+    stale_prefix = [scene for scene in stale if scene <= previous_index]
+    if stale_prefix:
+        raise ValueError(
+            "Cannot resume through scene %d: its saved take belongs to an inactive "
+            "chapter branch. Activate a matching branch or attribute the independent "
+            "saved take in Checkpoint Manager first. No saved files were changed."
+            % min(stale_prefix))
     consumed_predecessors = set(context_sources["scenes"])
     editorial = _load_run_editorial(plan.get("run_name"))
     segments = []
@@ -20668,9 +20677,11 @@ def _saved_scene_prefix_length(plan: dict[str, Any]) -> int:
     selected prefix is still passed through ``_load_resume_state`` below,
     which performs the authoritative history, artifact, and SHA-256 checks.
     """
+    active, _stale = CheckpointGraphManager(_output_root()).active_selection(
+        plan["run_name"])
     saved = 0
     for index in range(1, len(plan["shots"]) + 1):
-        if not os.path.isfile(_artifact_paths(plan, index)["metadata"]):
+        if index not in active:
             break
         saved = index
     return saved
@@ -25997,6 +26008,14 @@ def _saved_checkpoint_listing(
                     KeyError):
                 inventory_complete = False
                 continue
+    active_segments, stale_pointers = CheckpointGraphManager.select_active_lineage(
+        active_segments, CheckpointGraphManager._chapter_starts(
+            os.path.dirname(checkpoint_dir)))
+    inactive_checkpoints = [
+        {**item, "inactive_reason": stale_pointers[int(item["scene"])]}
+        for item in checkpoints if int(item["scene"]) in stale_pointers]
+    checkpoints = [item for item in checkpoints
+                   if int(item["scene"]) in active_segments]
     editorial = _load_run_editorial(run_name)
     editorial, cleared_editorial = _editorial_for_base_segments(
         editorial, list(active_segments.values()))
@@ -26065,6 +26084,7 @@ def _saved_checkpoint_listing(
     payload: dict[str, Any] = {
         "run_name": run_name,
         "checkpoints": checkpoints,
+        "inactive_checkpoints": inactive_checkpoints,
         "editorial": editorial,
         # Read-only evidence; never persisted in editorial.json. Frontend
         # also checks chapters, placements, trims, locks and alternate edits.

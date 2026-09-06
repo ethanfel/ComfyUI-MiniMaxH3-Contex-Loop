@@ -50,6 +50,10 @@ export function checkpointBranchRows(payload) {
             .filter(Boolean),
             attribution_slot: slot ? {
                 ...slot,
+                blocked_candidates:(slot.blocked_candidates ?? []).map((item) => ({
+                    ...revisions.get(checkpointRevisionKey(item.scene, item.revision)),
+                    ...item,
+                })),
                 candidates: (slot.candidates ?? []).map((item) =>
                     revisions.get(checkpointRevisionKey(
                         item.scene, item.revision,
@@ -207,7 +211,7 @@ export function checkpointActivationMode(payload, selected, range = null) {
     );
     const end = Math.max(start, Number(range?.end) || maximumScene);
     return revisions.some((item) =>
-        Boolean(item.active)
+        Boolean(item.active || item.pointer_active)
         && item.take_kind !== "editorial_alternate"
         && Number(item.scene) > selectedScene
         && Number(item.scene) <= end)
